@@ -35,6 +35,28 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun RootScreen() {
+
+    Row(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        // Left navigation rail (reversed structure)
+        SideNav()
+
+        // Main content here
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .weight(1f),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "Content area",
+                color = Color.White,
+                fontSize = 22.sp
+            )
+        }
+    }
+
     Column (
         modifier = Modifier.fillMaxSize()
     ) {
@@ -56,6 +78,60 @@ fun RootScreen() {
     }
 }
 
+@Composable
+fun SideNav() {
+    Column(
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(200.dp)
+            .background(Color(0XFF1E1E1E))
+    ) {
+        NavItem(
+            label = "All",
+            requestFocus = true
+            )
+        NavItem(
+            label = "Movies",
+            requestFocus = false
+        )
+    }
+}
+
+@Composable
+fun NavItem(
+    label: String,
+    requestFocus: Boolean = false
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(requestFocus) {
+        if (requestFocus) {
+            focusRequester.requestFocus()
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .padding(12.dp)
+            .height(60.dp)
+            .focusRequester(focusRequester)
+            .focusable(interactionSource = interactionSource)
+            .background(
+                color = if (isFocused) Color(0xFF3D5AFE) else Color.DarkGray,
+                shape = RoundedCornerShape(8.dp)
+            ),
+        contentAlignment = Alignment.Center
+    ){
+        Text(
+            text = label,
+            color = Color.White,
+            fontSize = 18.sp,
+            modifier = Modifier.padding(start = 16.dp)
+        )
+    }
+}
 @Composable
 fun FocusItem(label: String, requestFocus: Boolean = false) {
     val interactionSource = remember { MutableInteractionSource() }
