@@ -12,12 +12,14 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -53,6 +55,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.exoplayer.ExoPlayer
@@ -82,13 +85,16 @@ import com.example.xtreamplayer.content.ContentItem
 import com.example.xtreamplayer.content.ContentCache
 import com.example.xtreamplayer.content.ContentRepository
 import com.example.xtreamplayer.content.ContentType
+import com.example.xtreamplayer.content.SearchNormalizer
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import androidx.media3.common.Player
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.view.KeyEvent
 import android.view.View
+import android.view.WindowManager
 import android.graphics.Color as AndroidColor
 import com.example.xtreamplayer.player.XtreamPlayerView
 import androidx.compose.material3.Icon
@@ -474,6 +480,7 @@ private fun PlayerOverlay(
         if (activity != null) {
             val window = activity.window
             WindowCompat.setDecorFitsSystemWindows(window, false)
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             val controller = WindowCompat.getInsetsController(window, window.decorView)
             controller.systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -481,6 +488,7 @@ private fun PlayerOverlay(
             onDispose {
                 controller.show(WindowInsetsCompat.Type.statusBars())
                 WindowCompat.setDecorFitsSystemWindows(window, true)
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
         } else {
             onDispose {}
@@ -1052,7 +1060,8 @@ private fun CategoryCard(
     focusRequester: FocusRequester?,
     isLeftEdge: Boolean,
     onActivate: () -> Unit,
-    onMoveLeft: () -> Unit
+    onMoveLeft: () -> Unit,
+    onMoveUp: (() -> Unit)? = null
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -1076,6 +1085,9 @@ private fun CategoryCard(
                     false
                 } else if (isLeftEdge && it.key == Key.DirectionLeft) {
                     onMoveLeft()
+                    true
+                } else if (onMoveUp != null && it.key == Key.DirectionUp) {
+                    onMoveUp()
                     true
                 } else if (
                     it.key == Key.Enter ||
@@ -1179,6 +1191,74 @@ private fun CategoryTypeTab(
 }
 
 @Composable
+private fun SearchInput(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    placeholder: String,
+    focusRequester: FocusRequester,
+    modifier: Modifier = Modifier,
+    onMoveLeft: (() -> Unit)? = null,
+    onMoveRight: (() -> Unit)? = null,
+    onMoveDown: (() -> Unit)? = null
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val shape = RoundedCornerShape(12.dp)
+    val borderColor = if (isFocused) Color(0xFFB6D9FF) else Color(0xFF2A3348)
+    val backgroundColor = if (isFocused) Color(0xFF222E44) else Color(0xFF161E2E)
+    BasicTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        singleLine = true,
+        textStyle = TextStyle(
+            color = Color(0xFFE6ECF7),
+            fontSize = 13.sp,
+            fontFamily = FontFamily.Serif,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 0.3.sp
+        ),
+        cursorBrush = SolidColor(Color(0xFFB6D9FF)),
+        modifier = modifier
+            .focusRequester(focusRequester)
+            .focusable(interactionSource = interactionSource)
+            .onKeyEvent {
+                if (it.type != KeyEventType.KeyDown) {
+                    false
+                } else if (onMoveLeft != null && it.key == Key.DirectionLeft) {
+                    onMoveLeft()
+                    true
+                } else if (onMoveRight != null && it.key == Key.DirectionRight) {
+                    onMoveRight()
+                    true
+                } else if (onMoveDown != null && it.key == Key.DirectionDown) {
+                    onMoveDown()
+                    true
+                } else {
+                    false
+                }
+            }
+            .clip(shape)
+            .background(backgroundColor)
+            .border(1.dp, borderColor, shape)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        decorationBox = { innerTextField ->
+            Box(contentAlignment = Alignment.CenterStart) {
+                if (query.isBlank()) {
+                    Text(
+                        text = placeholder,
+                        color = Color(0xFF94A3B8),
+                        fontSize = 13.sp,
+                        fontFamily = FontFamily.Serif,
+                        letterSpacing = 0.3.sp
+                    )
+                }
+                innerTextField()
+            }
+        }
+    )
+}
+
+@Composable
 fun SectionScreen(
     title: String,
     section: Section,
@@ -1193,12 +1273,28 @@ fun SectionScreen(
 ) {
     val shape = RoundedCornerShape(18.dp)
     val columns = 3
-    val pagerFlow = remember(section, authConfig) {
-        contentRepository.pager(section, authConfig).flow
+    var searchQuery by remember { mutableStateOf("") }
+    var debouncedQuery by remember { mutableStateOf("") }
+    val searchFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(section) {
+        searchQuery = ""
+        debouncedQuery = ""
+    }
+    LaunchedEffect(searchQuery) {
+        delay(250)
+        debouncedQuery = SearchNormalizer.normalizeQuery(searchQuery)
+    }
+    val activeQuery = debouncedQuery
+    val pagerFlow = remember(section, authConfig, activeQuery) {
+        if (activeQuery.isBlank()) {
+            contentRepository.pager(section, authConfig).flow
+        } else {
+            contentRepository.searchPager(section, activeQuery, authConfig).flow
+        }
     }
     val lazyItems = pagerFlow.collectAsLazyPagingItems()
 
-    LaunchedEffect(lazyItems.itemCount, section) {
+    LaunchedEffect(lazyItems.itemCount, section, activeQuery) {
         if (lazyItems.itemCount > 0) {
             contentItemFocusRequester.requestFocus()
         }
@@ -1236,11 +1332,21 @@ fun SectionScreen(
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp
                 )
+                Spacer(modifier = Modifier.weight(1f))
+                SearchInput(
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    placeholder = "Search...",
+                    focusRequester = searchFocusRequester,
+                    modifier = Modifier.width(240.dp),
+                    onMoveLeft = onMoveLeft,
+                    onMoveDown = { contentItemFocusRequester.requestFocus() }
+                )
             }
             Spacer(modifier = Modifier.height(8.dp))
             if (lazyItems.loadState.refresh is LoadState.Loading && lazyItems.itemCount == 0) {
                 Text(
-                    text = "Loading content...",
+                    text = if (activeQuery.isBlank()) "Loading content..." else "Searching...",
                     color = Color(0xFF94A3B8),
                     fontSize = 14.sp,
                     fontFamily = FontFamily.Serif,
@@ -1248,7 +1354,7 @@ fun SectionScreen(
                 )
             } else if (lazyItems.loadState.refresh is LoadState.Error) {
                 Text(
-                    text = "Content failed to load",
+                    text = if (activeQuery.isBlank()) "Content failed to load" else "Search failed to load",
                     color = Color(0xFFE4A9A9),
                     fontSize = 14.sp,
                     fontFamily = FontFamily.Serif,
@@ -1256,7 +1362,7 @@ fun SectionScreen(
                 )
             } else if (lazyItems.itemCount == 0) {
                 Text(
-                    text = "No content yet",
+                    text = if (activeQuery.isBlank()) "No content yet" else "No results found",
                     color = Color(0xFF94A3B8),
                     fontSize = 14.sp,
                     fontFamily = FontFamily.Serif,
@@ -1284,6 +1390,7 @@ fun SectionScreen(
                             else -> null
                         }
                         val isLeftEdge = index % columns == 0
+                        val isTopRow = index < columns
                         ContentCard(
                             item = item,
                             focusRequester = requester,
@@ -1294,7 +1401,12 @@ fun SectionScreen(
                                 null
                             },
                             onFocused = onItemFocused,
-                            onMoveLeft = onMoveLeft
+                            onMoveLeft = onMoveLeft,
+                            onMoveUp = if (isTopRow) {
+                                { searchFocusRequester.requestFocus() }
+                            } else {
+                                null
+                            }
                         )
                     }
                 }
@@ -1322,12 +1434,24 @@ fun CategorySectionScreen(
     var categories by remember { mutableStateOf<List<CategoryItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var searchQuery by remember { mutableStateOf("") }
+    var debouncedQuery by remember { mutableStateOf("") }
     val columns = 3
     val tabFocusRequesters = remember {
         ContentType.values().map { FocusRequester() }
     }
     val backTabFocusRequester = remember { FocusRequester() }
-    val backFocusRequester = remember { FocusRequester() }
+    val searchFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(activeType) {
+        searchQuery = ""
+        debouncedQuery = ""
+    }
+    LaunchedEffect(searchQuery) {
+        delay(250)
+        debouncedQuery = SearchNormalizer.normalizeQuery(searchQuery)
+    }
+    val activeQuery = debouncedQuery
 
     BackHandler(enabled = selectedSeries != null || selectedCategory != null) {
         if (selectedSeries != null) {
@@ -1373,50 +1497,75 @@ fun CategorySectionScreen(
                 .border(1.dp, Color(0xFF1E2738), shape)
                 .padding(20.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = title,
-                    color = Color.White,
-                    fontSize = 20.sp,
-                    fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (selectedCategory != null) {
-                        CategoryTypeTab(
-                            label = "Back",
-                            selected = false,
-                            focusRequester = backTabFocusRequester,
-                            onActivate = { selectedCategory = null },
-                            onMoveRight = { tabFocusRequesters.first().requestFocus() }
-                        )
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = title,
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontFamily = FontFamily.Serif,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (selectedCategory != null) {
+                            CategoryTypeTab(
+                                label = "Back",
+                                selected = false,
+                                focusRequester = backTabFocusRequester,
+                                onActivate = { selectedCategory = null },
+                                onMoveLeft = { searchFocusRequester.requestFocus() },
+                                onMoveRight = { tabFocusRequesters.first().requestFocus() }
+                            )
+                        }
+                        ContentType.values().forEachIndexed { index, type ->
+                            val requester = tabFocusRequesters[index]
+                            CategoryTypeTab(
+                                label = type.label,
+                                selected = activeType == type,
+                                focusRequester = requester,
+                                onActivate = { activeType = type },
+                                onMoveLeft = if (index > 0) {
+                                    { tabFocusRequesters[index - 1].requestFocus() }
+                                } else if (selectedCategory != null) {
+                                    { backTabFocusRequester.requestFocus() }
+                                } else {
+                                    { searchFocusRequester.requestFocus() }
+                                },
+                                onMoveRight = if (index < tabFocusRequesters.lastIndex) {
+                                    { tabFocusRequesters[index + 1].requestFocus() }
+                                } else {
+                                    null
+                                }
+                            )
+                        }
                     }
-                    ContentType.values().forEachIndexed { index, type ->
-                        val requester = tabFocusRequesters[index]
-                        CategoryTypeTab(
-                            label = type.label,
-                            selected = activeType == type,
-                            focusRequester = requester,
-                            onActivate = { activeType = type },
-                            onMoveLeft = if (index > 0) {
-                                { tabFocusRequesters[index - 1].requestFocus() }
-                            } else if (selectedCategory != null) {
-                                { backTabFocusRequester.requestFocus() }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    SearchInput(
+                        query = searchQuery,
+                        onQueryChange = { searchQuery = it },
+                        placeholder = "Search...",
+                        focusRequester = searchFocusRequester,
+                        modifier = Modifier.width(240.dp),
+                        onMoveLeft = onMoveLeft,
+                        onMoveRight = {
+                            if (selectedCategory != null) {
+                                backTabFocusRequester.requestFocus()
                             } else {
-                                null
-                            },
-                            onMoveRight = if (index < tabFocusRequesters.lastIndex) {
-                                { tabFocusRequesters[index + 1].requestFocus() }
-                            } else {
-                                null
+                                tabFocusRequesters.firstOrNull()?.requestFocus()
                             }
-                        )
-                    }
+                        },
+                        onMoveDown = { contentItemFocusRequester.requestFocus() }
+                    )
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
@@ -1439,107 +1588,105 @@ fun CategorySectionScreen(
                         }
                     )
                 } else {
-                    val pagerFlow = remember(category.id, activeType, authConfig) {
-                        contentRepository.categoryPager(activeType, category.id, authConfig).flow
+                    val pagerFlow = remember(category.id, activeType, authConfig, activeQuery) {
+                        if (activeQuery.isBlank()) {
+                            contentRepository.categoryPager(activeType, category.id, authConfig).flow
+                        } else {
+                            contentRepository.categorySearchPager(
+                                activeType,
+                                category.id,
+                                activeQuery,
+                                authConfig
+                            ).flow
+                        }
                     }
                     val lazyItems = pagerFlow.collectAsLazyPagingItems()
-                    LaunchedEffect(lazyItems.itemCount, category.id) {
+                    LaunchedEffect(lazyItems.itemCount, category.id, activeType, activeQuery) {
                         if (lazyItems.itemCount > 0) {
                             contentItemFocusRequester.requestFocus()
                         }
                     }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    Text(
+                        text = if (activeQuery.isBlank()) category.name else "Search results",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontFamily = FontFamily.Serif,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    if (lazyItems.loadState.refresh is LoadState.Loading && lazyItems.itemCount == 0) {
                         Text(
-                            text = "< BACK",
-                            color = Color(0xFFE6ECF7),
+                            text = if (activeQuery.isBlank()) "Loading content..." else "Searching...",
+                            color = Color(0xFF94A3B8),
                             fontSize = 14.sp,
                             fontFamily = FontFamily.Serif,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier
-                                .focusRequester(backFocusRequester)
-                                .focusable()
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
-                                ) { selectedCategory = null }
-                                .onKeyEvent {
-                                    if (it.type != KeyEventType.KeyDown) {
-                                        false
-                                    } else if (it.key == Key.DirectionLeft) {
-                                        onMoveLeft()
-                                        true
-                                    } else if (
-                                        it.key == Key.Enter ||
-                                        it.key == Key.NumPadEnter ||
-                                        it.key == Key.DirectionCenter
-                                    ) {
-                                        selectedCategory = null
-                                        true
-                                    } else {
-                                        false
-                                    }
-                                }
-                                .padding(end = 12.dp)
+                            letterSpacing = 0.6.sp
                         )
+                    } else if (lazyItems.loadState.refresh is LoadState.Error) {
                         Text(
-                            text = category.name,
-                            color = Color.White,
-                            fontSize = 16.sp,
+                            text = if (activeQuery.isBlank()) "Content failed to load" else "Search failed to load",
+                            color = Color(0xFFE4A9A9),
+                            fontSize = 14.sp,
                             fontFamily = FontFamily.Serif,
-                            fontWeight = FontWeight.Medium
+                            letterSpacing = 0.6.sp
                         )
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(columns),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                    ) {
-                        items(
-                            count = lazyItems.itemCount,
-                            key = { index ->
-                                lazyItems[index]?.id ?: "cat-item-$index"
-                            }
-                        ) { index ->
-                            val item = lazyItems[index]
-                            val isLeftEdge = index % columns == 0
-                            val isTopRow = index < columns
-                            val requester = when {
-                                item?.id != null && item.id == resumeFocusId -> resumeFocusRequester
-                                index == 0 -> contentItemFocusRequester
-                                else -> null
-                            }
-                            ContentCard(
-                                item = item,
-                                focusRequester = requester,
-                                isLeftEdge = isLeftEdge,
-                                onActivate = if (item != null) {
-                                    {
-                                        if (activeType == ContentType.SERIES &&
-                                            item.containerExtension.isNullOrBlank()
-                                        ) {
-                                            selectedSeries = item
-                                        } else {
-                                            onPlay(item)
-                                        }
-                                    }
-                                } else {
-                                    null
-                                },
-                                onFocused = onItemFocused,
-                                onMoveLeft = onMoveLeft,
-                                onMoveUp = if (isTopRow) {
-                                    { backFocusRequester.requestFocus() }
-                                } else {
-                                    null
+                    } else if (lazyItems.itemCount == 0) {
+                        Text(
+                            text = if (activeQuery.isBlank()) "No content yet" else "No results found",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 14.sp,
+                            fontFamily = FontFamily.Serif,
+                            letterSpacing = 0.6.sp
+                        )
+                    } else {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(columns),
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                        ) {
+                            items(
+                                count = lazyItems.itemCount,
+                                key = { index ->
+                                    lazyItems[index]?.id ?: "cat-item-$index"
                                 }
-                            )
+                            ) { index ->
+                                val item = lazyItems[index]
+                                val isLeftEdge = index % columns == 0
+                                val isTopRow = index < columns
+                                val requester = when {
+                                    item?.id != null && item.id == resumeFocusId -> resumeFocusRequester
+                                    index == 0 -> contentItemFocusRequester
+                                    else -> null
+                                }
+                                ContentCard(
+                                    item = item,
+                                    focusRequester = requester,
+                                    isLeftEdge = isLeftEdge,
+                                    onActivate = if (item != null) {
+                                        {
+                                            if (activeType == ContentType.SERIES &&
+                                                item.containerExtension.isNullOrBlank()
+                                            ) {
+                                                selectedSeries = item
+                                            } else {
+                                                onPlay(item)
+                                            }
+                                        }
+                                    } else {
+                                        null
+                                    },
+                                    onFocused = onItemFocused,
+                                    onMoveLeft = onMoveLeft,
+                                    onMoveUp = if (isTopRow) {
+                                        { searchFocusRequester.requestFocus() }
+                                    } else {
+                                        null
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -1560,25 +1707,49 @@ fun CategorySectionScreen(
                     letterSpacing = 0.6.sp
                 )
             } else {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(columns),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                ) {
-                    items(categories.size) { index ->
-                        val category = categories[index]
-                        val requester = if (index == 0) contentItemFocusRequester else null
-                        val isLeftEdge = index % columns == 0
-                        CategoryCard(
-                            label = category.name,
-                            focusRequester = requester,
-                            isLeftEdge = isLeftEdge,
-                            onActivate = { selectedCategory = category },
-                            onMoveLeft = onMoveLeft
-                        )
+                val filteredCategories = if (activeQuery.isBlank()) {
+                    categories
+                } else {
+                    categories.filter {
+                        SearchNormalizer.normalizeTitle(it.name)
+                            .contains(activeQuery, ignoreCase = true)
+                    }
+                }
+                if (activeQuery.isNotBlank() && filteredCategories.isEmpty()) {
+                    Text(
+                        text = "No categories found",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 14.sp,
+                        fontFamily = FontFamily.Serif,
+                        letterSpacing = 0.6.sp
+                    )
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(columns),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    ) {
+                        items(filteredCategories.size) { index ->
+                            val category = filteredCategories[index]
+                            val requester = if (index == 0) contentItemFocusRequester else null
+                            val isLeftEdge = index % columns == 0
+                            val isTopRow = index < columns
+                            CategoryCard(
+                                label = category.name,
+                                focusRequester = requester,
+                                isLeftEdge = isLeftEdge,
+                                onActivate = { selectedCategory = category },
+                                onMoveLeft = onMoveLeft,
+                                onMoveUp = if (isTopRow) {
+                                    { searchFocusRequester.requestFocus() }
+                                } else {
+                                    null
+                                }
+                            )
+                        }
                     }
                 }
             }
