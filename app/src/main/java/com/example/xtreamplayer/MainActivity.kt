@@ -495,7 +495,10 @@ private fun PlayerOverlay(
     }
 
     BackHandler(enabled = true) {
-        onExit()
+        val dismissed = playerView?.dismissSettingsWindowIfShowing() == true
+        if (!dismissed) {
+            onExit()
+        }
     }
 
     Box(
@@ -520,22 +523,38 @@ private fun PlayerOverlay(
                     forcedAspectRatio = resizeMode.forcedAspectRatio
                     setResizeModeLabel(resizeMode.label)
                     onResizeModeClick = { resizeMode = nextResizeMode(resizeMode) }
+                    onBackClick = onExit
                     isFocusable = true
                     isFocusableInTouchMode = true
                     setControllerVisibilityListener(
                         PlayerView.ControllerVisibilityListener { visibility ->
-                            controlsVisible = visibility == View.VISIBLE
+                            val visible = visibility == View.VISIBLE
+                            controlsVisible = visible
+                            if (visible) {
+                                focusPlayPause()
+                            } else {
+                                resetControllerFocus()
+                            }
                         }
                     )
                     setOnKeyListener { _, _, event ->
                         if (event.action != KeyEvent.ACTION_DOWN) {
                             return@setOnKeyListener false
                         }
+                        if (event.keyCode == KeyEvent.KEYCODE_BACK ||
+                            event.keyCode == KeyEvent.KEYCODE_ESCAPE
+                        ) {
+                            val dismissed = dismissSettingsWindowIfShowing()
+                            if (!dismissed) {
+                                onExit()
+                            }
+                            return@setOnKeyListener true
+                        }
                         val isSelect =
                             event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
                                 event.keyCode == KeyEvent.KEYCODE_ENTER ||
                                 event.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
-                        if (isSelect && !controlsVisible) {
+                        if (isSelect && !isControllerFullyVisible()) {
                             showController()
                             return@setOnKeyListener true
                         }
@@ -550,6 +569,7 @@ private fun PlayerOverlay(
                 view.forcedAspectRatio = resizeMode.forcedAspectRatio
                 view.setResizeModeLabel(resizeMode.label)
                 view.onResizeModeClick = { resizeMode = nextResizeMode(resizeMode) }
+                view.onBackClick = onExit
                 if (playerView != view) {
                     playerView = view
                 }
@@ -563,20 +583,6 @@ private fun PlayerOverlay(
                     .padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(
-                    onClick = onExit,
-                    colors = IconButtonDefaults.iconButtonColors(
-                        containerColor = Color(0x66000000),
-                        contentColor = Color.White
-                    ),
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_back),
-                        contentDescription = "Back"
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = title,
                     color = Color.White,
@@ -928,7 +934,8 @@ private fun ContentCard(
     isLeftEdge: Boolean,
     onActivate: (() -> Unit)?,
     onFocused: ((ContentItem) -> Unit)?,
-    onMoveLeft: () -> Unit
+    onMoveLeft: () -> Unit,
+    onMoveUp: (() -> Unit)? = null
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -971,6 +978,9 @@ private fun ContentCard(
                     false
                 } else if (isLeftEdge && it.key == Key.DirectionLeft) {
                     onMoveLeft()
+                    true
+                } else if (onMoveUp != null && it.key == Key.DirectionUp) {
+                    onMoveUp()
                     true
                 } else if (
                     onActivate != null &&
@@ -1105,7 +1115,9 @@ private fun CategoryTypeTab(
     label: String,
     selected: Boolean,
     focusRequester: FocusRequester?,
-    onActivate: () -> Unit
+    onActivate: () -> Unit,
+    onMoveLeft: (() -> Unit)? = null,
+    onMoveRight: (() -> Unit)? = null
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -1128,6 +1140,12 @@ private fun CategoryTypeTab(
             .onKeyEvent {
                 if (it.type != KeyEventType.KeyDown) {
                     false
+                } else if (onMoveLeft != null && it.key == Key.DirectionLeft) {
+                    onMoveLeft()
+                    true
+                } else if (onMoveRight != null && it.key == Key.DirectionRight) {
+                    onMoveRight()
+                    true
                 } else if (
                     it.key == Key.Enter ||
                     it.key == Key.NumPadEnter ||
@@ -1305,7 +1323,20 @@ fun CategorySectionScreen(
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val columns = 3
-    val tabFocusRequester = remember { FocusRequester() }
+    val tabFocusRequesters = remember {
+        ContentType.values().map { FocusRequester() }
+    }
+    val backTabFocusRequester = remember { FocusRequester() }
+    val backFocusRequester = remember { FocusRequester() }
+
+    BackHandler(enabled = selectedSeries != null || selectedCategory != null) {
+        if (selectedSeries != null) {
+            onItemFocused(selectedSeries!!)
+            selectedSeries = null
+        } else {
+            selectedCategory = null
+        }
+    }
 
     LaunchedEffect(activeType, authConfig) {
         isLoading = true
@@ -1356,13 +1387,34 @@ fun CategorySectionScreen(
                     letterSpacing = 1.sp
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (selectedCategory != null) {
+                        CategoryTypeTab(
+                            label = "Back",
+                            selected = false,
+                            focusRequester = backTabFocusRequester,
+                            onActivate = { selectedCategory = null },
+                            onMoveRight = { tabFocusRequesters.first().requestFocus() }
+                        )
+                    }
                     ContentType.values().forEachIndexed { index, type ->
-                        val requester = if (index == 0) tabFocusRequester else null
+                        val requester = tabFocusRequesters[index]
                         CategoryTypeTab(
                             label = type.label,
                             selected = activeType == type,
                             focusRequester = requester,
-                            onActivate = { activeType = type }
+                            onActivate = { activeType = type },
+                            onMoveLeft = if (index > 0) {
+                                { tabFocusRequesters[index - 1].requestFocus() }
+                            } else if (selectedCategory != null) {
+                                { backTabFocusRequester.requestFocus() }
+                            } else {
+                                null
+                            },
+                            onMoveRight = if (index < tabFocusRequesters.lastIndex) {
+                                { tabFocusRequesters[index + 1].requestFocus() }
+                            } else {
+                                null
+                            }
                         )
                     }
                 }
@@ -1407,6 +1459,7 @@ fun CategorySectionScreen(
                             fontFamily = FontFamily.Serif,
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier
+                                .focusRequester(backFocusRequester)
                                 .focusable()
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
@@ -1456,6 +1509,7 @@ fun CategorySectionScreen(
                         ) { index ->
                             val item = lazyItems[index]
                             val isLeftEdge = index % columns == 0
+                            val isTopRow = index < columns
                             val requester = when {
                                 item?.id != null && item.id == resumeFocusId -> resumeFocusRequester
                                 index == 0 -> contentItemFocusRequester
@@ -1479,7 +1533,12 @@ fun CategorySectionScreen(
                                     null
                                 },
                                 onFocused = onItemFocused,
-                                onMoveLeft = onMoveLeft
+                                onMoveLeft = onMoveLeft,
+                                onMoveUp = if (isTopRow) {
+                                    { backFocusRequester.requestFocus() }
+                                } else {
+                                    null
+                                }
                             )
                         }
                     }
@@ -1647,6 +1706,7 @@ fun SeriesEpisodesScreen(
                         else -> null
                     }
                     val isLeftEdge = index % columns == 0
+                    val isTopRow = index < columns
                     ContentCard(
                         item = item,
                         focusRequester = requester,
@@ -1657,7 +1717,12 @@ fun SeriesEpisodesScreen(
                             null
                         },
                         onFocused = onItemFocused,
-                        onMoveLeft = onMoveLeft
+                        onMoveLeft = onMoveLeft,
+                        onMoveUp = if (isTopRow) {
+                            { backFocusRequester.requestFocus() }
+                        } else {
+                            null
+                        }
                     )
                 }
             }

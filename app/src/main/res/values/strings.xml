@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Xtream Player</string>
+    <string name="exo_controls_back_description">Back</string>
 </resources>
