@@ -33,3 +33,7 @@ Release build (unsigned):
 
 Signed release APKs are published on GitHub Releases.
 The release keystore is private and not stored in this repo.
+
+## screenshots
+![Home](docs/screenshots/home.png)
+![Player](docs/screenshots/player.png)
