@@ -26,6 +26,16 @@
         android:layout_height="0dp"
         android:background="@color/exo_black_opacity_60" />
 
+    <ImageButton
+        android:id="@+id/exo_back"
+        style="@style/ExoStyledControls.Button.Bottom"
+        android:layout_gravity="top|start"
+        android:layout_margin="@dimen/exo_styled_controls_padding"
+        android:src="@drawable/ic_back"
+        android:contentDescription="@string/exo_controls_back_description"
+        android:focusable="true"
+        android:clickable="true" />
+
     <FrameLayout
         android:id="@id/exo_bottom_bar"
         android:layout_width="match_parent"
@@ -171,21 +181,24 @@
         android:clipToPadding="false"
         android:layoutDirection="ltr">
 
-        <ImageButton
-            android:id="@id/exo_prev"
-            style="@style/ExoStyledControls.Button.Center.Previous" />
+    <ImageButton
+        android:id="@id/exo_prev"
+        style="@style/ExoStyledControls.Button.Center.Previous"
+        android:background="@drawable/exo_controls_button_background" />
 
         <include layout="@layout/exo_player_control_rewind_button" />
 
-        <ImageButton
-            android:id="@id/exo_play_pause"
-            style="@style/ExoStyledControls.Button.Center.PlayPause" />
+    <ImageButton
+        android:id="@id/exo_play_pause"
+        style="@style/ExoStyledControls.Button.Center.PlayPause"
+        android:background="@drawable/exo_controls_button_background" />
 
         <include layout="@layout/exo_player_control_ffwd_button" />
 
-        <ImageButton
-            android:id="@id/exo_next"
-            style="@style/ExoStyledControls.Button.Center.Next" />
+    <ImageButton
+        android:id="@id/exo_next"
+        style="@style/ExoStyledControls.Button.Center.Next"
+        android:background="@drawable/exo_controls_button_background" />
 
     </LinearLayout>
 

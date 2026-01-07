@@ -3,9 +3,11 @@ package com.example.xtreamplayer.player
 import android.content.Context
 import android.util.AttributeSet
 import android.view.View
+import android.widget.PopupWindow
 import android.widget.TextView
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerControlView
 import androidx.media3.ui.PlayerView
 import com.example.xtreamplayer.R
 import androidx.media3.ui.R as Media3UiR
@@ -19,10 +21,16 @@ class XtreamPlayerView @JvmOverloads constructor(
     private var lastVideoAspectRatio = 0f
     private var resizeModeView: TextView? = null
     private var resizeModeLabel: String = "Fit"
+    private var backButtonView: View? = null
     var onResizeModeClick: (() -> Unit)? = null
         set(value) {
             field = value
             bindResizeModeView()
+        }
+    var onBackClick: (() -> Unit)? = null
+        set(value) {
+            field = value
+            bindBackButtonView()
         }
     var forcedAspectRatio: Float? = null
         set(value) {
@@ -39,6 +47,26 @@ class XtreamPlayerView @JvmOverloads constructor(
         val controller = findViewById<View>(Media3UiR.id.exo_controller)
         controller?.clearFocus()
         requestFocus()
+    }
+
+    fun focusPlayPause() {
+        findViewById<View>(Media3UiR.id.exo_play_pause)?.requestFocus()
+    }
+
+    fun dismissSettingsWindowIfShowing(): Boolean {
+        val controller = findViewById<View>(Media3UiR.id.exo_controller) as? PlayerControlView
+            ?: return false
+        return runCatching {
+            val field = PlayerControlView::class.java.getDeclaredField("settingsWindow")
+            field.isAccessible = true
+            val popup = field.get(controller) as? PopupWindow ?: return false
+            if (popup.isShowing) {
+                popup.dismiss()
+                true
+            } else {
+                false
+            }
+        }.getOrDefault(false)
     }
 
     override fun onContentAspectRatioChanged(
@@ -62,6 +90,7 @@ class XtreamPlayerView @JvmOverloads constructor(
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         bindResizeModeView()
+        bindBackButtonView()
     }
 
     private fun bindResizeModeView() {
@@ -72,5 +101,12 @@ class XtreamPlayerView @JvmOverloads constructor(
             view.text = resizeModeLabel
             view.setOnClickListener { onResizeModeClick?.invoke() }
         }
+    }
+
+    private fun bindBackButtonView() {
+        val view = backButtonView ?: findViewById<View>(R.id.exo_back).also {
+            backButtonView = it
+        }
+        view?.setOnClickListener { onBackClick?.invoke() }
     }
 }
