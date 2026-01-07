@@ -22,3 +22,7 @@ Thumbs.db
 # APK / AAB
 *.apk
 *.aab
+
+# Signing keys
+*.keystore
+*.jks
