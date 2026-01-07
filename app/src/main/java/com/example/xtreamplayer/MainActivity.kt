@@ -6,6 +6,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
@@ -22,6 +25,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.Arrangement
@@ -44,6 +48,9 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -60,6 +67,35 @@ import com.example.xtreamplayer.player.Media3PlaybackEngine
 import android.net.Uri
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.paging.LoadState
+import androidx.paging.compose.collectAsLazyPagingItems
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.example.xtreamplayer.api.XtreamApi
+import com.example.xtreamplayer.auth.AuthConfig
+import com.example.xtreamplayer.auth.AuthViewModel
+import com.example.xtreamplayer.auth.AuthViewModelFactory
+import com.example.xtreamplayer.content.CategoryItem
+import com.example.xtreamplayer.content.ContentItem
+import com.example.xtreamplayer.content.ContentCache
+import com.example.xtreamplayer.content.ContentRepository
+import com.example.xtreamplayer.content.ContentType
+import kotlinx.coroutines.launch
+import androidx.media3.common.Player
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.view.KeyEvent
+import android.view.View
+import android.graphics.Color as AndroidColor
+import com.example.xtreamplayer.player.XtreamPlayerView
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.ui.res.painterResource
+import com.example.xtreamplayer.R
 
 private const val DEMO_VIDEO_URL =
     "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
@@ -83,11 +119,24 @@ fun RootScreen() {
         factory = SettingsViewModelFactory(context.applicationContext)
     )
     val settings by settingsViewModel.settings.collectAsStateWithLifecycle()
+    val coroutineScope = rememberCoroutineScope()
     val playbackSettingsController = remember { PlaybackSettingsController() }
     val playbackEngine = remember { Media3PlaybackEngine(context.applicationContext) }
+    val api = remember { XtreamApi() }
+    val contentCache = remember { ContentCache(context.applicationContext) }
+    val contentRepository = remember { ContentRepository(api, contentCache) }
+    val authViewModel: AuthViewModel = viewModel(
+        factory = AuthViewModelFactory(context.applicationContext, api)
+    )
+    val authState by authViewModel.uiState.collectAsStateWithLifecycle()
+    val savedConfig by authViewModel.savedConfig.collectAsStateWithLifecycle()
 
     var selectedSection by remember { mutableStateOf(Section.ALL) }
     var navExpanded by remember { mutableStateOf(true) }
+    var showManageLists by remember { mutableStateOf(false) }
+    var activePlayback by remember { mutableStateOf<PlaybackItem?>(null) }
+    var resumeFocusId by remember { mutableStateOf<String?>(null) }
+    val resumeFocusRequester = remember { FocusRequester() }
 
     var moveFocusToContent by remember { mutableStateOf(false) }
     var moveFocusToNav by remember { mutableStateOf(false) }
@@ -123,9 +172,73 @@ fun RootScreen() {
         }
     }
 
+    LaunchedEffect(settings.autoSignIn, settings.rememberLogin, savedConfig) {
+        authViewModel.tryAutoSignIn(settings)
+    }
+
+    LaunchedEffect(authState.activeConfig?.username, authState.activeConfig?.baseUrl) {
+        contentRepository.clearCache()
+        coroutineScope.launch {
+            contentRepository.clearDiskCache()
+        }
+    }
+
+    LaunchedEffect(authState.isSignedIn) {
+        if (authState.isSignedIn) {
+            navExpanded = true
+            moveFocusToNav = true
+            showManageLists = false
+        }
+    }
+
+    LaunchedEffect(selectedSection) {
+        if (selectedSection != Section.SETTINGS) {
+            showManageLists = false
+        }
+    }
+
+    LaunchedEffect(showManageLists) {
+        if (showManageLists) {
+            moveFocusToContent = true
+        }
+    }
+
+    LaunchedEffect(activePlayback?.uri) {
+        if (activePlayback != null) {
+            playbackEngine.setMedia(activePlayback!!.uri)
+            playbackEngine.player.playWhenReady = true
+        } else {
+            playbackEngine.player.stop()
+            if (resumeFocusId != null) {
+                resumeFocusRequester.requestFocus()
+            }
+        }
+    }
+
+    val handleItemFocused: (ContentItem) -> Unit = { item ->
+        resumeFocusId = item.id
+    }
+
+    val handlePlayItem: (ContentItem) -> Unit = { item ->
+        val config = authState.activeConfig
+        if (config != null) {
+            resumeFocusId = item.id
+            val url = StreamUrlBuilder.buildUrl(
+                config = config,
+                type = item.contentType,
+                streamId = item.streamId,
+                extension = item.containerExtension
+            )
+            activePlayback = PlaybackItem(
+                uri = Uri.parse(url),
+                title = item.title,
+                type = item.contentType
+            )
+        }
+    }
+
     DisposableEffect(playbackEngine) {
         playbackSettingsController.bind(playbackEngine)
-        playbackEngine.setMedia(Uri.parse(DEMO_VIDEO_URL))
         onDispose {
             playbackSettingsController.unbind(playbackEngine)
             playbackEngine.release()
@@ -137,84 +250,371 @@ fun RootScreen() {
     }
 
     AppBackground {
-        Column(modifier = Modifier.fillMaxSize()) {
+        val showAuthLoading = !authState.isSignedIn &&
+            authState.errorMessage == null &&
+            (authState.isLoading ||
+                (settings.autoSignIn && settings.rememberLogin && savedConfig != null))
+
+        if (showAuthLoading) {
+            AuthLoadingScreen()
+        } else if (authState.isSignedIn) {
+            Column(modifier = Modifier.fillMaxSize()) {
 
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(120.dp)
-                    .padding(start = 24.dp, top = 24.dp)
+                    .height(72.dp)
+                    .padding(start = 20.dp, top = 12.dp)
             ) {
                 MenuButton(
                     expanded = navExpanded,
                     onToggle = { navExpanded = !navExpanded }
                 )
-            }
+                }
 
-            Row(modifier = Modifier.fillMaxSize()) {
+                Row(modifier = Modifier.fillMaxSize()) {
 
-                SideNav(
-                    selectedSection = selectedSection,
-                    onSectionSelected = { selectedSection = it },
-                    onMoveRight = { moveFocusToContent = true },
-                    expanded = navExpanded,
-                    allNavItemFocusRequester = allNavItemFocusRequester,
-                    moviesNavItemFocusRequester = moviesNavItemFocusRequester,
-                    seriesNavItemFocusRequester = seriesNavItemFocusRequester,
-                    liveNavItemFocusRequester = liveNavItemFocusRequester,
-                    categoriesNavItemFocusRequester = categoriesNavItemFocusRequester,
-                    settingsNavItemFocusRequester = settingsNavItemFocusRequester
-                )
+                    SideNav(
+                        selectedSection = selectedSection,
+                        onSectionSelected = {
+                            selectedSection = it
+                            moveFocusToContent = true
+                        },
+                        onMoveRight = { moveFocusToContent = true },
+                        expanded = navExpanded,
+                        allNavItemFocusRequester = allNavItemFocusRequester,
+                        moviesNavItemFocusRequester = moviesNavItemFocusRequester,
+                        seriesNavItemFocusRequester = seriesNavItemFocusRequester,
+                        liveNavItemFocusRequester = liveNavItemFocusRequester,
+                        categoriesNavItemFocusRequester = categoriesNavItemFocusRequester,
+                        settingsNavItemFocusRequester = settingsNavItemFocusRequester
+                    )
 
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .weight(1f)
-                ) {
-                    val sectionTitle = when (selectedSection) {
-                        Section.ALL -> "ALL CONTENT"
-                        Section.MOVIES -> "MOVIES CONTENT"
-                        Section.SERIES -> "SERIES CONTENT"
-                        Section.LIVE -> "LIVE CONTENT"
-                        Section.CATEGORIES -> "CATEGORIES CONTENT"
-                        Section.SETTINGS -> "SETTINGS"
-                    }
-
-                    val handleMoveLeft = {
-                        if (!navExpanded) {
-                            navExpanded = true
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .weight(1f)
+                    ) {
+                        val sectionTitle = when (selectedSection) {
+                            Section.ALL -> "ALL CONTENT"
+                            Section.MOVIES -> "MOVIES CONTENT"
+                            Section.SERIES -> "SERIES CONTENT"
+                            Section.LIVE -> "LIVE CONTENT"
+                            Section.CATEGORIES -> "CATEGORIES CONTENT"
+                            Section.SETTINGS -> "SETTINGS"
                         }
-                        moveFocusToNav = true
-                    }
 
-                    if (selectedSection == Section.SETTINGS) {
-                        SettingsScreen(
-                            settings = settings,
-                            contentItemFocusRequester = contentItemFocusRequester,
-                            onMoveLeft = handleMoveLeft,
-                            onToggleAutoPlay = settingsViewModel::toggleAutoPlayNext,
-                            onToggleSubtitles = settingsViewModel::toggleSubtitles,
-                            onToggleMatchFrameRate = settingsViewModel::toggleMatchFrameRate,
-                            onCyclePlaybackQuality = settingsViewModel::cyclePlaybackQuality,
-                            onCycleAudioLanguage = settingsViewModel::cycleAudioLanguage,
-                            onToggleWifiOnly = settingsViewModel::toggleWifiOnlyStreaming,
-                            onToggleDataSaver = settingsViewModel::toggleDataSaver,
-                            onToggleRememberLogin = settingsViewModel::toggleRememberLogin,
-                            onToggleAutoSignIn = settingsViewModel::toggleAutoSignIn,
-                            onToggleParentalPin = settingsViewModel::toggleParentalPin,
-                            onCycleParentalRating = settingsViewModel::cycleParentalRating
-                        )
-                    } else {
-                        SectionScreen(
-                            title = sectionTitle,
-                            player = playbackEngine.player,
-                            contentItemFocusRequester = contentItemFocusRequester,
-                            onMoveLeft = handleMoveLeft
-                        )
+                        val handleMoveLeft = {
+                            if (!navExpanded) {
+                                navExpanded = true
+                            }
+                            moveFocusToNav = true
+                        }
+
+                        if (selectedSection == Section.SETTINGS) {
+                            if (showManageLists) {
+                                ManageListsScreen(
+                                    savedConfig = savedConfig,
+                                    activeConfig = authState.activeConfig,
+                                    contentItemFocusRequester = contentItemFocusRequester,
+                                    onMoveLeft = handleMoveLeft,
+                                    onBack = { showManageLists = false },
+                                    onEditList = {
+                                        showManageLists = false
+                                        contentRepository.clearCache()
+                                        coroutineScope.launch {
+                                            contentRepository.clearDiskCache()
+                                        }
+                                        authViewModel.enterEditMode()
+                                    },
+                                    onSignOut = {
+                                        showManageLists = false
+                                        contentRepository.clearCache()
+                                        coroutineScope.launch {
+                                            contentRepository.clearDiskCache()
+                                        }
+                                        authViewModel.signOut(keepSaved = true)
+                                    },
+                                    onForgetList = {
+                                        showManageLists = false
+                                        contentRepository.clearCache()
+                                        coroutineScope.launch {
+                                            contentRepository.clearDiskCache()
+                                        }
+                                        authViewModel.signOut(keepSaved = false)
+                                    }
+                                )
+                            } else {
+                                val activeListName = authState.activeConfig?.listName
+                                    ?: savedConfig?.listName
+                                    ?: "Not set"
+                                SettingsScreen(
+                                    settings = settings,
+                                    activeListName = activeListName,
+                                    contentItemFocusRequester = contentItemFocusRequester,
+                                    onMoveLeft = handleMoveLeft,
+                                    onToggleAutoPlay = settingsViewModel::toggleAutoPlayNext,
+                                    onToggleSubtitles = settingsViewModel::toggleSubtitles,
+                                    onToggleMatchFrameRate = settingsViewModel::toggleMatchFrameRate,
+                                    onCyclePlaybackQuality = settingsViewModel::cyclePlaybackQuality,
+                                    onCycleAudioLanguage = settingsViewModel::cycleAudioLanguage,
+                                    onToggleRememberLogin = settingsViewModel::toggleRememberLogin,
+                                    onToggleAutoSignIn = settingsViewModel::toggleAutoSignIn,
+                                    onToggleParentalPin = settingsViewModel::toggleParentalPin,
+                                    onCycleParentalRating = settingsViewModel::cycleParentalRating,
+                                    onManageLists = { showManageLists = true },
+                                    onRefreshContent = {
+                                        contentRepository.clearCache()
+                                        coroutineScope.launch {
+                                            contentRepository.clearDiskCache()
+                                        }
+                                    },
+                                    onSignOut = {
+                                        contentRepository.clearCache()
+                                        coroutineScope.launch {
+                                            contentRepository.clearDiskCache()
+                                        }
+                                        authViewModel.signOut(keepSaved = true)
+                                    }
+                                )
+                            }
+                        } else {
+                            val activeConfig = authState.activeConfig
+                            if (activeConfig != null) {
+                                if (selectedSection == Section.CATEGORIES) {
+                                    CategorySectionScreen(
+                                        title = sectionTitle,
+                                        contentRepository = contentRepository,
+                                        authConfig = activeConfig,
+                                        contentItemFocusRequester = contentItemFocusRequester,
+                                        resumeFocusId = resumeFocusId,
+                                        resumeFocusRequester = resumeFocusRequester,
+                                        onItemFocused = handleItemFocused,
+                                        onPlay = handlePlayItem,
+                                        onMoveLeft = handleMoveLeft
+                                    )
+                                } else {
+                                    SectionScreen(
+                                        title = sectionTitle,
+                                        section = selectedSection,
+                                        contentRepository = contentRepository,
+                                        authConfig = activeConfig,
+                                        contentItemFocusRequester = contentItemFocusRequester,
+                                        resumeFocusId = resumeFocusId,
+                                        resumeFocusRequester = resumeFocusRequester,
+                                        onItemFocused = handleItemFocused,
+                                        onPlay = handlePlayItem,
+                                        onMoveLeft = handleMoveLeft
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
+        } else {
+            LoginScreen(
+                authState = authState,
+                initialConfig = savedConfig,
+                onSignIn = { listName, baseUrl, username, password ->
+                    authViewModel.signIn(
+                        listName = listName,
+                        baseUrl = baseUrl,
+                        username = username,
+                        password = password,
+                        rememberLogin = settings.rememberLogin
+                    )
+                }
+            )
         }
+
+        if (activePlayback != null) {
+            PlayerOverlay(
+                title = activePlayback!!.title,
+                player = playbackEngine.player,
+                onExit = { activePlayback = null }
+            )
+        }
+    }
+}
+
+@Composable
+private fun AuthLoadingScreen() {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = "XTREAM PLAYER",
+            color = Color.White,
+            fontSize = 26.sp,
+            fontFamily = FontFamily.Serif,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 2.sp
+        )
+    }
+}
+
+@OptIn(UnstableApi::class)
+@Composable
+private fun PlayerOverlay(
+    title: String,
+    player: Player,
+    onExit: () -> Unit
+) {
+    val context = LocalContext.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val focusRequester = remember { FocusRequester() }
+    var controlsVisible by remember { mutableStateOf(false) }
+    var resizeMode by remember { mutableStateOf(PlayerResizeMode.FIT) }
+    var playerView by remember { mutableStateOf<XtreamPlayerView?>(null) }
+
+    DisposableEffect(Unit) {
+        val activity = context.findActivity()
+        if (activity != null) {
+            val window = activity.window
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            val controller = WindowCompat.getInsetsController(window, window.decorView)
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.statusBars())
+            onDispose {
+                controller.show(WindowInsetsCompat.Type.statusBars())
+                WindowCompat.setDecorFitsSystemWindows(window, true)
+            }
+        } else {
+            onDispose {}
+        }
+    }
+
+    LaunchedEffect(controlsVisible) {
+        if (!controlsVisible) {
+            playerView?.resetControllerFocus()
+            focusRequester.requestFocus()
+        }
+    }
+
+    BackHandler(enabled = true) {
+        onExit()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+    ) {
+        AndroidView(
+            modifier = Modifier
+                .fillMaxSize()
+                .focusRequester(focusRequester)
+                .focusable(interactionSource = interactionSource),
+            factory = { context ->
+                XtreamPlayerView(context).apply {
+                    this.player = player
+                    useController = true
+                    controllerAutoShow = false
+                    setControllerShowTimeoutMs(3000)
+                    setShutterBackgroundColor(AndroidColor.BLACK)
+                    setBackgroundColor(AndroidColor.BLACK)
+                    this.resizeMode = resizeMode.resizeMode
+                    forcedAspectRatio = resizeMode.forcedAspectRatio
+                    setResizeModeLabel(resizeMode.label)
+                    onResizeModeClick = { resizeMode = nextResizeMode(resizeMode) }
+                    isFocusable = true
+                    isFocusableInTouchMode = true
+                    setControllerVisibilityListener(
+                        PlayerView.ControllerVisibilityListener { visibility ->
+                            controlsVisible = visibility == View.VISIBLE
+                        }
+                    )
+                    setOnKeyListener { _, _, event ->
+                        if (event.action != KeyEvent.ACTION_DOWN) {
+                            return@setOnKeyListener false
+                        }
+                        val isSelect =
+                            event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                                event.keyCode == KeyEvent.KEYCODE_ENTER ||
+                                event.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+                        if (isSelect && !controlsVisible) {
+                            showController()
+                            return@setOnKeyListener true
+                        }
+                        false
+                    }
+                    playerView = this
+                }
+            },
+            update = { view ->
+                view.player = player
+                view.resizeMode = resizeMode.resizeMode
+                view.forcedAspectRatio = resizeMode.forcedAspectRatio
+                view.setResizeModeLabel(resizeMode.label)
+                view.onResizeModeClick = { resizeMode = nextResizeMode(resizeMode) }
+                if (playerView != view) {
+                    playerView = view
+                }
+            }
+        )
+        if (controlsVisible) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = onExit,
+                    colors = IconButtonDefaults.iconButtonColors(
+                        containerColor = Color(0x66000000),
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_back),
+                        contentDescription = "Back"
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = title,
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.6.sp
+                )
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+}
+
+private enum class PlayerResizeMode(
+    val label: String,
+    val resizeMode: Int,
+    val forcedAspectRatio: Float?
+) {
+    FIT("Fit", AspectRatioFrameLayout.RESIZE_MODE_FIT, null),
+    STRETCH("Stretch", AspectRatioFrameLayout.RESIZE_MODE_FILL, null),
+    ZOOM("Zoom", AspectRatioFrameLayout.RESIZE_MODE_ZOOM, null),
+    ONE_TO_ONE("1:1", AspectRatioFrameLayout.RESIZE_MODE_FIT, 1f)
+}
+
+private fun nextResizeMode(current: PlayerResizeMode): PlayerResizeMode {
+    val values = PlayerResizeMode.values()
+    return values[(current.ordinal + 1) % values.size]
+}
+
+private fun Context.findActivity(): Activity? {
+    return when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
     }
 }
 
@@ -250,15 +650,6 @@ fun AppBackground(content: @Composable BoxScope.() -> Unit) {
 }
 
 
-enum class Section {
-    ALL,
-    MOVIES,
-    SERIES,
-    LIVE,
-    CATEGORIES,
-    SETTINGS
-}
-
 @Composable
 fun SideNav(
     selectedSection: Section,
@@ -272,21 +663,7 @@ fun SideNav(
     categoriesNavItemFocusRequester: FocusRequester,
     settingsNavItemFocusRequester: FocusRequester
 ) {
-    val navWidth by animateDpAsState(
-        targetValue = if (expanded) 220.dp else 0.dp
-    )
-    val pulse by rememberInfiniteTransition().animateFloat(
-        initialValue = 0.98f,
-        targetValue = 1.02f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 900, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        )
-    )
-    val navAlpha by animateFloatAsState(
-        targetValue = if (expanded) 1f else 0f,
-        animationSpec = tween(durationMillis = 140)
-    )
+    val navWidth = if (expanded) 220.dp else 0.dp
     val navPadding = if (expanded) 18.dp else 0.dp
     val scrollState = rememberScrollState()
 
@@ -303,81 +680,30 @@ fun SideNav(
         modifier = Modifier
             .fillMaxHeight()
             .width(navWidth)
-            .graphicsLayer { alpha = navAlpha }
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0xFF0F1626),
-                            Color(0xFF162236)
-                        )
-                    )
-                )
-                .border(1.dp, Color(0xFF1F2B3E))
-                .padding(horizontal = navPadding, vertical = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            items.forEach { item ->
+        if (expanded) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scrollState)
+                    .background(Color(0xFF111826))
+                    .border(1.dp, Color(0xFF1F2B3E))
+                    .padding(horizontal = navPadding, vertical = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                items.forEach { item ->
                 NavItem(
                     label = item.label,
-                    requestFocus = selectedSection == item.section,
                     isSelected = selectedSection == item.section,
                     onClick = { onSectionSelected(item.section) },
                     focusRequester = item.focusRequester,
                     onMoveRight = onMoveRight,
-                    pulse = pulse,
                     enabled = expanded
                 )
             }
         }
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxWidth()
-                .height(28.dp)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0xCC0F1626),
-                            Color.Transparent
-                        )
-                    )
-                )
-        )
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .height(28.dp)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            Color(0xCC162236)
-                        )
-                    )
-                )
-        )
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .fillMaxHeight()
-                .width(2.dp)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0x553B7BFF),
-                            Color.Transparent,
-                            Color(0x553B7BFF)
-                        )
-                    )
-                )
-        )
     }
+}
 }
 
 data class NavEntry(
@@ -389,26 +715,16 @@ data class NavEntry(
 @Composable
 fun NavItem(
     label: String,
-    requestFocus: Boolean = false,
     isSelected: Boolean = false,
     onClick: () -> Unit = {},
     focusRequester: FocusRequester,
     onMoveRight: () -> Unit,
-    pulse: Float,
     enabled: Boolean = true
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val shape = RoundedCornerShape(12.dp)
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
-    val focusScale by animateFloatAsState(
-        targetValue = if (isFocused) 1.03f else 1f,
-        animationSpec = tween(durationMillis = 120)
-    )
-    val glowElevation by animateDpAsState(
-        targetValue = if (isFocused) 12.dp else 0.dp,
-        animationSpec = tween(durationMillis = 120)
-    )
     val borderColor = when {
         isFocused -> Color(0xFFB6D9FF)
         isSelected -> Color(0xFF42539A)
@@ -440,11 +756,6 @@ fun NavItem(
         )
     }
 
-    LaunchedEffect(requestFocus) {
-        if (requestFocus) {
-            focusRequester.requestFocus()
-        }
-    }
     LaunchedEffect(isFocused) {
         if (isFocused) {
             bringIntoViewRequester.bringIntoView()
@@ -487,12 +798,6 @@ fun NavItem(
                     Modifier
                 }
             )
-            .shadow(if (isFocused) glowElevation * pulse else glowElevation, shape)
-            .graphicsLayer {
-                val appliedScale = if (isFocused) focusScale * pulse else focusScale
-                scaleX = appliedScale
-                scaleY = appliedScale
-            }
             .background(
                 brush = backgroundBrush,
                 shape = shape
@@ -537,22 +842,6 @@ fun MenuButton(
     val isFocused by interactionSource.collectIsFocusedAsState()
     val label = if (expanded) "CLOSE" else "MENU"
     val shape = RoundedCornerShape(12.dp)
-    val pulse by rememberInfiniteTransition().animateFloat(
-        initialValue = 0.98f,
-        targetValue = 1.02f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1000, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        )
-    )
-    val focusScale by animateFloatAsState(
-        targetValue = if (isFocused) 1.03f else 1f,
-        animationSpec = tween(durationMillis = 120)
-    )
-    val glowElevation by animateDpAsState(
-        targetValue = if (isFocused) 10.dp else 0.dp,
-        animationSpec = tween(durationMillis = 120)
-    )
     val borderColor = if (isFocused) Color(0xFFB6D9FF) else Color(0xFF2A3348)
     val buttonBrush = if (isFocused) {
         Brush.horizontalGradient(
@@ -590,12 +879,6 @@ fun MenuButton(
                 indication = null,
                 onClick = onToggle
             )
-            .shadow(if (isFocused) glowElevation * pulse else glowElevation, shape)
-            .graphicsLayer {
-                val appliedScale = if (isFocused) focusScale * pulse else focusScale
-                scaleX = appliedScale
-                scaleY = appliedScale
-            }
             .background(
                 brush = buttonBrush,
                 shape = shape
@@ -638,311 +921,150 @@ fun MenuButton(
     }
 }
 
-@OptIn(UnstableApi::class)
 @Composable
-fun SectionScreen(
-    title: String,
-    player: ExoPlayer,
-    contentItemFocusRequester: FocusRequester,
+private fun ContentCard(
+    item: ContentItem?,
+    focusRequester: FocusRequester?,
+    isLeftEdge: Boolean,
+    onActivate: (() -> Unit)?,
+    onFocused: ((ContentItem) -> Unit)?,
     onMoveLeft: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
-    val shape = RoundedCornerShape(14.dp)
-    val pulse by rememberInfiniteTransition().animateFloat(
-        initialValue = 0.99f,
-        targetValue = 1.02f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1000, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        )
-    )
-    val focusScale by animateFloatAsState(
-        targetValue = if (isFocused) 1.02f else 1f,
-        animationSpec = tween(durationMillis = 140)
-    )
-    val glowElevation by animateDpAsState(
-        targetValue = if (isFocused) 14.dp else 0.dp,
-        animationSpec = tween(durationMillis = 140)
-    )
-    val borderColor = if (isFocused) Color(0xFFB6D9FF) else Color(0xFF2A3348)
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(0.78f)
-                .aspectRatio(16f / 9f)
-                .focusRequester(contentItemFocusRequester)
-                .focusable(interactionSource = interactionSource)
-                .onKeyEvent {
-                    if (it.type == KeyEventType.KeyDown &&
-                        it.key == Key.DirectionLeft
-                    ) {
-                        onMoveLeft()
-                        true
-                    } else {
-                        false
-                    }
-                }
-                .shadow(glowElevation, shape)
-                .graphicsLayer {
-                    val appliedScale = if (isFocused) focusScale * pulse else focusScale
-                    scaleX = appliedScale
-                    scaleY = appliedScale
-                }
-                .clip(shape)
-                .background(Color(0xFF0C121F))
-                .border(
-                    width = 1.dp,
-                    color = borderColor,
-                    shape = shape
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { context ->
-                    PlayerView(context).apply {
-                        this.player = player
-                        useController = false
-                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        isFocusable = false
-                    }
-                },
-                update = { view ->
-                    view.player = player
-                }
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                Color(0x660A0F1A)
-                            )
-                        )
-                    )
-            )
-            Text(
-                text = title,
-                color = Color.White,
-                fontSize = 20.sp,
-                fontFamily = FontFamily.Serif,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp,
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(16.dp)
-            )
-        }
-    }
-}
-
-@Composable
-fun SettingsScreen(
-    settings: SettingsState,
-    contentItemFocusRequester: FocusRequester,
-    onMoveLeft: () -> Unit,
-    onToggleAutoPlay: () -> Unit,
-    onToggleSubtitles: () -> Unit,
-    onToggleMatchFrameRate: () -> Unit,
-    onCyclePlaybackQuality: () -> Unit,
-    onCycleAudioLanguage: () -> Unit,
-    onToggleWifiOnly: () -> Unit,
-    onToggleDataSaver: () -> Unit,
-    onToggleRememberLogin: () -> Unit,
-    onToggleAutoSignIn: () -> Unit,
-    onToggleParentalPin: () -> Unit,
-    onCycleParentalRating: () -> Unit
-) {
-    val scrollState = rememberScrollState()
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState)
-                .padding(start = 48.dp, top = 16.dp, end = 48.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Text(
-                text = "SETTINGS",
-                color = Color.White,
-                fontSize = 26.sp,
-                fontFamily = FontFamily.Serif,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            SettingsSectionHeader(title = "Playback")
-            SettingsItem(
-                title = "Autoplay Next",
-                value = if (settings.autoPlayNext) "On" else "Off",
-                focusRequester = contentItemFocusRequester,
-                onActivate = onToggleAutoPlay,
-                onMoveLeft = onMoveLeft
-            )
-            SettingsItem(
-                title = "Playback Quality",
-                value = settings.playbackQuality.label,
-                onActivate = onCyclePlaybackQuality,
-                onMoveLeft = onMoveLeft
-            )
-            SettingsItem(
-                title = "Match Frame Rate",
-                value = if (settings.matchFrameRate) "On" else "Off",
-                onActivate = onToggleMatchFrameRate,
-                onMoveLeft = onMoveLeft
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            SettingsSectionHeader(title = "Audio & Subtitles")
-            SettingsItem(
-                title = "Subtitles",
-                value = if (settings.subtitlesEnabled) "On" else "Off",
-                onActivate = onToggleSubtitles,
-                onMoveLeft = onMoveLeft
-            )
-            SettingsItem(
-                title = "Audio Language",
-                value = settings.audioLanguage.label,
-                onActivate = onCycleAudioLanguage,
-                onMoveLeft = onMoveLeft
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            SettingsSectionHeader(title = "Network")
-            SettingsItem(
-                title = "Wi-Fi Only Streaming",
-                value = if (settings.wifiOnlyStreaming) "On" else "Off",
-                onActivate = onToggleWifiOnly,
-                onMoveLeft = onMoveLeft
-            )
-            SettingsItem(
-                title = "Data Saver",
-                value = if (settings.dataSaverEnabled) "On" else "Off",
-                onActivate = onToggleDataSaver,
-                onMoveLeft = onMoveLeft
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            SettingsSectionHeader(title = "Account")
-            SettingsItem(
-                title = "Remember Login",
-                value = if (settings.rememberLogin) "On" else "Off",
-                onActivate = onToggleRememberLogin,
-                onMoveLeft = onMoveLeft
-            )
-            SettingsItem(
-                title = "Auto Sign-In",
-                value = if (settings.autoSignIn) "On" else "Off",
-                onActivate = onToggleAutoSignIn,
-                onMoveLeft = onMoveLeft
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            SettingsSectionHeader(title = "Parental Controls")
-            SettingsItem(
-                title = "Parental PIN",
-                value = if (settings.parentalPinEnabled) "On" else "Off",
-                onActivate = onToggleParentalPin,
-                onMoveLeft = onMoveLeft
-            )
-            SettingsItem(
-                title = "Rating Limit",
-                value = settings.parentalRating.label,
-                onActivate = onCycleParentalRating,
-                onMoveLeft = onMoveLeft
-            )
-        }
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxWidth()
-                .height(28.dp)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0xCC0A0F1A),
-                            Color.Transparent
-                        )
-                    )
-                )
-        )
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .height(28.dp)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            Color(0xCC141B2C)
-                        )
-                    )
-                )
-        )
-    }
-}
-
-@Composable
-fun SettingsSectionHeader(title: String) {
-    Text(
-        text = title.uppercase(),
-        color = Color(0xFF9FB0D4),
-        fontSize = 13.sp,
-        fontFamily = FontFamily.Serif,
-        fontWeight = FontWeight.SemiBold,
-        letterSpacing = 2.sp,
-        modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
-    )
-}
-
-@Composable
-fun SettingsItem(
-    title: String,
-    value: String,
-    onActivate: () -> Unit,
-    onMoveLeft: () -> Unit,
-    focusRequester: FocusRequester? = null
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isFocused by interactionSource.collectIsFocusedAsState()
     val shape = RoundedCornerShape(12.dp)
-    val bringIntoViewRequester = remember { BringIntoViewRequester() }
-    val borderColor = if (isFocused) Color(0xFFB6D9FF) else Color(0xFF1E2533)
-    val textColor = if (isFocused) Color(0xFF0C1730) else Color(0xFFE7ECF7)
-    val valueColor = if (isFocused) Color(0xFF0C1730) else Color(0xFFAFC0E6)
-    val backgroundBrush = if (isFocused) {
-        Brush.horizontalGradient(
-            colors = listOf(
-                Color(0xFF4F8CFF),
-                Color(0xFF7FCBFF)
-            )
-        )
-    } else {
-        Brush.horizontalGradient(
-            colors = listOf(
-                Color(0xFF2B3240),
-                Color(0xFF222833)
-            )
-        )
+    val borderColor = if (isFocused) Color(0xFFB6D9FF) else Color(0xFF2A3348)
+    val backgroundColor = if (isFocused) Color(0xFF222E44) else Color(0xFF161E2E)
+    val title = item?.title ?: "Loading..."
+    val subtitle = item?.subtitle ?: "Please wait"
+    val imageUrl = item?.imageUrl
+    val context = LocalContext.current
+    val imageRequest = remember(imageUrl) {
+        if (imageUrl.isNullOrBlank()) {
+            null
+        } else {
+            ImageRequest.Builder(context)
+                .data(imageUrl)
+                .size(600)
+                .build()
+        }
     }
-
+    LaunchedEffect(isFocused, item?.id) {
+        if (isFocused && item != null) {
+            onFocused?.invoke(item)
+        }
+    }
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(62.dp)
-            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-            .bringIntoViewRequester(bringIntoViewRequester)
+            .aspectRatio(16f / 9f)
+            .then(
+                if (focusRequester != null) {
+                    Modifier.focusRequester(focusRequester)
+                } else {
+                    Modifier
+                }
+            )
             .focusable(interactionSource = interactionSource)
             .onKeyEvent {
                 if (it.type != KeyEventType.KeyDown) {
                     false
-                } else if (it.key == Key.DirectionLeft) {
+                } else if (isLeftEdge && it.key == Key.DirectionLeft) {
+                    onMoveLeft()
+                    true
+                } else if (
+                    onActivate != null &&
+                    (it.key == Key.Enter || it.key == Key.NumPadEnter || it.key == Key.DirectionCenter)
+                ) {
+                    onActivate()
+                    true
+                } else {
+                    false
+                }
+            }
+            .then(
+                if (onActivate != null) {
+                    Modifier.clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                        onClick = onActivate
+                    )
+                } else {
+                    Modifier
+                }
+            )
+            .clip(shape)
+            .background(backgroundColor)
+            .border(1.dp, borderColor, shape)
+            .padding(12.dp),
+        contentAlignment = Alignment.BottomStart
+    ) {
+        if (imageRequest != null) {
+            AsyncImage(
+                model = imageRequest,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                filterQuality = FilterQuality.Low,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomStart)
+                .background(Color(0x990A0F1A))
+                .padding(10.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = title,
+                    color = Color(0xFFE6ECF7),
+                    fontSize = 16.sp,
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.3.sp
+                )
+                Text(
+                    text = subtitle,
+                    color = Color(0xFF94A3B8),
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Serif,
+                    letterSpacing = 0.2.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CategoryCard(
+    label: String,
+    focusRequester: FocusRequester?,
+    isLeftEdge: Boolean,
+    onActivate: () -> Unit,
+    onMoveLeft: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val shape = RoundedCornerShape(12.dp)
+    val borderColor = if (isFocused) Color(0xFFB6D9FF) else Color(0xFF2A3348)
+    val backgroundColor = if (isFocused) Color(0xFF222E44) else Color(0xFF161E2E)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(16f / 9f)
+            .then(
+                if (focusRequester != null) {
+                    Modifier.focusRequester(focusRequester)
+                } else {
+                    Modifier
+                }
+            )
+            .focusable(interactionSource = interactionSource)
+            .onKeyEvent {
+                if (it.type != KeyEventType.KeyDown) {
+                    false
+                } else if (isLeftEdge && it.key == Key.DirectionLeft) {
                     onMoveLeft()
                     true
                 } else if (
@@ -961,40 +1083,584 @@ fun SettingsItem(
                 indication = null,
                 onClick = onActivate
             )
-            .background(
-                brush = backgroundBrush,
-                shape = shape
-            )
-            .border(1.dp, borderColor, shape),
-        contentAlignment = Alignment.CenterStart
+            .clip(shape)
+            .background(backgroundColor)
+            .border(1.dp, borderColor, shape)
+            .padding(12.dp),
+        contentAlignment = Alignment.BottomStart
     ) {
-        Row(
+        Text(
+            text = label,
+            color = Color(0xFFE6ECF7),
+            fontSize = 16.sp,
+            fontFamily = FontFamily.Serif,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.3.sp
+        )
+    }
+}
+
+@Composable
+private fun CategoryTypeTab(
+    label: String,
+    selected: Boolean,
+    focusRequester: FocusRequester?,
+    onActivate: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val shape = RoundedCornerShape(10.dp)
+    val borderColor = when {
+        isFocused -> Color(0xFFB6D9FF)
+        selected -> Color(0xFF42539A)
+        else -> Color(0xFF1E2533)
+    }
+    val backgroundColor = when {
+        isFocused -> Color(0xFF4F8CFF)
+        selected -> Color(0xFF273479)
+        else -> Color(0xFF1A2233)
+    }
+    val textColor = if (isFocused) Color(0xFF0C1730) else Color(0xFFE6ECF7)
+    Box(
+        modifier = Modifier
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .focusable(interactionSource = interactionSource)
+            .onKeyEvent {
+                if (it.type != KeyEventType.KeyDown) {
+                    false
+                } else if (
+                    it.key == Key.Enter ||
+                    it.key == Key.NumPadEnter ||
+                    it.key == Key.DirectionCenter
+                ) {
+                    onActivate()
+                    true
+                } else {
+                    false
+                }
+            }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onActivate
+            )
+            .clip(shape)
+            .background(backgroundColor)
+            .border(1.dp, borderColor, shape)
+            .padding(horizontal = 14.dp, vertical = 6.dp)
+    ) {
+        Text(
+            text = label,
+            color = textColor,
+            fontSize = 13.sp,
+            fontFamily = FontFamily.Serif,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.6.sp
+        )
+    }
+}
+
+@Composable
+fun SectionScreen(
+    title: String,
+    section: Section,
+    contentRepository: ContentRepository,
+    authConfig: AuthConfig,
+    contentItemFocusRequester: FocusRequester,
+    resumeFocusId: String?,
+    resumeFocusRequester: FocusRequester,
+    onItemFocused: (ContentItem) -> Unit,
+    onPlay: (ContentItem) -> Unit,
+    onMoveLeft: () -> Unit
+) {
+    val shape = RoundedCornerShape(18.dp)
+    val columns = 3
+    val pagerFlow = remember(section, authConfig) {
+        contentRepository.pager(section, authConfig).flow
+    }
+    val lazyItems = pagerFlow.collectAsLazyPagingItems()
+
+    LaunchedEffect(lazyItems.itemCount, section) {
+        if (lazyItems.itemCount > 0) {
+            contentItemFocusRequester.requestFocus()
+        }
+    }
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp),
+                .fillMaxSize()
+                .padding(start = 32.dp, end = 32.dp, top = 4.dp, bottom = 12.dp)
+                .clip(shape)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0xFF0F1626),
+                            Color(0xFF141C2E)
+                        )
+                    )
+                )
+                .border(1.dp, Color(0xFF1E2738), shape)
+                .padding(20.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = title,
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            if (lazyItems.loadState.refresh is LoadState.Loading && lazyItems.itemCount == 0) {
+                Text(
+                    text = "Loading content...",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 14.sp,
+                    fontFamily = FontFamily.Serif,
+                    letterSpacing = 0.6.sp
+                )
+            } else if (lazyItems.loadState.refresh is LoadState.Error) {
+                Text(
+                    text = "Content failed to load",
+                    color = Color(0xFFE4A9A9),
+                    fontSize = 14.sp,
+                    fontFamily = FontFamily.Serif,
+                    letterSpacing = 0.6.sp
+                )
+            } else if (lazyItems.itemCount == 0) {
+                Text(
+                    text = "No content yet",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 14.sp,
+                    fontFamily = FontFamily.Serif,
+                    letterSpacing = 0.6.sp
+                )
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(columns),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
+                    items(
+                        count = lazyItems.itemCount,
+                        key = { index ->
+                            lazyItems[index]?.id ?: "item-$index"
+                        }
+                    ) { index ->
+                        val item = lazyItems[index]
+                        val requester = when {
+                            item?.id != null && item.id == resumeFocusId -> resumeFocusRequester
+                            index == 0 -> contentItemFocusRequester
+                            else -> null
+                        }
+                        val isLeftEdge = index % columns == 0
+                        ContentCard(
+                            item = item,
+                            focusRequester = requester,
+                            isLeftEdge = isLeftEdge,
+                            onActivate = if (item != null) {
+                                { onPlay(item) }
+                            } else {
+                                null
+                            },
+                            onFocused = onItemFocused,
+                            onMoveLeft = onMoveLeft
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CategorySectionScreen(
+    title: String,
+    contentRepository: ContentRepository,
+    authConfig: AuthConfig,
+    contentItemFocusRequester: FocusRequester,
+    resumeFocusId: String?,
+    resumeFocusRequester: FocusRequester,
+    onItemFocused: (ContentItem) -> Unit,
+    onPlay: (ContentItem) -> Unit,
+    onMoveLeft: () -> Unit
+) {
+    val shape = RoundedCornerShape(18.dp)
+    var activeType by remember { mutableStateOf(ContentType.LIVE) }
+    var selectedCategory by remember { mutableStateOf<CategoryItem?>(null) }
+    var selectedSeries by remember { mutableStateOf<ContentItem?>(null) }
+    var categories by remember { mutableStateOf<List<CategoryItem>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    val columns = 3
+    val tabFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(activeType, authConfig) {
+        isLoading = true
+        errorMessage = null
+        selectedCategory = null
+        selectedSeries = null
+        runCatching { contentRepository.loadCategories(activeType, authConfig) }
+            .onSuccess { categories = it }
+            .onFailure { errorMessage = it.message ?: "Failed to load categories" }
+        isLoading = false
+    }
+
+    LaunchedEffect(selectedCategory) {
+        contentItemFocusRequester.requestFocus()
+    }
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 32.dp, end = 32.dp, top = 4.dp, bottom = 12.dp)
+                .clip(shape)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0xFF0F1626),
+                            Color(0xFF141C2E)
+                        )
+                    )
+                )
+                .border(1.dp, Color(0xFF1E2738), shape)
+                .padding(20.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = title,
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ContentType.values().forEachIndexed { index, type ->
+                        val requester = if (index == 0) tabFocusRequester else null
+                        CategoryTypeTab(
+                            label = type.label,
+                            selected = activeType == type,
+                            focusRequester = requester,
+                            onActivate = { activeType = type }
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            if (selectedCategory != null) {
+                val category = selectedCategory!!
+                if (selectedSeries != null) {
+                    SeriesEpisodesScreen(
+                        seriesItem = selectedSeries!!,
+                        contentRepository = contentRepository,
+                        authConfig = authConfig,
+                        contentItemFocusRequester = contentItemFocusRequester,
+                        resumeFocusId = resumeFocusId,
+                        resumeFocusRequester = resumeFocusRequester,
+                        onItemFocused = onItemFocused,
+                        onPlay = onPlay,
+                        onMoveLeft = onMoveLeft,
+                        onBack = {
+                            onItemFocused(selectedSeries!!)
+                            selectedSeries = null
+                        }
+                    )
+                } else {
+                    val pagerFlow = remember(category.id, activeType, authConfig) {
+                        contentRepository.categoryPager(activeType, category.id, authConfig).flow
+                    }
+                    val lazyItems = pagerFlow.collectAsLazyPagingItems()
+                    LaunchedEffect(lazyItems.itemCount, category.id) {
+                        if (lazyItems.itemCount > 0) {
+                            contentItemFocusRequester.requestFocus()
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "< BACK",
+                            color = Color(0xFFE6ECF7),
+                            fontSize = 14.sp,
+                            fontFamily = FontFamily.Serif,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .focusable()
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) { selectedCategory = null }
+                                .onKeyEvent {
+                                    if (it.type != KeyEventType.KeyDown) {
+                                        false
+                                    } else if (it.key == Key.DirectionLeft) {
+                                        onMoveLeft()
+                                        true
+                                    } else if (
+                                        it.key == Key.Enter ||
+                                        it.key == Key.NumPadEnter ||
+                                        it.key == Key.DirectionCenter
+                                    ) {
+                                        selectedCategory = null
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
+                                .padding(end = 12.dp)
+                        )
+                        Text(
+                            text = category.name,
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontFamily = FontFamily.Serif,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(columns),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    ) {
+                        items(
+                            count = lazyItems.itemCount,
+                            key = { index ->
+                                lazyItems[index]?.id ?: "cat-item-$index"
+                            }
+                        ) { index ->
+                            val item = lazyItems[index]
+                            val isLeftEdge = index % columns == 0
+                            val requester = when {
+                                item?.id != null && item.id == resumeFocusId -> resumeFocusRequester
+                                index == 0 -> contentItemFocusRequester
+                                else -> null
+                            }
+                            ContentCard(
+                                item = item,
+                                focusRequester = requester,
+                                isLeftEdge = isLeftEdge,
+                                onActivate = if (item != null) {
+                                    {
+                                        if (activeType == ContentType.SERIES &&
+                                            item.containerExtension.isNullOrBlank()
+                                        ) {
+                                            selectedSeries = item
+                                        } else {
+                                            onPlay(item)
+                                        }
+                                    }
+                                } else {
+                                    null
+                                },
+                                onFocused = onItemFocused,
+                                onMoveLeft = onMoveLeft
+                            )
+                        }
+                    }
+                }
+            } else if (isLoading) {
+                Text(
+                    text = "Loading categories...",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 14.sp,
+                    fontFamily = FontFamily.Serif,
+                    letterSpacing = 0.6.sp
+                )
+            } else if (errorMessage != null) {
+                Text(
+                    text = errorMessage ?: "Failed to load categories",
+                    color = Color(0xFFE4A9A9),
+                    fontSize = 14.sp,
+                    fontFamily = FontFamily.Serif,
+                    letterSpacing = 0.6.sp
+                )
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(columns),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
+                    items(categories.size) { index ->
+                        val category = categories[index]
+                        val requester = if (index == 0) contentItemFocusRequester else null
+                        val isLeftEdge = index % columns == 0
+                        CategoryCard(
+                            label = category.name,
+                            focusRequester = requester,
+                            isLeftEdge = isLeftEdge,
+                            onActivate = { selectedCategory = category },
+                            onMoveLeft = onMoveLeft
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SeriesEpisodesScreen(
+    seriesItem: ContentItem,
+    contentRepository: ContentRepository,
+    authConfig: AuthConfig,
+    contentItemFocusRequester: FocusRequester,
+    resumeFocusId: String?,
+    resumeFocusRequester: FocusRequester,
+    onItemFocused: (ContentItem) -> Unit,
+    onPlay: (ContentItem) -> Unit,
+    onMoveLeft: () -> Unit,
+    onBack: () -> Unit
+) {
+    val pagerFlow = remember(seriesItem.streamId, authConfig) {
+        contentRepository.seriesPager(seriesItem.streamId, authConfig).flow
+    }
+    val lazyItems = pagerFlow.collectAsLazyPagingItems()
+    val columns = 3
+    val backFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(lazyItems.itemCount, lazyItems.loadState.refresh, seriesItem.id) {
+        if (lazyItems.itemCount > 0) {
+            contentItemFocusRequester.requestFocus()
+        } else if (lazyItems.loadState.refresh !is LoadState.Loading) {
+            backFocusRequester.requestFocus()
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = title,
-                color = textColor,
-                fontSize = 18.sp,
+                text = "< BACK",
+                color = Color(0xFFE6ECF7),
+                fontSize = 14.sp,
                 fontFamily = FontFamily.Serif,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .focusRequester(backFocusRequester)
+                    .focusable()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { onBack() }
+                    .onKeyEvent {
+                        if (it.type != KeyEventType.KeyDown) {
+                            false
+                        } else if (it.key == Key.DirectionLeft) {
+                            onMoveLeft()
+                            true
+                        } else if (
+                            it.key == Key.Enter ||
+                            it.key == Key.NumPadEnter ||
+                            it.key == Key.DirectionCenter
+                        ) {
+                            onBack()
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    .padding(end = 12.dp)
             )
-            Spacer(modifier = Modifier.weight(1f))
             Text(
-                text = value,
-                color = valueColor,
+                text = seriesItem.title,
+                color = Color.White,
                 fontSize = 16.sp,
                 fontFamily = FontFamily.Serif,
                 fontWeight = FontWeight.Medium
             )
         }
-    }
-
-    LaunchedEffect(isFocused) {
-        if (isFocused) {
-            bringIntoViewRequester.bringIntoView()
+        Spacer(modifier = Modifier.height(8.dp))
+        if (lazyItems.loadState.refresh is LoadState.Loading && lazyItems.itemCount == 0) {
+            Text(
+                text = "Loading episodes...",
+                color = Color(0xFF94A3B8),
+                fontSize = 14.sp,
+                fontFamily = FontFamily.Serif,
+                letterSpacing = 0.6.sp
+            )
+        } else if (lazyItems.loadState.refresh is LoadState.Error) {
+            Text(
+                text = "Episodes failed to load",
+                color = Color(0xFFE4A9A9),
+                fontSize = 14.sp,
+                fontFamily = FontFamily.Serif,
+                letterSpacing = 0.6.sp
+            )
+        } else if (lazyItems.itemCount == 0) {
+            Text(
+                text = "No episodes yet",
+                color = Color(0xFF94A3B8),
+                fontSize = 14.sp,
+                fontFamily = FontFamily.Serif,
+                letterSpacing = 0.6.sp
+            )
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(columns),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            ) {
+                items(
+                    count = lazyItems.itemCount,
+                    key = { index ->
+                        lazyItems[index]?.id ?: "episode-$index"
+                    }
+                ) { index ->
+                    val item = lazyItems[index]
+                    val requester = when {
+                        item?.id != null && item.id == resumeFocusId -> resumeFocusRequester
+                        index == 0 -> contentItemFocusRequester
+                        else -> null
+                    }
+                    val isLeftEdge = index % columns == 0
+                    ContentCard(
+                        item = item,
+                        focusRequester = requester,
+                        isLeftEdge = isLeftEdge,
+                        onActivate = if (item != null) {
+                            { onPlay(item) }
+                        } else {
+                            null
+                        },
+                        onFocused = onItemFocused,
+                        onMoveLeft = onMoveLeft
+                    )
+                }
+            }
         }
     }
 }

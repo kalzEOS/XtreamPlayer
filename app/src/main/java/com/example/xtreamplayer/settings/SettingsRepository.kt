@@ -17,8 +17,6 @@ class SettingsRepository(private val context: Context) {
         val matchFrameRate = prefs[Keys.MATCH_FRAME_RATE] ?: true
         val quality = parsePlaybackQuality(prefs[Keys.PLAYBACK_QUALITY])
         val audio = parseAudioLanguage(prefs[Keys.AUDIO_LANGUAGE])
-        val wifiOnly = prefs[Keys.WIFI_ONLY_STREAMING] ?: true
-        val dataSaver = prefs[Keys.DATA_SAVER_ENABLED] ?: false
         val rememberLogin = prefs[Keys.REMEMBER_LOGIN] ?: true
         val autoSignIn = prefs[Keys.AUTO_SIGN_IN] ?: true
         val parentalPin = prefs[Keys.PARENTAL_PIN_ENABLED] ?: false
@@ -30,8 +28,6 @@ class SettingsRepository(private val context: Context) {
             matchFrameRate = matchFrameRate,
             playbackQuality = quality,
             audioLanguage = audio,
-            wifiOnlyStreaming = wifiOnly,
-            dataSaverEnabled = dataSaver,
             rememberLogin = rememberLogin,
             autoSignIn = autoSignIn,
             parentalPinEnabled = parentalPin,
@@ -66,18 +62,6 @@ class SettingsRepository(private val context: Context) {
     suspend fun setAudioLanguage(language: AudioLanguage) {
         context.dataStore.edit { prefs ->
             prefs[Keys.AUDIO_LANGUAGE] = language.name
-        }
-    }
-
-    suspend fun setWifiOnlyStreaming(enabled: Boolean) {
-        context.dataStore.edit { prefs ->
-            prefs[Keys.WIFI_ONLY_STREAMING] = enabled
-        }
-    }
-
-    suspend fun setDataSaverEnabled(enabled: Boolean) {
-        context.dataStore.edit { prefs ->
-            prefs[Keys.DATA_SAVER_ENABLED] = enabled
         }
     }
 
@@ -123,8 +107,6 @@ class SettingsRepository(private val context: Context) {
         val MATCH_FRAME_RATE = booleanPreferencesKey("match_frame_rate")
         val PLAYBACK_QUALITY = stringPreferencesKey("playback_quality")
         val AUDIO_LANGUAGE = stringPreferencesKey("audio_language")
-        val WIFI_ONLY_STREAMING = booleanPreferencesKey("wifi_only_streaming")
-        val DATA_SAVER_ENABLED = booleanPreferencesKey("data_saver_enabled")
         val REMEMBER_LOGIN = booleanPreferencesKey("remember_login")
         val AUTO_SIGN_IN = booleanPreferencesKey("auto_sign_in")
         val PARENTAL_PIN_ENABLED = booleanPreferencesKey("parental_pin_enabled")

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="ExoStyledControls.Button">
+        <item name="android:background">@drawable/exo_controls_button_background</item>
+        <item name="android:scaleType">fitXY</item>
+        <item name="android:layout_marginLeft">@dimen/exo_icon_horizontal_margin</item>
+        <item name="android:layout_marginRight">@dimen/exo_icon_horizontal_margin</item>
+    </style>
+</resources>

@@ -26,8 +26,6 @@ data class SettingsState(
     val matchFrameRate: Boolean = true,
     val playbackQuality: PlaybackQuality = PlaybackQuality.AUTO,
     val audioLanguage: AudioLanguage = AudioLanguage.ENGLISH,
-    val wifiOnlyStreaming: Boolean = true,
-    val dataSaverEnabled: Boolean = false,
     val rememberLogin: Boolean = true,
     val autoSignIn: Boolean = true,
     val parentalPinEnabled: Boolean = false,

@@ -54,18 +54,6 @@ class SettingsViewModel(
         }
     }
 
-    fun toggleWifiOnlyStreaming() {
-        viewModelScope.launch {
-            repository.setWifiOnlyStreaming(!settings.value.wifiOnlyStreaming)
-        }
-    }
-
-    fun toggleDataSaver() {
-        viewModelScope.launch {
-            repository.setDataSaverEnabled(!settings.value.dataSaverEnabled)
-        }
-    }
-
     fun toggleRememberLogin() {
         viewModelScope.launch {
             repository.setRememberLogin(!settings.value.rememberLogin)
