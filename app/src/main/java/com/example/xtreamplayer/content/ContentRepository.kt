@@ -36,6 +36,43 @@ class ContentRepository(
         )
     }
 
+    fun searchPager(
+        section: Section,
+        query: String,
+        authConfig: AuthConfig
+    ): Pager<Int, ContentItem> {
+        return Pager(
+            config = PagingConfig(
+                pageSize = 20,
+                prefetchDistance = 8,
+                initialLoadSize = 40,
+                enablePlaceholders = false
+            ),
+            pagingSourceFactory = {
+                XtreamSearchPagingSource(section, query, authConfig, this)
+            }
+        )
+    }
+
+    fun categorySearchPager(
+        type: ContentType,
+        categoryId: String,
+        query: String,
+        authConfig: AuthConfig
+    ): Pager<Int, ContentItem> {
+        return Pager(
+            config = PagingConfig(
+                pageSize = 20,
+                prefetchDistance = 8,
+                initialLoadSize = 40,
+                enablePlaceholders = false
+            ),
+            pagingSourceFactory = {
+                XtreamCategorySearchPagingSource(type, categoryId, query, authConfig, this)
+            }
+        )
+    }
+
     fun categoryPager(
         type: ContentType,
         categoryId: String,
@@ -73,6 +110,52 @@ class ContentRepository(
             loadMixedPage(page, limit, authConfig)
         } else {
             loadSectionPage(section, page, limit, authConfig)
+        }
+    }
+
+    suspend fun searchPage(
+        section: Section,
+        query: String,
+        page: Int,
+        limit: Int,
+        authConfig: AuthConfig
+    ): ContentPage {
+        return if (section == Section.ALL) {
+            searchMixedPage(query, page, limit, authConfig)
+        } else {
+            searchSectionPage(section, query, page, limit, authConfig)
+        }
+    }
+
+    suspend fun searchCategoryPage(
+        type: ContentType,
+        categoryId: String,
+        query: String,
+        page: Int,
+        limit: Int,
+        authConfig: AuthConfig
+    ): ContentPage {
+        val normalizedQuery = SearchNormalizer.normalizeQuery(query)
+        if (normalizedQuery.isBlank()) {
+            return loadCategoryPage(type, categoryId, page, limit, authConfig)
+        }
+        val key = cacheKey("search-${type.name}-$categoryId-$normalizedQuery", page, limit)
+        synchronized(memoryCache) {
+            memoryCache[key]?.let { return it }
+        }
+        return searchFilterPages(
+            limit = limit,
+            page = page,
+            matcher = { item ->
+                SearchNormalizer.normalizeTitle(item.title)
+                    .contains(normalizedQuery, ignoreCase = true)
+            },
+            pageLoader = { rawPage, rawLimit ->
+                loadCategoryPage(type, categoryId, rawPage, rawLimit, authConfig)
+            },
+            maxScanPages = 6
+        ).also { pageData ->
+            synchronized(memoryCache) { memoryCache[key] = pageData }
         }
     }
 
@@ -151,6 +234,63 @@ class ContentRepository(
         }
     }
 
+    private suspend fun searchSectionPage(
+        section: Section,
+        query: String,
+        page: Int,
+        limit: Int,
+        authConfig: AuthConfig
+    ): ContentPage {
+        if (section == Section.SETTINGS || section == Section.CATEGORIES || section == Section.ALL) {
+            return ContentPage(items = emptyList(), endReached = true)
+        }
+        val normalizedQuery = SearchNormalizer.normalizeQuery(query)
+        if (normalizedQuery.isBlank()) {
+            return loadSectionPage(section, page, limit, authConfig)
+        }
+        val key = cacheKey("search-${section.name}-$normalizedQuery", page, limit)
+        synchronized(memoryCache) {
+            memoryCache[key]?.let { return it }
+        }
+        val apiResult = api.fetchSearchPage(section, authConfig, normalizedQuery, page, limit)
+        val pageData = apiResult.getOrElse {
+            return searchFilterPages(
+                limit = limit,
+                page = page,
+                matcher = { item -> item.title.contains(normalizedQuery, ignoreCase = true) },
+                pageLoader = { rawPage, rawLimit ->
+                    loadSectionPage(section, rawPage, rawLimit, authConfig)
+                },
+                maxScanPages = 10
+            ).also { fallback ->
+                synchronized(memoryCache) { memoryCache[key] = fallback }
+            }
+        }
+        val filtered = pageData.items.filter { item ->
+            SearchNormalizer.normalizeTitle(item.title)
+                .contains(normalizedQuery, ignoreCase = true)
+        }
+        if (filtered.isNotEmpty() || page > 0 || pageData.endReached) {
+            return ContentPage(items = filtered, endReached = pageData.endReached).also { finalPage ->
+                synchronized(memoryCache) { memoryCache[key] = finalPage }
+            }
+        }
+        return searchFilterPages(
+            limit = limit,
+            page = page,
+            matcher = { item ->
+                SearchNormalizer.normalizeTitle(item.title)
+                    .contains(normalizedQuery, ignoreCase = true)
+            },
+            pageLoader = { rawPage, rawLimit ->
+                loadSectionPage(section, rawPage, rawLimit, authConfig)
+            },
+            maxScanPages = 10
+        ).also { fallback ->
+            synchronized(memoryCache) { memoryCache[key] = fallback }
+        }
+    }
+
     private suspend fun loadMixedPage(
         page: Int,
         limit: Int,
@@ -173,6 +313,70 @@ class ContentRepository(
         val pageData = ContentPage(items = mixed, endReached = endReached)
         synchronized(memoryCache) { memoryCache[key] = pageData }
         return pageData
+    }
+
+    private suspend fun searchMixedPage(
+        query: String,
+        page: Int,
+        limit: Int,
+        authConfig: AuthConfig
+    ): ContentPage {
+        val key = cacheKey("search-${Section.ALL.name}-$query", page, limit)
+        synchronized(memoryCache) {
+            memoryCache[key]?.let { return it }
+        }
+
+        val perSectionLimit = ceil(limit / 3.0).toInt().coerceAtLeast(1)
+        val live = searchSectionPage(Section.LIVE, query, page, perSectionLimit, authConfig)
+        val movies = searchSectionPage(Section.MOVIES, query, page, perSectionLimit, authConfig)
+        val series = searchSectionPage(Section.SERIES, query, page, perSectionLimit, authConfig)
+
+        val mixed = interleaveLists(listOf(live.items, movies.items, series.items))
+            .take(limit)
+        val endReached = live.endReached && movies.endReached && series.endReached
+
+        val pageData = ContentPage(items = mixed, endReached = endReached)
+        synchronized(memoryCache) { memoryCache[key] = pageData }
+        return pageData
+    }
+
+    private suspend fun searchFilterPages(
+        limit: Int,
+        page: Int,
+        matcher: (ContentItem) -> Boolean,
+        pageLoader: suspend (Int, Int) -> ContentPage,
+        maxScanPages: Int
+    ): ContentPage {
+        val targetStart = page * limit
+        val items = ArrayList<ContentItem>(limit)
+        var matchIndex = 0
+        var rawPage = 0
+        var endReached = true
+        while (true) {
+            if (rawPage >= maxScanPages) {
+                endReached = true
+                break
+            }
+            val pageData = pageLoader(rawPage, limit)
+            pageData.items.forEach { item ->
+                if (matcher(item)) {
+                    if (matchIndex >= targetStart && items.size < limit) {
+                        items.add(item)
+                    }
+                    matchIndex++
+                }
+            }
+            if (pageData.endReached) {
+                endReached = true
+                break
+            }
+            if (items.size >= limit) {
+                endReached = false
+                break
+            }
+            rawPage++
+        }
+        return ContentPage(items = items, endReached = endReached)
     }
 
     fun clearCache() {

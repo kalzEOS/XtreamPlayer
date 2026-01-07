@@ -93,6 +93,54 @@ class XtreamApi(
         }
     }
 
+    suspend fun fetchSearchPage(
+        section: Section,
+        config: AuthConfig,
+        query: String,
+        page: Int,
+        limit: Int
+    ): Result<ContentPage> {
+        if (section == Section.SETTINGS || section == Section.CATEGORIES || section == Section.ALL) {
+            return Result.success(ContentPage(items = emptyList(), endReached = true))
+        }
+        return withContext(Dispatchers.IO) {
+            try {
+                val action = actionForSection(section)
+                val offset = page * limit
+                val url = buildApiUrl(
+                    config,
+                    action,
+                    mapOf(
+                        "start" to offset.toString(),
+                        "limit" to limit.toString(),
+                        "search" to query
+                    )
+                ) ?: return@withContext Result.failure(
+                    IllegalArgumentException("Invalid service URL")
+                )
+
+                val request = Request.Builder().url(url).get().build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        return@withContext Result.failure(
+                            IllegalStateException("Request failed: ${response.code}")
+                        )
+                    }
+                    val body = response.body ?: return@withContext Result.failure(
+                        IllegalStateException("Empty response")
+                    )
+                    body.charStream().use { stream ->
+                        val reader = JsonReader(stream)
+                        val pageData = parsePage(reader, section, offset, limit)
+                        Result.success(pageData)
+                    }
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+    }
+
     suspend fun fetchCategories(
         type: ContentType,
         config: AuthConfig
