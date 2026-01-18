@@ -25,6 +25,7 @@ class XtreamPlayerView @JvmOverloads constructor(
     private var subtitleDownloadView: View? = null
     private var subtitleToggleView: View? = null
     private var audioTrackView: View? = null
+    private var audioBoostView: View? = null
     var onResizeModeClick: (() -> Unit)? = null
         set(value) {
             field = value
@@ -49,6 +50,11 @@ class XtreamPlayerView @JvmOverloads constructor(
         set(value) {
             field = value
             bindAudioTrackView()
+        }
+    var onAudioBoostClick: (() -> Unit)? = null
+        set(value) {
+            field = value
+            bindAudioBoostView()
         }
     var forcedAspectRatio: Float? = null
         set(value) {
@@ -112,6 +118,7 @@ class XtreamPlayerView @JvmOverloads constructor(
         bindSubtitleDownloadView()
         bindSubtitleToggleView()
         bindAudioTrackView()
+        bindAudioBoostView()
     }
 
     private fun bindSubtitleDownloadView() {
@@ -151,5 +158,12 @@ class XtreamPlayerView @JvmOverloads constructor(
             audioTrackView = it
         }
         view?.setOnClickListener { onAudioTrackClick?.invoke() }
+    }
+
+    private fun bindAudioBoostView() {
+        val view = audioBoostView ?: findViewById<View>(R.id.exo_audio_boost).also {
+            audioBoostView = it
+        }
+        view?.setOnClickListener { onAudioBoostClick?.invoke() }
     }
 }

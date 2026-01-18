@@ -5,8 +5,10 @@ import androidx.paging.PagingConfig
 import com.example.xtreamplayer.Section
 import com.example.xtreamplayer.api.XtreamApi
 import com.example.xtreamplayer.auth.AuthConfig
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlin.math.ceil
 
 class ContentRepository(
@@ -24,21 +26,21 @@ class ContentRepository(
         const val MIN_LOCAL_SEARCH_QUERY_LENGTH = 2
     }
 
-    private val memoryCache = object : LinkedHashMap<String, ContentPage>(8, 0.75f, true) {
+    private val memoryCache = object : LinkedHashMap<String, ContentPage>(200, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ContentPage>): Boolean {
-            return size > 8
+            return size > 200
         }
     }
     private val categoryThumbnailCache = mutableMapOf<String, String?>()
     private val sectionIndexCache = mutableMapOf<String, List<ContentItem>>()
-    private val seriesEpisodesCache = object : LinkedHashMap<String, List<ContentItem>>(6, 0.75f, true) {
+    private val seriesEpisodesCache = object : LinkedHashMap<String, List<ContentItem>>(50, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<ContentItem>>): Boolean {
-            return size > 6
+            return size > 50
         }
     }
-    private val seriesSeasonCountCache = object : LinkedHashMap<String, Int>(24, 0.75f, true) {
+    private val seriesSeasonCountCache = object : LinkedHashMap<String, Int>(200, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Int>): Boolean {
-            return size > 24
+            return size > 200
         }
     }
     private val locks = Section.values().associateWith { Mutex() }
@@ -177,8 +179,7 @@ class ContentRepository(
             limit = limit,
             page = page,
             matcher = { item ->
-                SearchNormalizer.normalizeTitle(item.title)
-                    .contains(normalizedQuery, ignoreCase = true)
+                SearchNormalizer.matchesTitle(item.title, normalizedQuery)
             },
             pageLoader = { rawPage, rawLimit ->
                 loadCategoryPage(type, categoryId, rawPage, rawLimit, authConfig)
@@ -342,7 +343,7 @@ class ContentRepository(
             return searchFilterPages(
                 limit = limit,
                 page = page,
-                matcher = { item -> item.title.contains(normalizedQuery, ignoreCase = true) },
+                matcher = { item -> SearchNormalizer.matchesTitle(item.title, normalizedQuery) },
                 pageLoader = { rawPage, rawLimit ->
                     loadSectionPage(section, rawPage, rawLimit, authConfig)
                 },
@@ -351,9 +352,10 @@ class ContentRepository(
                 synchronized(memoryCache) { memoryCache[key] = fallback }
             }
         }
-        val filtered = pageData.items.filter { item ->
-            SearchNormalizer.normalizeTitle(item.title)
-                .contains(normalizedQuery, ignoreCase = true)
+        val filtered = withContext(Dispatchers.Default) {
+            pageData.items.filter { item ->
+                SearchNormalizer.matchesTitle(item.title, normalizedQuery)
+            }
         }
         if (filtered.isNotEmpty() || page > 0 || pageData.endReached) {
             return ContentPage(items = filtered, endReached = pageData.endReached).also { finalPage ->
@@ -364,8 +366,7 @@ class ContentRepository(
             limit = limit,
             page = page,
             matcher = { item ->
-                SearchNormalizer.normalizeTitle(item.title)
-                    .contains(normalizedQuery, ignoreCase = true)
+                SearchNormalizer.matchesTitle(item.title, normalizedQuery)
             },
             pageLoader = { rawPage, rawLimit ->
                 loadSectionPage(section, rawPage, rawLimit, authConfig)
@@ -443,14 +444,23 @@ class ContentRepository(
                 break
             }
             val pageData = pageLoader(rawPage, limit)
-            pageData.items.forEach { item ->
-                if (matcher(item)) {
-                    if (matchIndex >= targetStart && items.size < limit) {
-                        items.add(item)
+            val matchResult = withContext(Dispatchers.Default) {
+                val matches = mutableListOf<Pair<ContentItem, Int>>()
+                var localMatchIndex = matchIndex
+                pageData.items.forEach { item ->
+                    if (matcher(item)) {
+                        matches.add(item to localMatchIndex)
+                        localMatchIndex++
                     }
-                    matchIndex++
+                }
+                matches to localMatchIndex
+            }
+            matchResult.first.forEach { (item, idx) ->
+                if (idx >= targetStart && items.size < limit) {
+                    items.add(item)
                 }
             }
+            matchIndex = matchResult.second
             if (pageData.endReached) {
                 endReached = true
                 break
@@ -497,18 +507,19 @@ class ContentRepository(
         if (items.isEmpty()) {
             return null
         }
-        val filtered = items.filter { item ->
-            SearchNormalizer.normalizeTitle(item.title)
-                .contains(normalizedQuery, ignoreCase = true)
+        return withContext(Dispatchers.Default) {
+            val filtered = items.filter { item ->
+                SearchNormalizer.matchesTitle(item.title, normalizedQuery)
+            }
+            val start = page * limit
+            val slice = if (start >= filtered.size) {
+                emptyList()
+            } else {
+                filtered.drop(start).take(limit)
+            }
+            val endReached = start + limit >= filtered.size
+            ContentPage(items = slice, endReached = endReached)
         }
-        val start = page * limit
-        val slice = if (start >= filtered.size) {
-            emptyList()
-        } else {
-            filtered.drop(start).take(limit)
-        }
-        val endReached = start + limit >= filtered.size
-        return ContentPage(items = slice, endReached = endReached)
     }
 
     private suspend fun loadSectionIndex(
@@ -520,6 +531,9 @@ class ContentRepository(
         val cached = contentCache.readSectionIndex(section, authConfig)
         if (cached != null) {
             sectionIndexCache[key] = cached
+            withContext(Dispatchers.Default) {
+                SearchNormalizer.preWarmCache(cached.map { it.title })
+            }
         }
         return cached
     }
@@ -578,6 +592,9 @@ class ContentRepository(
                     if (items.isNotEmpty()) {
                         sectionIndexCache[key] = items
                         contentCache.writeSectionIndex(section, authConfig, items)
+                        withContext(Dispatchers.Default) {
+                            SearchNormalizer.preWarmCache(items.map { it.title })
+                        }
                         completedSections++
                         onProgress(
                             LibrarySyncProgress(
@@ -610,6 +627,9 @@ class ContentRepository(
             }
             sectionIndexCache[key] = items
             contentCache.writeSectionIndex(section, authConfig, items)
+            withContext(Dispatchers.Default) {
+                SearchNormalizer.preWarmCache(items.map { it.title })
+            }
             completedSections++
             onProgress(
                 LibrarySyncProgress(

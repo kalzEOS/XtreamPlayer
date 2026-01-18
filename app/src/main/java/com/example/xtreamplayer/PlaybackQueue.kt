@@ -12,5 +12,6 @@ data class PlaybackQueueItem(
 
 data class PlaybackQueue(
     val items: List<PlaybackQueueItem>,
-    val startIndex: Int
+    val startIndex: Int,
+    val fallbackUris: Map<String, List<Uri>> = emptyMap()
 )

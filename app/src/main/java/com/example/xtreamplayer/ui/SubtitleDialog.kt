@@ -1014,3 +1014,113 @@ fun AudioTrackDialog(
         }
     }
 }
+
+@Composable
+fun AudioBoostDialog(
+    boostDb: Float,
+    onBoostChange: (Float) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val maxBoostDb = 12f
+    var localBoost by remember { mutableStateOf(boostDb.coerceIn(0f, maxBoostDb)) }
+    val closeFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(boostDb) {
+        localBoost = boostDb.coerceIn(0f, maxBoostDb)
+    }
+
+    LaunchedEffect(Unit) {
+        closeFocusRequester.requestFocus()
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.45f)
+                .clip(RoundedCornerShape(12.dp))
+                .background(DialogBackground)
+                .border(1.dp, SecondaryBorderColor, RoundedCornerShape(12.dp))
+                .padding(24.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "Audio Boost",
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Text(
+                    text = "Increase source volume. High values can distort audio.",
+                    color = MutedTextColor,
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Serif
+                )
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    FocusableButton(
+                        onClick = {
+                            val newBoost = (localBoost - 1f).coerceAtLeast(0f)
+                            localBoost = newBoost
+                            onBoostChange(newBoost)
+                        },
+                        enabled = localBoost > 0f,
+                        colors = ButtonDefaults.buttonColors(containerColor = InputBackground)
+                    ) {
+                        Text("-", color = InputTextColor, fontSize = 18.sp)
+                    }
+
+                    Text(
+                        text = "${localBoost.toInt()} dB",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontFamily = FontFamily.Serif,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    FocusableButton(
+                        onClick = {
+                            val newBoost = (localBoost + 1f).coerceAtMost(maxBoostDb)
+                            localBoost = newBoost
+                            onBoostChange(newBoost)
+                        },
+                        enabled = localBoost < maxBoostDb,
+                        colors = ButtonDefaults.buttonColors(containerColor = InputBackground)
+                    ) {
+                        Text("+", color = InputTextColor, fontSize = 18.sp)
+                    }
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FocusableButton(
+                        onClick = {
+                            localBoost = 0f
+                            onBoostChange(0f)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = InputBackground)
+                    ) {
+                        Text("Reset", color = InputTextColor, fontSize = 14.sp)
+                    }
+
+                    FocusableButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.focusRequester(closeFocusRequester),
+                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryButtonColor)
+                    ) {
+                        Text("Close", color = Color.White, fontSize = 14.sp)
+                    }
+                }
+            }
+        }
+    }
+}
