@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">Xtream Player</string>
+    <string name="exo_controls_back_description">Back</string>
+    <string name="subtitle_download_description">Download subtitles</string>
+    <string name="audio_track_description">Select audio track</string>
+    <string name="subtitle_search_title">Search Subtitles</string>
+    <string name="subtitle_searching">Searching...</string>
+    <string name="subtitle_no_results">No subtitles found</string>
+    <string name="subtitle_download_success">Subtitle downloaded</string>
+    <string name="subtitle_download_error">Failed to download subtitle</string>
+    <string name="audio_track_title">Select Audio Track</string>
+    <string name="audio_no_tracks">No audio tracks available</string>
+</resources>
