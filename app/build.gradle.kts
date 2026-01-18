@@ -27,8 +27,8 @@ android {
         applicationId = "com.example.xtreamplayer"
         minSdk = 24
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.1.7"
+        versionCode = 8
+        versionName = "1.1.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -85,7 +85,7 @@ androidComponents {
             val outputFileName = runCatching {
                 output::class.java.getMethod("getOutputFileName").invoke(output) as Property<String>
             }.getOrNull()
-            outputFileName?.set("Xtream Player v1.1.7.apk")
+            outputFileName?.set("Xtream Player v1.1.8.apk")
         }
     }
 }
