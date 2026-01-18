@@ -2,6 +2,7 @@ package com.example.xtreamplayer.player
 
 import android.content.Context
 import android.net.Uri
+import android.media.audiofx.LoudnessEnhancer
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -39,6 +40,15 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
         .setLoadControl(loadControl)
         .build()
     private var currentMedia: Uri? = null
+    private var loudnessEnhancer: LoudnessEnhancer? = null
+    private var loudnessSessionId: Int = C.AUDIO_SESSION_ID_UNSET
+    private var boostDb: Float = 0f
+    private val playerListener =
+        object : Player.Listener {
+            override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                updateLoudnessEnhancer(audioSessionId)
+            }
+        }
 
     init {
         val audioAttributes = AudioAttributes.Builder()
@@ -48,6 +58,8 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
         player.setAudioAttributes(audioAttributes, true)
         player.setHandleAudioBecomingNoisy(true)
         player.volume = 1f
+        player.addListener(playerListener)
+        updateLoudnessEnhancer(player.audioSessionId)
     }
 
     fun setMedia(uri: Uri) {
@@ -103,7 +115,41 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
     }
 
     fun release() {
+        player.removeListener(playerListener)
+        loudnessEnhancer?.release()
+        loudnessEnhancer = null
         player.release()
+    }
+
+    fun getAudioBoostDb(): Float = boostDb
+
+    fun setAudioBoostDb(db: Float) {
+        boostDb = db.coerceIn(0f, MAX_BOOST_DB)
+        val targetGainMb = (boostDb * 100).toInt()
+        val enhancer = loudnessEnhancer
+        if (enhancer != null) {
+            enhancer.setTargetGain(targetGainMb)
+            enhancer.enabled = boostDb > 0f
+        }
+    }
+
+    private fun updateLoudnessEnhancer(sessionId: Int) {
+        if (sessionId == C.AUDIO_SESSION_ID_UNSET || sessionId == loudnessSessionId) {
+            return
+        }
+        loudnessSessionId = sessionId
+        loudnessEnhancer?.release()
+        loudnessEnhancer =
+            runCatching {
+                LoudnessEnhancer(sessionId).apply {
+                    enabled = boostDb > 0f
+                    setTargetGain((boostDb * 100).toInt())
+                }
+            }.getOrNull()
+    }
+
+    companion object {
+        private const val MAX_BOOST_DB = 12f
     }
 
     @OptIn(UnstableApi::class)

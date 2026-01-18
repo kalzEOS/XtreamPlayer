@@ -89,6 +89,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
@@ -118,6 +119,7 @@ import com.example.xtreamplayer.player.XtreamPlayerView
 import com.example.xtreamplayer.settings.PlaybackSettingsController
 import com.example.xtreamplayer.settings.SettingsViewModel
 import com.example.xtreamplayer.ui.ApiKeyInputDialog
+import com.example.xtreamplayer.ui.AudioBoostDialog
 import com.example.xtreamplayer.ui.AudioTrackDialog
 import com.example.xtreamplayer.ui.FocusableButton
 import com.example.xtreamplayer.ui.SubtitleDialogState
@@ -126,8 +128,10 @@ import com.example.xtreamplayer.ui.SubtitleSearchDialog
 import com.example.xtreamplayer.ui.theme.XtreamPlayerTheme
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 private enum class HomeDestination {
@@ -220,6 +224,7 @@ fun RootScreen(
     var activePlaybackTitle by remember { mutableStateOf<String?>(null) }
     var activePlaybackItem by remember { mutableStateOf<ContentItem?>(null) }
     var activePlaybackItems by remember { mutableStateOf<List<ContentItem>>(emptyList()) }
+    var playbackFallbackAttempts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var resumePositionMs by remember { mutableStateOf<Long?>(null) }
     var resumeFocusId by remember { mutableStateOf<String?>(null) }
     val resumeFocusRequester = remember { FocusRequester() }
@@ -440,6 +445,7 @@ fun RootScreen(
 
     LaunchedEffect(activePlaybackQueue) {
         val queue = activePlaybackQueue
+        playbackFallbackAttempts = queue?.fallbackUris?.mapValues { 0 } ?: emptyMap()
         if (queue != null) {
             playbackEngine.setQueue(queue.items, queue.startIndex)
             val seekPosition = resumePositionMs
@@ -636,6 +642,35 @@ fun RootScreen(
                         if (playbackState == Player.STATE_READY && !playbackEngine.player.isPlaying
                         ) {
                             savePlaybackProgress()
+                        }
+                    }
+
+                    override fun onPlayerError(error: PlaybackException) {
+                        val mediaId = playbackEngine.player.currentMediaItem?.mediaId ?: return
+                        val candidates = activePlaybackQueue?.fallbackUris?.get(mediaId).orEmpty()
+                        val attempt = playbackFallbackAttempts[mediaId] ?: 0
+                        val nextAttempt = attempt + 1
+                        if (nextAttempt < candidates.size) {
+                            playbackFallbackAttempts = playbackFallbackAttempts + (mediaId to nextAttempt)
+                            val nextUri = candidates[nextAttempt]
+                            Timber.w(
+                                    error,
+                                    "Playback failed for $mediaId, retrying with fallback ${nextAttempt + 1}/${candidates.size}: $nextUri"
+                            )
+                            val currentItem = playbackEngine.player.currentMediaItem ?: return
+                            playbackEngine.player.setMediaItem(
+                                    currentItem.buildUpon().setUri(nextUri).build()
+                            )
+                            playbackEngine.player.prepare()
+                            playbackEngine.player.playWhenReady = true
+                        } else {
+                            Timber.e(error, "Playback failed for $mediaId; no more fallbacks")
+                            Toast.makeText(
+                                            context,
+                                            "Playback failed. Please try again later.",
+                                            Toast.LENGTH_LONG
+                            )
+                                    .show()
                         }
                     }
                 }
@@ -1107,9 +1142,11 @@ private fun PlayerOverlay(
     var showSubtitleDialog by remember { mutableStateOf(false) }
     var showSubtitleOptionsDialog by remember { mutableStateOf(false) }
     var showAudioTrackDialog by remember { mutableStateOf(false) }
+    var showAudioBoostDialog by remember { mutableStateOf(false) }
     var subtitleDialogState by remember {
         mutableStateOf<SubtitleDialogState>(SubtitleDialogState.Idle)
     }
+    var audioBoostDb by remember { mutableStateOf(playbackEngine.getAudioBoostDb()) }
     val subtitleCoroutineScope = rememberCoroutineScope()
     var subtitlesEnabled by remember {
         mutableStateOf(isTextTrackEnabled(player.trackSelectionParameters))
@@ -1225,6 +1262,12 @@ private fun PlayerOverlay(
         }
     }
 
+    LaunchedEffect(showAudioBoostDialog) {
+        if (showAudioBoostDialog) {
+            audioBoostDb = playbackEngine.getAudioBoostDb()
+        }
+    }
+
     BackHandler(enabled = true) {
         val dismissed = playerView?.dismissSettingsWindowIfShowing() == true
         if (!dismissed) {
@@ -1269,6 +1312,7 @@ private fun PlayerOverlay(
                         onSubtitleDownloadClick = { showSubtitleDialog = true }
                         onSubtitleToggleClick = { showSubtitleOptionsDialog = true }
                         onAudioTrackClick = { showAudioTrackDialog = true }
+                        onAudioBoostClick = { showAudioBoostDialog = true }
                         isFocusable = true
                         isFocusableInTouchMode = true
                         setControllerVisibilityListener(
@@ -1318,6 +1362,7 @@ private fun PlayerOverlay(
                     view.onSubtitleDownloadClick = { showSubtitleDialog = true }
                     view.onSubtitleToggleClick = { showSubtitleOptionsDialog = true }
                     view.onAudioTrackClick = { showAudioTrackDialog = true }
+                    view.onAudioBoostClick = { showAudioBoostDialog = true }
                     if (playerView != view) {
                         playerView = view
                     }
@@ -1448,6 +1493,17 @@ private fun PlayerOverlay(
                 onDismiss = { showAudioTrackDialog = false }
         )
     }
+
+    if (showAudioBoostDialog) {
+        AudioBoostDialog(
+                boostDb = audioBoostDb,
+                onBoostChange = { newBoost ->
+                    audioBoostDb = newBoost
+                    playbackEngine.setAudioBoostDb(newBoost)
+                },
+                onDismiss = { showAudioBoostDialog = false }
+        )
+    }
 }
 
 private fun isTextTrackEnabled(parameters: TrackSelectionParameters): Boolean {
@@ -1496,23 +1552,26 @@ private fun buildPlaybackQueue(
             playableItems.indexOfFirst { it.id == current.id }.let { index ->
                 if (index >= 0) index else 0
             }
+    val fallbackUris = LinkedHashMap<String, List<Uri>>()
     val queueItems =
             playableItems.map { item ->
-                val url =
-                        StreamUrlBuilder.buildUrl(
+                val candidates =
+                        StreamUrlBuilder.buildCandidates(
                                 config = authConfig,
                                 type = item.contentType,
                                 streamId = item.streamId,
                                 extension = item.containerExtension
                         )
+                val uris = candidates.map(Uri::parse)
                 PlaybackQueueItem(
                         mediaId = "${item.contentType.name}:${item.id}",
                         title = item.title,
                         type = item.contentType,
-                        uri = Uri.parse(url)
+                        uri = uris.first()
                 )
+                    .also { queueItem -> fallbackUris[queueItem.mediaId] = uris }
             }
-    return PlaybackQueue(queueItems, startIndex)
+    return PlaybackQueue(queueItems, startIndex, fallbackUris)
 }
 
 private fun buildLocalPlaybackQueue(items: List<LocalFileItem>, startIndex: Int): PlaybackQueue {
@@ -2415,28 +2474,35 @@ private fun ContentBrowserScreen(
                 null
             }
 
-    val filteredFavorites =
-            remember(favoriteItems, normalizedQuery) {
+    val filteredFavoritesState = remember { mutableStateOf<List<ContentItem>>(emptyList()) }
+    LaunchedEffect(favoriteItems, normalizedQuery) {
+        filteredFavoritesState.value =
                 if (normalizedQuery.isBlank()) {
                     favoriteItems
                 } else {
-                    favoriteItems.filter {
-                        SearchNormalizer.normalizeTitle(it.title)
-                                .contains(normalizedQuery, ignoreCase = true)
+                    withContext(Dispatchers.Default) {
+                        favoriteItems.filter {
+                            SearchNormalizer.matchesTitle(it.title, normalizedQuery)
+                        }
                     }
                 }
-            }
-    val filteredHistory =
-            remember(historyItems, normalizedQuery) {
+    }
+    val filteredFavorites = filteredFavoritesState.value
+
+    val filteredHistoryState = remember { mutableStateOf<List<ContentItem>>(emptyList()) }
+    LaunchedEffect(historyItems, normalizedQuery) {
+        filteredHistoryState.value =
                 if (normalizedQuery.isBlank()) {
                     historyItems
                 } else {
-                    historyItems.filter {
-                        SearchNormalizer.normalizeTitle(it.title)
-                                .contains(normalizedQuery, ignoreCase = true)
+                    withContext(Dispatchers.Default) {
+                        historyItems.filter {
+                            SearchNormalizer.matchesTitle(it.title, normalizedQuery)
+                        }
                     }
                 }
-            }
+    }
+    val filteredHistory = filteredHistoryState.value
 
     val currentPreviewItem = remember { mutableStateOf<ContentItem?>(null) }
     val previewQueueItems =
@@ -5542,15 +5608,21 @@ fun CategorySectionScreen(
                         modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
                 )
             } else {
-                val filteredCategories =
-                        if (activeQuery.isBlank()) {
-                            categories
-                        } else {
-                            categories.filter {
-                                SearchNormalizer.normalizeTitle(it.name)
-                                        .contains(activeQuery, ignoreCase = true)
+                val filteredCategoriesState =
+                        remember { mutableStateOf<List<CategoryItem>>(emptyList()) }
+                LaunchedEffect(categories, activeQuery) {
+                    filteredCategoriesState.value =
+                            if (activeQuery.isBlank()) {
+                                categories
+                            } else {
+                                withContext(Dispatchers.Default) {
+                                    categories.filter {
+                                        SearchNormalizer.matchesTitle(it.name, activeQuery)
+                                    }
+                                }
                             }
-                        }
+                }
+                val filteredCategories = filteredCategoriesState.value
                 // Focus is managed by user navigation - no auto-focus on content load
                 if (activeQuery.isNotBlank() && filteredCategories.isEmpty()) {
                     Text(

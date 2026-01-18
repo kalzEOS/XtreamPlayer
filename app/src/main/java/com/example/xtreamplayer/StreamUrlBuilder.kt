@@ -5,20 +5,62 @@ import com.example.xtreamplayer.content.ContentType
 
 object StreamUrlBuilder {
     fun buildUrl(config: AuthConfig, type: ContentType, streamId: String, extension: String?): String {
+        return buildCandidates(config, type, streamId, extension).first()
+    }
+
+    fun buildCandidates(
+        config: AuthConfig,
+        type: ContentType,
+        streamId: String,
+        extension: String?
+    ): List<String> {
         val base = normalizeBaseUrl(config.baseUrl)
         val user = config.username
         val pass = config.password
-        return when (type) {
-            ContentType.LIVE -> "$base/live/$user/$pass/$streamId.ts"
-            ContentType.MOVIES -> {
-                val ext = extension?.ifBlank { "mp4" } ?: "mp4"
-                "$base/movie/$user/$pass/$streamId.$ext"
+        val trimmedStreamId = streamId.trim()
+        if (trimmedStreamId.startsWith("http://") || trimmedStreamId.startsWith("https://")) {
+            return listOf(trimmedStreamId)
+        }
+        val ext = extension
+            ?.trim()
+            ?.removePrefix(".")
+            ?.ifBlank { null }
+        val basePath = when (type) {
+            ContentType.LIVE -> "$base/live/$user/$pass"
+            ContentType.MOVIES -> "$base/movie/$user/$pass"
+            ContentType.SERIES -> "$base/series/$user/$pass"
+        }
+        val candidates = LinkedHashSet<String>()
+        val hasInlineExtension =
+            trimmedStreamId.substringAfterLast('/').contains('.')
+
+        fun add(path: String) {
+            candidates.add(path)
+        }
+
+        when (type) {
+            ContentType.LIVE -> {
+                val liveExt = ext ?: "ts"
+                add("$basePath/$trimmedStreamId.$liveExt")
+                add("$basePath/$trimmedStreamId")
             }
-            ContentType.SERIES -> {
-                val ext = extension?.ifBlank { "mp4" } ?: "mp4"
-                "$base/series/$user/$pass/$streamId.$ext"
+            ContentType.MOVIES, ContentType.SERIES -> {
+                when {
+                    hasInlineExtension -> {
+                        add("$basePath/$trimmedStreamId")
+                    }
+                    !ext.isNullOrBlank() -> {
+                        add("$basePath/$trimmedStreamId.$ext")
+                    }
+                    else -> {
+                        add("$basePath/$trimmedStreamId.mp4")
+                        add("$basePath/$trimmedStreamId.m3u8")
+                    }
+                }
+                add("$basePath/$trimmedStreamId")
             }
         }
+        return candidates.toList()
     }
 
     private fun normalizeBaseUrl(raw: String): String {

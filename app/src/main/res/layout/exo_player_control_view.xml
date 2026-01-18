@@ -107,6 +107,14 @@
                 android:focusable="true"
                 android:clickable="true" />
 
+            <ImageButton
+                android:id="@+id/exo_audio_boost"
+                style="@style/ExoStyledControls.Button.Bottom"
+                android:src="@drawable/ic_volume_boost"
+                android:contentDescription="@string/audio_boost_description"
+                android:focusable="true"
+                android:clickable="true" />
+
             <TextView
                 android:id="@+id/exo_resize_mode"
                 android:layout_width="wrap_content"

@@ -3,6 +3,7 @@
     <string name="exo_controls_back_description">Back</string>
     <string name="subtitle_download_description">Download subtitles</string>
     <string name="audio_track_description">Select audio track</string>
+    <string name="audio_boost_description">Adjust audio boost</string>
     <string name="subtitle_search_title">Search Subtitles</string>
     <string name="subtitle_searching">Searching...</string>
     <string name="subtitle_no_results">No subtitles found</string>
