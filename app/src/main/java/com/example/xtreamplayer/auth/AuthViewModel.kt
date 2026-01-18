@@ -20,11 +20,22 @@ class AuthViewModel @Inject constructor(
     private val _uiState = kotlinx.coroutines.flow.MutableStateFlow(AuthUiState())
     val uiState: StateFlow<AuthUiState> = _uiState
 
+    private val _savedConfigLoaded = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val savedConfigLoaded: StateFlow<Boolean> = _savedConfigLoaded
+
     val savedConfig: StateFlow<AuthConfig?> = repository.authConfig.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = null
     )
+
+    init {
+        viewModelScope.launch {
+            repository.authConfig.collect {
+                _savedConfigLoaded.value = true
+            }
+        }
+    }
 
     fun tryAutoSignIn(settings: SettingsState) {
         if (_uiState.value.isSignedIn || _uiState.value.isLoading) return

@@ -193,6 +193,7 @@ fun RootScreen(
     val authViewModel: AuthViewModel = hiltViewModel()
     val authState by authViewModel.uiState.collectAsStateWithLifecycle()
     val savedConfig by authViewModel.savedConfig.collectAsStateWithLifecycle()
+    val savedConfigLoaded by authViewModel.savedConfigLoaded.collectAsStateWithLifecycle()
     val favoriteContentKeys by
             favoritesRepository.favoriteContentKeys.collectAsStateWithLifecycle(
                     initialValue = emptySet()
@@ -686,8 +687,14 @@ fun RootScreen(
     LaunchedEffect(settings) { playbackSettingsController.apply(settings) }
 
     AppBackground {
+        val shouldAutoSignIn =
+                settings.autoSignIn && settings.rememberLogin && savedConfig != null
+        val isWaitingForSavedConfig =
+                !savedConfigLoaded && settings.autoSignIn && settings.rememberLogin
         val showAuthLoading =
-                !authState.isSignedIn && authState.errorMessage == null && authState.isLoading
+                !authState.isSignedIn &&
+                        authState.errorMessage == null &&
+                        (authState.isLoading || shouldAutoSignIn || isWaitingForSavedConfig)
 
         if (showAuthLoading) {
             AuthLoadingScreen()
