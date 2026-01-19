@@ -26,6 +26,7 @@ class XtreamPlayerView @JvmOverloads constructor(
     private var subtitleToggleView: View? = null
     private var audioTrackView: View? = null
     private var audioBoostView: View? = null
+    private var settingsView: View? = null
     var onResizeModeClick: (() -> Unit)? = null
         set(value) {
             field = value
@@ -55,6 +56,11 @@ class XtreamPlayerView @JvmOverloads constructor(
         set(value) {
             field = value
             bindAudioBoostView()
+        }
+    var onSettingsClick: (() -> Unit)? = null
+        set(value) {
+            field = value
+            bindSettingsView()
         }
     var forcedAspectRatio: Float? = null
         set(value) {
@@ -119,6 +125,7 @@ class XtreamPlayerView @JvmOverloads constructor(
         bindSubtitleToggleView()
         bindAudioTrackView()
         bindAudioBoostView()
+        bindSettingsView()
     }
 
     private fun bindSubtitleDownloadView() {
@@ -165,5 +172,12 @@ class XtreamPlayerView @JvmOverloads constructor(
             audioBoostView = it
         }
         view?.setOnClickListener { onAudioBoostClick?.invoke() }
+    }
+
+    private fun bindSettingsView() {
+        val view = settingsView ?: findViewById<View>(Media3UiR.id.exo_settings).also {
+            settingsView = it
+        }
+        view?.setOnClickListener { onSettingsClick?.invoke() }
     }
 }

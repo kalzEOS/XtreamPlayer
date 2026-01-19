@@ -122,9 +122,12 @@ import com.example.xtreamplayer.ui.ApiKeyInputDialog
 import com.example.xtreamplayer.ui.AudioBoostDialog
 import com.example.xtreamplayer.ui.AudioTrackDialog
 import com.example.xtreamplayer.ui.FocusableButton
+import com.example.xtreamplayer.ui.PlaybackSettingsDialog
+import com.example.xtreamplayer.ui.PlaybackSpeedDialog
 import com.example.xtreamplayer.ui.SubtitleDialogState
 import com.example.xtreamplayer.ui.SubtitleOptionsDialog
 import com.example.xtreamplayer.ui.SubtitleSearchDialog
+import com.example.xtreamplayer.ui.VideoResolutionDialog
 import com.example.xtreamplayer.ui.theme.XtreamPlayerTheme
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -815,8 +818,6 @@ fun RootScreen(
                                         onMoveLeft = handleMoveLeft,
                                         onToggleAutoPlay = settingsViewModel::toggleAutoPlayNext,
                                         onToggleSubtitles = settingsViewModel::toggleSubtitles,
-                                        onCyclePlaybackQuality =
-                                                settingsViewModel::cyclePlaybackQuality,
                                         onCycleAudioLanguage =
                                                 settingsViewModel::cycleAudioLanguage,
                                         onToggleRememberLogin =
@@ -1145,6 +1146,9 @@ private fun PlayerOverlay(
     var showSubtitleOptionsDialog by remember { mutableStateOf(false) }
     var showAudioTrackDialog by remember { mutableStateOf(false) }
     var showAudioBoostDialog by remember { mutableStateOf(false) }
+    var showPlaybackSettingsDialog by remember { mutableStateOf(false) }
+    var showPlaybackSpeedDialog by remember { mutableStateOf(false) }
+    var showResolutionDialog by remember { mutableStateOf(false) }
     var subtitleDialogState by remember {
         mutableStateOf<SubtitleDialogState>(SubtitleDialogState.Idle)
     }
@@ -1271,9 +1275,16 @@ private fun PlayerOverlay(
     }
 
     BackHandler(enabled = true) {
-        val dismissed = playerView?.dismissSettingsWindowIfShowing() == true
-        if (!dismissed) {
-            onExit()
+        when {
+            showPlaybackSettingsDialog -> showPlaybackSettingsDialog = false
+            showPlaybackSpeedDialog -> showPlaybackSpeedDialog = false
+            showResolutionDialog -> showResolutionDialog = false
+            else -> {
+                val dismissed = playerView?.dismissSettingsWindowIfShowing() == true
+                if (!dismissed) {
+                    onExit()
+                }
+            }
         }
     }
 
@@ -1315,6 +1326,7 @@ private fun PlayerOverlay(
                         onSubtitleToggleClick = { showSubtitleOptionsDialog = true }
                         onAudioTrackClick = { showAudioTrackDialog = true }
                         onAudioBoostClick = { showAudioBoostDialog = true }
+                        onSettingsClick = { showPlaybackSettingsDialog = true }
                         isFocusable = true
                         isFocusableInTouchMode = true
                         setControllerVisibilityListener(
@@ -1365,6 +1377,7 @@ private fun PlayerOverlay(
                     view.onSubtitleToggleClick = { showSubtitleOptionsDialog = true }
                     view.onAudioTrackClick = { showAudioTrackDialog = true }
                     view.onAudioBoostClick = { showAudioBoostDialog = true }
+                    view.onSettingsClick = { showPlaybackSettingsDialog = true }
                     if (playerView != view) {
                         playerView = view
                     }
@@ -1504,6 +1517,59 @@ private fun PlayerOverlay(
                     playbackEngine.setAudioBoostDb(newBoost)
                 },
                 onDismiss = { showAudioBoostDialog = false }
+        )
+    }
+
+    if (showPlaybackSettingsDialog) {
+        val audioTracks = playbackEngine.getAvailableAudioTracks()
+        val videoTracks = playbackEngine.getAvailableVideoTracks()
+        val selectedAudio =
+                audioTracks.firstOrNull { it.isSelected }?.label
+                        ?: if (audioTracks.isEmpty()) "None" else "Auto"
+        val selectedResolution =
+                videoTracks.firstOrNull { it.isSelected }?.label
+                        ?: if (videoTracks.isEmpty()) "Unknown" else videoTracks.first().label
+        val speedLabel = "${player.playbackParameters.speed}x"
+
+        PlaybackSettingsDialog(
+                audioLabel = selectedAudio,
+                speedLabel = speedLabel,
+                resolutionLabel = selectedResolution,
+                onAudio = {
+                    showPlaybackSettingsDialog = false
+                    showAudioTrackDialog = true
+                },
+                onSpeed = {
+                    showPlaybackSettingsDialog = false
+                    showPlaybackSpeedDialog = true
+                },
+                onResolution = {
+                    showPlaybackSettingsDialog = false
+                    showResolutionDialog = true
+                },
+                onDismiss = { showPlaybackSettingsDialog = false }
+        )
+    }
+
+    if (showPlaybackSpeedDialog) {
+        PlaybackSpeedDialog(
+                currentSpeed = player.playbackParameters.speed,
+                onSpeedSelected = { speed ->
+                    player.setPlaybackParameters(
+                            androidx.media3.common.PlaybackParameters(speed)
+                    )
+                },
+                onDismiss = { showPlaybackSpeedDialog = false }
+        )
+    }
+
+    if (showResolutionDialog) {
+        VideoResolutionDialog(
+                availableTracks = playbackEngine.getAvailableVideoTracks(),
+                onTrackSelected = { groupIndex, trackIndex ->
+                    playbackEngine.selectVideoTrack(groupIndex, trackIndex)
+                },
+                onDismiss = { showResolutionDialog = false }
         )
     }
 }

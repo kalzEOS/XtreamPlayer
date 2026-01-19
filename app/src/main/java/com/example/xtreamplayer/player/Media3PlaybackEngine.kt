@@ -6,6 +6,7 @@ import android.media.audiofx.LoudnessEnhancer
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaItem.SubtitleConfiguration
 import androidx.media3.common.MediaMetadata
@@ -19,7 +20,6 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import com.example.xtreamplayer.PlaybackQueueItem
 import com.example.xtreamplayer.settings.AudioLanguage
-import com.example.xtreamplayer.settings.PlaybackQuality
 import com.example.xtreamplayer.settings.SettingsState
 
 class Media3PlaybackEngine(context: Context) : PlaybackEngine {
@@ -108,9 +108,6 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
                     .build()
             )
 
-        val (maxWidth, maxHeight) = maxVideoSize(settings.playbackQuality)
-        builder.setMaxVideoSize(maxWidth, maxHeight)
-
         player.trackSelectionParameters = builder.build()
     }
 
@@ -183,6 +180,36 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
     }
 
     @OptIn(UnstableApi::class)
+    fun getAvailableVideoTracks(): List<VideoTrackInfo> {
+        val tracks = mutableListOf<VideoTrackInfo>()
+        val currentTracks = player.currentTracks
+
+        currentTracks.groups.forEachIndexed { groupIndex, trackGroup ->
+            if (trackGroup.type == C.TRACK_TYPE_VIDEO) {
+                for (i in 0 until trackGroup.length) {
+                    val format = trackGroup.getTrackFormat(i)
+                    val label = buildVideoTrackLabel(format)
+                    val isSelected = trackGroup.isTrackSelected(i)
+                    val isSupported = trackGroup.isTrackSupported(i)
+                    tracks.add(
+                        VideoTrackInfo(
+                            groupIndex,
+                            i,
+                            label,
+                            format.width,
+                            format.height,
+                            format.bitrate,
+                            isSelected,
+                            isSupported
+                        )
+                    )
+                }
+            }
+        }
+        return tracks
+    }
+
+    @OptIn(UnstableApi::class)
     fun selectAudioTrack(groupIndex: Int, trackIndex: Int) {
         val currentTracks = player.currentTracks
         if (groupIndex >= currentTracks.groups.size) return
@@ -205,6 +232,31 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
         player.trackSelectionParameters = builder.build()
 
         // Restore playback state
+        if (wasPlaying && !player.isPlaying) {
+            player.play()
+        }
+    }
+
+    @OptIn(UnstableApi::class)
+    fun selectVideoTrack(groupIndex: Int, trackIndex: Int) {
+        val currentTracks = player.currentTracks
+        if (groupIndex >= currentTracks.groups.size) return
+
+        val trackGroup = currentTracks.groups[groupIndex]
+        if (trackGroup.type != C.TRACK_TYPE_VIDEO) return
+        if (trackIndex < 0 || trackIndex >= trackGroup.length) return
+        if (!trackGroup.isTrackSupported(trackIndex)) return
+
+        val wasPlaying = player.isPlaying
+        val builder = player.trackSelectionParameters.buildUpon()
+        builder.setOverrideForType(
+            TrackSelectionOverride(
+                trackGroup.mediaTrackGroup,
+                listOf(trackIndex)
+            )
+        )
+        player.trackSelectionParameters = builder.build()
+
         if (wasPlaying && !player.isPlaying) {
             player.play()
         }
@@ -284,15 +336,6 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
         }
     }
 
-    private fun maxVideoSize(quality: PlaybackQuality): Pair<Int, Int> {
-        return when (quality) {
-            PlaybackQuality.AUTO -> Int.MAX_VALUE to Int.MAX_VALUE
-            PlaybackQuality.UHD_4K -> 3840 to 2160
-            PlaybackQuality.FHD_1080 -> 1920 to 1080
-            PlaybackQuality.HD_720 -> 1280 to 720
-        }
-    }
-
     private fun getLanguageName(languageCode: String): String {
         return when (languageCode.lowercase()) {
             "en", "eng" -> "English"
@@ -334,6 +377,26 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
             else -> languageCode.uppercase()
         }
     }
+
+    private fun buildVideoTrackLabel(format: Format): String {
+        val parts = mutableListOf<String>()
+        val height = format.height
+        val width = format.width
+        val resolution =
+            when {
+                height > 0 -> "${height}p"
+                width > 0 -> "${width}w"
+                else -> "Unknown"
+            }
+        parts.add(resolution)
+        if (width > 0 && height > 0) {
+            parts.add("${width}x${height}")
+        }
+        if (format.bitrate > 0) {
+            parts.add("${format.bitrate / 1000} kbps")
+        }
+        return parts.joinToString(" \u2022 ")
+    }
 }
 
 data class AudioTrackInfo(
@@ -341,6 +404,17 @@ data class AudioTrackInfo(
     val trackIndex: Int,
     val label: String,
     val language: String,
+    val isSelected: Boolean,
+    val isSupported: Boolean
+)
+
+data class VideoTrackInfo(
+    val groupIndex: Int,
+    val trackIndex: Int,
+    val label: String,
+    val width: Int,
+    val height: Int,
+    val bitrate: Int,
     val isSelected: Boolean,
     val isSupported: Boolean
 )

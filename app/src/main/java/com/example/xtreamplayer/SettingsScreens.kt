@@ -53,7 +53,6 @@ fun SettingsScreen(
     onMoveLeft: () -> Unit,
     onToggleAutoPlay: () -> Unit,
     onToggleSubtitles: () -> Unit,
-    onCyclePlaybackQuality: () -> Unit,
     onCycleAudioLanguage: () -> Unit,
     onToggleRememberLogin: () -> Unit,
     onToggleAutoSignIn: () -> Unit,
@@ -68,7 +67,6 @@ fun SettingsScreen(
     val actions = listOf(
         SettingsAction("Auto-play next", flagLabel(settings.autoPlayNext), onToggleAutoPlay),
         SettingsAction("Subtitles", flagLabel(settings.subtitlesEnabled), onToggleSubtitles),
-        SettingsAction("Playback quality", settings.playbackQuality.label, onCyclePlaybackQuality),
         SettingsAction("Audio language", settings.audioLanguage.label, onCycleAudioLanguage),
         SettingsAction("OpenSubtitles API key", apiKeyLabel, onOpenSubtitlesApiKey),
         SettingsAction("Remember login", flagLabel(settings.rememberLogin), onToggleRememberLogin),

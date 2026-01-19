@@ -14,7 +14,6 @@ class SettingsRepository(private val context: Context) {
     val settings: Flow<SettingsState> = context.dataStore.data.map { prefs ->
         val autoPlay = prefs[Keys.AUTO_PLAY_NEXT] ?: true
         val subtitles = prefs[Keys.SUBTITLES_ENABLED] ?: false
-        val quality = parsePlaybackQuality(prefs[Keys.PLAYBACK_QUALITY])
         val audio = parseAudioLanguage(prefs[Keys.AUDIO_LANGUAGE])
         val rememberLogin = prefs[Keys.REMEMBER_LOGIN] ?: true
         val autoSignIn = prefs[Keys.AUTO_SIGN_IN] ?: true
@@ -24,7 +23,6 @@ class SettingsRepository(private val context: Context) {
         SettingsState(
             autoPlayNext = autoPlay,
             subtitlesEnabled = subtitles,
-            playbackQuality = quality,
             audioLanguage = audio,
             rememberLogin = rememberLogin,
             autoSignIn = autoSignIn,
@@ -42,12 +40,6 @@ class SettingsRepository(private val context: Context) {
     suspend fun setSubtitlesEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[Keys.SUBTITLES_ENABLED] = enabled
-        }
-    }
-
-    suspend fun setPlaybackQuality(quality: PlaybackQuality) {
-        context.dataStore.edit { prefs ->
-            prefs[Keys.PLAYBACK_QUALITY] = quality.name
         }
     }
 
@@ -81,10 +73,6 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    private fun parsePlaybackQuality(value: String?): PlaybackQuality {
-        return PlaybackQuality.values().firstOrNull { it.name == value } ?: PlaybackQuality.AUTO
-    }
-
     private fun parseAudioLanguage(value: String?): AudioLanguage {
         return AudioLanguage.values().firstOrNull { it.name == value } ?: AudioLanguage.ENGLISH
     }
@@ -92,7 +80,6 @@ class SettingsRepository(private val context: Context) {
     private object Keys {
         val AUTO_PLAY_NEXT = booleanPreferencesKey("auto_play_next")
         val SUBTITLES_ENABLED = booleanPreferencesKey("subtitles_enabled")
-        val PLAYBACK_QUALITY = stringPreferencesKey("playback_quality")
         val AUDIO_LANGUAGE = stringPreferencesKey("audio_language")
         val REMEMBER_LOGIN = booleanPreferencesKey("remember_login")
         val AUTO_SIGN_IN = booleanPreferencesKey("auto_sign_in")
