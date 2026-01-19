@@ -65,6 +65,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -127,7 +128,10 @@ import com.example.xtreamplayer.ui.PlaybackSpeedDialog
 import com.example.xtreamplayer.ui.SubtitleDialogState
 import com.example.xtreamplayer.ui.SubtitleOptionsDialog
 import com.example.xtreamplayer.ui.SubtitleSearchDialog
+import com.example.xtreamplayer.ui.ThemeSelectionDialog
 import com.example.xtreamplayer.ui.VideoResolutionDialog
+import com.example.xtreamplayer.ui.theme.AppTheme
+import com.example.xtreamplayer.ui.theme.AppColors
 import com.example.xtreamplayer.ui.theme.XtreamPlayerTheme
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -136,6 +140,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import kotlin.math.max
+import kotlin.math.min
 
 private enum class HomeDestination {
     HOME,
@@ -164,17 +170,15 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            XtreamPlayerTheme {
-                RootScreen(
-                        playbackSettingsController = playbackSettingsController,
-                        playbackEngine = playbackEngine,
-                        contentRepository = contentRepository,
-                        favoritesRepository = favoritesRepository,
-                        historyRepository = historyRepository,
-                        continueWatchingRepository = continueWatchingRepository,
-                        subtitleRepository = subtitleRepository
-                )
-            }
+            RootScreen(
+                    playbackSettingsController = playbackSettingsController,
+                    playbackEngine = playbackEngine,
+                    contentRepository = contentRepository,
+                    favoritesRepository = favoritesRepository,
+                    historyRepository = historyRepository,
+                    continueWatchingRepository = continueWatchingRepository,
+                    subtitleRepository = subtitleRepository
+            )
         }
     }
 }
@@ -224,6 +228,7 @@ fun RootScreen(
     var navExpanded by remember { mutableStateOf(true) }
     var showManageLists by remember { mutableStateOf(false) }
     var showApiKeyDialog by remember { mutableStateOf(false) }
+    var showThemeDialog by remember { mutableStateOf(false) }
     var activePlaybackQueue by remember { mutableStateOf<PlaybackQueue?>(null) }
     var activePlaybackTitle by remember { mutableStateOf<String?>(null) }
     var activePlaybackItem by remember { mutableStateOf<ContentItem?>(null) }
@@ -689,7 +694,8 @@ fun RootScreen(
 
     LaunchedEffect(settings) { playbackSettingsController.apply(settings) }
 
-    AppBackground {
+    XtreamPlayerTheme(appTheme = settings.appTheme) {
+        AppBackground {
         val shouldAutoSignIn =
                 settings.autoSignIn && settings.rememberLogin && savedConfig != null
         val isWaitingForSavedConfig =
@@ -820,6 +826,7 @@ fun RootScreen(
                                         onToggleSubtitles = settingsViewModel::toggleSubtitles,
                                         onCycleAudioLanguage =
                                                 settingsViewModel::cycleAudioLanguage,
+                                        onOpenThemeSelector = { showThemeDialog = true },
                                         onToggleRememberLogin =
                                                 settingsViewModel::toggleRememberLogin,
                                         onToggleAutoSignIn = settingsViewModel::toggleAutoSignIn,
@@ -1093,6 +1100,18 @@ fun RootScreen(
                 onDismiss = { showApiKeyDialog = false }
         )
     }
+    if (showThemeDialog) {
+        ThemeSelectionDialog(
+                themes = com.example.xtreamplayer.settings.AppThemeOption.values().toList(),
+                currentTheme = settings.appTheme,
+                onThemeSelected = { theme ->
+                    settingsViewModel.setAppTheme(theme)
+                    showThemeDialog = false
+                },
+                onDismiss = { showThemeDialog = false }
+        )
+    }
+    }
 }
 
 @Composable
@@ -1100,7 +1119,7 @@ private fun AuthLoadingScreen() {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(
                 text = "XTREAM PLAYER",
-                color = Color.White,
+                color = AppTheme.colors.textPrimary,
                 fontSize = 26.sp,
                 fontFamily = FontFamily.Serif,
                 fontWeight = FontWeight.Bold,
@@ -1845,12 +1864,16 @@ private fun Context.findActivity(): Activity? {
 
 @Composable
 fun AppBackground(content: @Composable BoxScope.() -> Unit) {
+    val colors = AppTheme.colors
     Box(
             modifier =
                     Modifier.fillMaxSize()
                             .background(
                                     Brush.verticalGradient(
-                                            colors = listOf(Color(0xFF0A0F1A), Color(0xFF141B2C))
+                                            colors = listOf(
+                                                    colors.background,
+                                                    colors.backgroundAlt
+                                            )
                                     )
                             )
     ) {
@@ -1861,7 +1884,10 @@ fun AppBackground(content: @Composable BoxScope.() -> Unit) {
                                 .background(
                                         Brush.horizontalGradient(
                                                 colors =
-                                                        listOf(Color(0x332B5BFF), Color.Transparent)
+                                                        listOf(
+                                                                colors.accent.copy(alpha = 0.2f),
+                                                                Color.Transparent
+                                                        )
                                         )
                                 )
         )
@@ -1885,6 +1911,7 @@ fun SideNav(
         localFilesNavItemFocusRequester: FocusRequester,
         settingsNavItemFocusRequester: FocusRequester
 ) {
+    val colors = AppTheme.colors
     val animatedNavWidth by
             animateDpAsState(
                     targetValue = if (expanded) 220.dp else 0.dp,
@@ -1920,8 +1947,8 @@ fun SideNav(
                         Modifier.fillMaxHeight()
                                 .width(220.dp)
                                 .verticalScroll(scrollState)
-                                .background(Color(0xFF111826))
-                                .border(1.dp, Color(0xFF1F2B3E))
+                                .background(colors.panelBackground)
+                                .border(1.dp, colors.panelBorder)
                                 .padding(horizontal = 18.dp, vertical = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
@@ -1941,6 +1968,31 @@ fun SideNav(
 
 data class NavEntry(val label: String, val section: Section, val focusRequester: FocusRequester)
 
+private fun bestContrastText(background: Color, primary: Color, onAccent: Color): Color {
+    val bgLuminance = background.luminance()
+    val primaryLuminance = primary.luminance()
+    val onAccentLuminance = onAccent.luminance()
+    val primaryContrast =
+            (max(bgLuminance, primaryLuminance) + 0.05f) /
+                    (min(bgLuminance, primaryLuminance) + 0.05f)
+    val onAccentContrast =
+            (max(bgLuminance, onAccentLuminance) + 0.05f) /
+                    (min(bgLuminance, onAccentLuminance) + 0.05f)
+    return if (onAccentContrast >= primaryContrast) onAccent else primary
+}
+
+private fun isLightTheme(colors: AppColors): Boolean {
+    return colors.background.luminance() > 0.5f
+}
+
+private fun cardTitleColor(colors: AppColors): Color {
+    return if (isLightTheme(colors)) Color.White else colors.textPrimary
+}
+
+private fun cardSubtitleColor(colors: AppColors): Color {
+    return if (isLightTheme(colors)) Color.White.copy(alpha = 0.72f) else colors.textSecondary
+}
+
 @Composable
 fun NavItem(
         label: String,
@@ -1955,31 +2007,34 @@ fun NavItem(
     var longPressTriggered by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(12.dp)
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val colors = AppTheme.colors
     val borderColor =
             when {
-                isFocused -> Color(0xFFB6D9FF)
-                isSelected -> Color(0xFF42539A)
-                else -> Color(0xFF1E2533)
+                isFocused -> colors.focus
+                isSelected -> colors.accentSelected
+                else -> colors.border
             }
+    val selectedTextColor =
+            bestContrastText(colors.accentSelected, colors.textPrimary, colors.textOnAccent)
     val textColor =
             when {
-                isFocused -> Color(0xFF0C1730)
-                isSelected -> Color(0xFFE3EDFF)
-                else -> Color(0xFFD5DAE6)
+                isFocused -> colors.textOnAccent
+                isSelected -> selectedTextColor
+                else -> colors.navText
             }
     val backgroundBrush =
             when {
                 isFocused ->
                         Brush.horizontalGradient(
-                                colors = listOf(Color(0xFF4F8CFF), Color(0xFF7FCBFF))
+                                colors = listOf(colors.accent, colors.accentAlt)
                         )
                 isSelected ->
                         Brush.horizontalGradient(
-                                colors = listOf(Color(0xFF273479), Color(0xFF1E275C))
+                                colors = listOf(colors.accentSelected, colors.accentSelectedAlt)
                         )
                 else ->
                         Brush.horizontalGradient(
-                                colors = listOf(Color(0xFF2B3240), Color(0xFF222833))
+                                colors = listOf(colors.accentMutedAlt, colors.surfaceAlt)
                         )
             }
 
@@ -2034,12 +2089,12 @@ fun NavItem(
                                     .padding(start = 8.dp)
                                     .width(4.dp)
                                     .height(28.dp)
-                                    .background(
-                                            color =
-                                                    if (isFocused) Color(0xFFEAF2FF)
-                                                    else Color(0xFF8EA2E8),
-                                            shape = RoundedCornerShape(4.dp)
-                                    )
+                            .background(
+                                    color =
+                                            if (isFocused) colors.textPrimary
+                                            else colors.accentAlt,
+                                    shape = RoundedCornerShape(4.dp)
+                            )
             )
         }
         Text(
@@ -2059,12 +2114,13 @@ fun MenuButton(expanded: Boolean, onToggle: () -> Unit) {
     val isFocused by interactionSource.collectIsFocusedAsState()
     val label = if (expanded) "CLOSE" else "MENU"
     val shape = RoundedCornerShape(12.dp)
-    val borderColor = if (isFocused) Color(0xFFB6D9FF) else Color(0xFF2A3348)
+    val colors = AppTheme.colors
+    val borderColor = if (isFocused) colors.focus else colors.borderStrong
     val buttonBrush =
             if (isFocused) {
-                Brush.horizontalGradient(colors = listOf(Color(0xFF4F8CFF), Color(0xFF7FCBFF)))
+                Brush.horizontalGradient(colors = listOf(colors.accent, colors.accentAlt))
             } else {
-                Brush.horizontalGradient(colors = listOf(Color(0xFF2C3550), Color(0xFF1E2438)))
+                Brush.horizontalGradient(colors = listOf(colors.accentMutedAlt, colors.surfaceAlt))
             }
 
     Box(
@@ -2105,8 +2161,8 @@ fun MenuButton(expanded: Boolean, onToggle: () -> Unit) {
                                             .height(2.dp)
                                             .background(
                                                     color =
-                                                            if (isFocused) Color(0xFF0C1730)
-                                                            else Color.White,
+                                                            if (isFocused) colors.textOnAccent
+                                                            else colors.textPrimary,
                                                     shape = RoundedCornerShape(2.dp)
                                             )
                     )
@@ -2114,7 +2170,7 @@ fun MenuButton(expanded: Boolean, onToggle: () -> Unit) {
             }
             Text(
                     text = label,
-                    color = if (isFocused) Color(0xFF0C1730) else Color.White,
+                    color = if (isFocused) colors.textOnAccent else colors.textPrimary,
                     fontSize = 16.sp,
                     fontFamily = FontFamily.Serif,
                     fontWeight = FontWeight.SemiBold,
@@ -2127,16 +2183,17 @@ fun MenuButton(expanded: Boolean, onToggle: () -> Unit) {
 @Composable
 private fun FavoriteIndicator(modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(10.dp)
+    val colors = AppTheme.colors
     Box(
             modifier =
                     modifier.size(22.dp)
-                            .background(Color(0xB20A0F1A), shape)
-                            .border(1.dp, Color(0xFFE8C56A), shape)
+                            .background(colors.overlayStrong, shape)
+                            .border(1.dp, colors.warning, shape)
     ) {
         Icon(
                 painter = painterResource(R.drawable.ic_favorite),
                 contentDescription = "Favorite",
-                tint = Color(0xFFFFD86A),
+                tint = AppTheme.colors.warning,
                 modifier = Modifier.align(Alignment.Center).size(14.dp)
         )
     }
@@ -2156,13 +2213,13 @@ private fun LibrarySyncBanner(progress: Float, itemsIndexed: Int, section: Secti
                     Modifier.fillMaxWidth()
                             .padding(horizontal = 24.dp, vertical = 8.dp)
                             .clip(RoundedCornerShape(14.dp))
-                            .background(Color(0xFF121B2D))
-                            .border(1.dp, Color(0xFF22324A), RoundedCornerShape(14.dp))
+                            .background(AppTheme.colors.surfaceMuted)
+                            .border(1.dp, AppTheme.colors.panelBorder, RoundedCornerShape(14.dp))
                             .padding(horizontal = 16.dp, vertical = 10.dp)
     ) {
         Text(
                 text = "Syncing $sectionLabel library · $itemsIndexed items",
-                color = Color(0xFFE6ECF7),
+                color = AppTheme.colors.textPrimary,
                 fontSize = 13.sp,
                 fontFamily = FontFamily.Serif,
                 letterSpacing = 0.3.sp
@@ -2170,8 +2227,8 @@ private fun LibrarySyncBanner(progress: Float, itemsIndexed: Int, section: Secti
         Spacer(modifier = Modifier.height(8.dp))
         LinearProgressIndicator(
                 progress = progress.coerceIn(0.03f, 1f),
-                color = Color(0xFF7FCBFF),
-                trackColor = Color(0xFF1E2A42),
+                color = AppTheme.colors.accentAlt,
+                trackColor = AppTheme.colors.surfaceAlt,
                 modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50))
         )
     }
@@ -2191,7 +2248,7 @@ private fun TopBar(title: String, showBack: Boolean, onBack: () -> Unit, onSetti
         }
         Text(
                 text = title,
-                color = Color.White,
+                color = AppTheme.colors.textPrimary,
                 fontSize = 20.sp,
                 fontFamily = FontFamily.Serif,
                 fontWeight = FontWeight.Bold,
@@ -2212,12 +2269,12 @@ private fun TopBarButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val shape = RoundedCornerShape(12.dp)
-    val borderColor = if (isFocused) Color(0xFFB6D9FF) else Color(0xFF2A3348)
+    val borderColor = if (isFocused) AppTheme.colors.focus else AppTheme.colors.borderStrong
     val buttonBrush =
             if (isFocused) {
-                Brush.horizontalGradient(colors = listOf(Color(0xFF4F8CFF), Color(0xFF7FCBFF)))
+                Brush.horizontalGradient(colors = listOf(AppTheme.colors.accent, AppTheme.colors.accentAlt))
             } else {
-                Brush.horizontalGradient(colors = listOf(Color(0xFF2C3550), Color(0xFF1E2438)))
+                Brush.horizontalGradient(colors = listOf(AppTheme.colors.accentMutedAlt, AppTheme.colors.surfaceAlt))
             }
     Box(
             modifier =
@@ -2251,7 +2308,7 @@ private fun TopBarButton(
     ) {
         Text(
                 text = label,
-                color = if (isFocused) Color(0xFF0C1730) else Color.White,
+                color = if (isFocused) AppTheme.colors.textOnAccent else AppTheme.colors.textPrimary,
                 fontSize = 14.sp,
                 fontFamily = FontFamily.Serif,
                 fontWeight = FontWeight.SemiBold,
@@ -2325,12 +2382,12 @@ private fun RowScope.HomeCard(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val shape = RoundedCornerShape(20.dp)
-    val borderColor = if (isFocused) Color(0xFFB6D9FF) else Color(0xFF2A3348)
+    val borderColor = if (isFocused) AppTheme.colors.focus else AppTheme.colors.borderStrong
     val backgroundBrush =
             if (isFocused) {
                 brush
             } else {
-                Brush.linearGradient(colors = listOf(Color(0xFF1B2435), Color(0xFF121B2D)))
+                Brush.linearGradient(colors = listOf(AppTheme.colors.surfaceMuted, AppTheme.colors.surfaceMuted))
             }
     Box(
             modifier =
@@ -2367,19 +2424,23 @@ private fun RowScope.HomeCard(
                             Modifier.size(56.dp)
                                     .clip(RoundedCornerShape(16.dp))
                                     .background(
-                                            if (isFocused) Color(0x22FFFFFF) else Color(0xFF1F2A42)
+                                            if (isFocused) AppTheme.colors.textPrimary.copy(alpha = 0.13f) else AppTheme.colors.surfaceAlt
                                     )
             ) {
                 Icon(
                         painter = painterResource(iconRes),
                         contentDescription = null,
-                        tint = Color.White,
+                        tint =
+                                if (isFocused) AppTheme.colors.textOnAccent
+                                else AppTheme.colors.textPrimary,
                         modifier = Modifier.align(Alignment.Center).size(28.dp)
                 )
             }
             Text(
                     text = label,
-                    color = Color.White,
+                    color =
+                            if (isFocused) AppTheme.colors.textOnAccent
+                            else AppTheme.colors.textPrimary,
                     fontSize = 22.sp,
                     fontFamily = FontFamily.Serif,
                     fontWeight = FontWeight.Bold,
@@ -2387,7 +2448,7 @@ private fun RowScope.HomeCard(
             )
             Text(
                     text = description,
-                    color = Color(0xFFC2CEE4),
+                    color = AppTheme.colors.textSecondary,
                     fontSize = 13.sp,
                     fontFamily = FontFamily.Serif,
                     letterSpacing = 0.4.sp
@@ -2674,8 +2735,8 @@ private fun PrimarySidebar(
                     Modifier.width(260.dp)
                             .fillMaxHeight()
                             .clip(shape)
-                            .background(Color(0xFF111826))
-                            .border(1.dp, Color(0xFF1F2B3E), shape)
+                            .background(AppTheme.colors.panelBackground)
+                            .border(1.dp, AppTheme.colors.panelBorder, shape)
                             .padding(16.dp)
     ) {
         SearchInput(
@@ -2714,14 +2775,14 @@ private fun PrimarySidebar(
         if (isLoadingCategories) {
             Text(
                     text = "Loading categories...",
-                    color = Color(0xFF94A3B8),
+                    color = AppTheme.colors.textSecondary,
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Serif
             )
         } else if (categoriesError != null) {
             Text(
                     text = categoriesError,
-                    color = Color(0xFFE4A9A9),
+                    color = AppTheme.colors.error,
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Serif
             )
@@ -2780,13 +2841,13 @@ private fun SecondarySidebar(
                     Modifier.width(320.dp)
                             .fillMaxHeight()
                             .clip(shape)
-                            .background(Color(0xFF0F1524))
-                            .border(1.dp, Color(0xFF1F2B3E), shape)
+                            .background(AppTheme.colors.surfaceMuted)
+                            .border(1.dp, AppTheme.colors.panelBorder, shape)
                             .padding(16.dp)
     ) {
         Text(
                 text = listTitle,
-                color = Color(0xFFE6ECF7),
+                color = AppTheme.colors.textPrimary,
                 fontSize = 16.sp,
                 fontFamily = FontFamily.Serif,
                 fontWeight = FontWeight.SemiBold
@@ -2880,7 +2941,7 @@ private fun SecondarySidebar(
             primaryTab == BrowserPrimaryTab.CATEGORY && categoryItems == null -> {
                 Text(
                         text = "Select a category",
-                        color = Color(0xFF94A3B8),
+                        color = AppTheme.colors.textSecondary,
                         fontSize = 13.sp,
                         fontFamily = FontFamily.Serif
                 )
@@ -2889,7 +2950,7 @@ private fun SecondarySidebar(
                 if (allItems == null) {
                     Text(
                             text = "Select a tab to browse",
-                            color = Color(0xFF94A3B8),
+                            color = AppTheme.colors.textSecondary,
                             fontSize = 13.sp,
                             fontFamily = FontFamily.Serif
                     )
@@ -2938,8 +2999,8 @@ private fun RowScope.PreviewPanel(
                     Modifier.fillMaxHeight()
                             .weight(1f)
                             .clip(shape)
-                            .background(Color(0xFF0D1423))
-                            .border(1.dp, Color(0xFF1F2B3E), shape)
+                            .background(AppTheme.colors.surfaceMuted)
+                            .border(1.dp, AppTheme.colors.panelBorder, shape)
                             .padding(20.dp)
                             .focusRequester(focusRequester)
                             .focusable()
@@ -2956,7 +3017,7 @@ private fun RowScope.PreviewPanel(
         if (previewItem == null) {
             Text(
                     text = "Select a ${contentType.label.lowercase()} to preview",
-                    color = Color(0xFF94A3B8),
+                    color = AppTheme.colors.textSecondary,
                     fontSize = 14.sp,
                     fontFamily = FontFamily.Serif
             )
@@ -2994,19 +3055,19 @@ private fun RowScope.PreviewPanel(
                                     Modifier.fillMaxWidth()
                                             .height(220.dp)
                                             .clip(RoundedCornerShape(14.dp))
-                                            .background(Color(0xFF162235))
+                                            .background(AppTheme.colors.surfaceAlt)
                     )
                 }
                 Text(
                         text = previewItem.title,
-                        color = Color.White,
+                        color = AppTheme.colors.textPrimary,
                         fontSize = 20.sp,
                         fontFamily = FontFamily.Serif,
                         fontWeight = FontWeight.SemiBold
                 )
                 Text(
                         text = previewItem.subtitle,
-                        color = Color(0xFF9BA6BC),
+                        color = AppTheme.colors.textSecondary,
                         fontSize = 13.sp,
                         fontFamily = FontFamily.Serif
                 )
@@ -3035,7 +3096,7 @@ private fun RowScope.PreviewPanel(
 private fun SidebarLabel(text: String) {
     Text(
             text = text,
-            color = Color(0xFF7F8CA6),
+            color = AppTheme.colors.textTertiary,
             fontSize = 11.sp,
             fontFamily = FontFamily.Serif,
             letterSpacing = 1.sp
@@ -3056,18 +3117,18 @@ private fun SidebarItem(
             when {
                 isFocused ->
                         Brush.horizontalGradient(
-                                colors = listOf(Color(0xFF4F8CFF), Color(0xFF7FCBFF))
+                                colors = listOf(AppTheme.colors.accent, AppTheme.colors.accentAlt)
                         )
                 selected ->
                         Brush.horizontalGradient(
-                                colors = listOf(Color(0xFF273479), Color(0xFF1E275C))
+                                colors = listOf(AppTheme.colors.accentSelected, AppTheme.colors.accentSelectedAlt)
                         )
                 else ->
                         Brush.horizontalGradient(
-                                colors = listOf(Color(0xFF2B3240), Color(0xFF222833))
+                                colors = listOf(AppTheme.colors.accentMutedAlt, AppTheme.colors.surfaceAlt)
                         )
             }
-    val textColor = if (isFocused) Color(0xFF0C1730) else Color(0xFFE3EDFF)
+    val textColor = if (isFocused) AppTheme.colors.textOnAccent else AppTheme.colors.textPrimary
     Box(
             modifier =
                     Modifier.fillMaxWidth()
@@ -3100,7 +3161,7 @@ private fun SidebarItem(
                             .background(background)
                             .border(
                                     1.dp,
-                                    if (isFocused) Color(0xFFB6D9FF) else Color(0xFF1E2533),
+                                    if (isFocused) AppTheme.colors.focus else AppTheme.colors.border,
                                     shape
                             ),
             contentAlignment = Alignment.CenterStart
@@ -3132,7 +3193,7 @@ private fun StaticContentList(
     if (items.isEmpty()) {
         Text(
                 text = emptyLabel,
-                color = Color(0xFF94A3B8),
+                color = AppTheme.colors.textSecondary,
                 fontSize = 13.sp,
                 fontFamily = FontFamily.Serif
         )
@@ -3181,7 +3242,7 @@ private fun PagedContentList(
     if (lazyItems.itemCount == 0 && lazyItems.loadState.refresh is LoadState.Loading) {
         Text(
                 text = "Loading...",
-                color = Color(0xFF94A3B8),
+                color = AppTheme.colors.textSecondary,
                 fontSize = 13.sp,
                 fontFamily = FontFamily.Serif
         )
@@ -3190,7 +3251,7 @@ private fun PagedContentList(
     if (lazyItems.itemCount == 0 && lazyItems.loadState.refresh is LoadState.Error) {
         Text(
                 text = "Content failed to load",
-                color = Color(0xFFE4A9A9),
+                color = AppTheme.colors.error,
                 fontSize = 13.sp,
                 fontFamily = FontFamily.Serif
         )
@@ -3199,7 +3260,7 @@ private fun PagedContentList(
     if (lazyItems.itemCount == 0) {
         Text(
                 text = emptyLabel,
-                color = Color(0xFF94A3B8),
+                color = AppTheme.colors.textSecondary,
                 fontSize = 13.sp,
                 fontFamily = FontFamily.Serif
         )
@@ -3250,8 +3311,8 @@ private fun ContentListItem(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val shape = RoundedCornerShape(12.dp)
-    val borderColor = if (isFocused) Color(0xFFB6D9FF) else Color(0xFF2A3348)
-    val background = if (isFocused) Color(0xFF1B2740) else Color(0xFF121A2B)
+    val borderColor = if (isFocused) AppTheme.colors.focus else AppTheme.colors.borderStrong
+    val background = if (isFocused) AppTheme.colors.surfaceFocused else AppTheme.colors.surfaceMuted
     var keyDownArmed by remember { mutableStateOf(false) }
     var keyClickHandled by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -3367,20 +3428,20 @@ private fun ContentListItem(
                         modifier =
                                 Modifier.size(52.dp)
                                         .clip(RoundedCornerShape(10.dp))
-                                        .background(Color(0xFF1F2A42))
+                                        .background(AppTheme.colors.surfaceAlt)
                 )
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                         text = item.title,
-                        color = Color(0xFFE6ECF7),
+                        color = AppTheme.colors.textPrimary,
                         fontSize = 14.sp,
                         fontFamily = FontFamily.Serif,
                         maxLines = 1
                 )
                 Text(
                         text = item.subtitle,
-                        color = Color(0xFF94A3B8),
+                        color = AppTheme.colors.textSecondary,
                         fontSize = 11.sp,
                         fontFamily = FontFamily.Serif,
                         maxLines = 1
@@ -3390,7 +3451,7 @@ private fun ContentListItem(
                 Icon(
                         painter = painterResource(R.drawable.ic_favorite),
                         contentDescription = "Favorite",
-                        tint = Color(0xFFFFD86A),
+                        tint = AppTheme.colors.warning,
                         modifier = Modifier.size(16.dp)
                 )
             }
@@ -3411,14 +3472,30 @@ private fun ContentCard(
         onMoveUp: (() -> Unit)? = null,
         onLongClick: ((ContentItem) -> Unit)? = null,
         titleFontSize: TextUnit = 16.sp,
-        subtitleFontSize: TextUnit = 12.sp
+        subtitleFontSize: TextUnit = 12.sp,
+        forceDarkText: Boolean = false,
+        useContrastText: Boolean = false
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     var longPressTriggered by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(12.dp)
-    val borderColor = if (isFocused) Color(0xFFB6D9FF) else Color(0xFF2A3348)
-    val backgroundColor = if (isFocused) Color(0xFF222E44) else Color(0xFF161E2E)
+    val colors = AppTheme.colors
+    val borderColor = if (isFocused) AppTheme.colors.focus else AppTheme.colors.borderStrong
+    val backgroundColor = if (isFocused) AppTheme.colors.surfaceAlt else AppTheme.colors.surface
+    val overlayBaseColor =
+            if (useContrastText) {
+                bestContrastText(colors.overlay, colors.textPrimary, colors.textOnAccent)
+            } else if (forceDarkText) {
+                colors.textPrimary
+            } else {
+                cardTitleColor(colors)
+            }
+    val titleColor = overlayBaseColor
+    val subtitleColor =
+            if (useContrastText) overlayBaseColor.copy(alpha = 0.75f)
+            else if (forceDarkText) colors.textSecondary
+            else cardSubtitleColor(colors)
     val title = item?.title ?: "Loading..."
     val subtitle = subtitleOverride ?: item?.subtitle ?: "Please wait"
     val imageUrl = item?.imageUrl
@@ -3542,13 +3619,13 @@ private fun ContentCard(
                 modifier =
                         Modifier.fillMaxWidth()
                                 .align(Alignment.BottomStart)
-                                .background(Color(0x990A0F1A))
+                                .background(AppTheme.colors.overlay)
                                 .padding(10.dp)
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                         text = title,
-                        color = Color(0xFFE6ECF7),
+                        color = titleColor,
                         fontSize = titleFontSize,
                         fontFamily = FontFamily.Serif,
                         fontWeight = FontWeight.SemiBold,
@@ -3556,7 +3633,7 @@ private fun ContentCard(
                 )
                 Text(
                         text = subtitle,
-                        color = Color(0xFF94A3B8),
+                        color = subtitleColor,
                         fontSize = subtitleFontSize,
                         fontFamily = FontFamily.Serif,
                         letterSpacing = 0.2.sp
@@ -3584,8 +3661,9 @@ private fun ContinueWatchingCard(
     val isFocused by interactionSource.collectIsFocusedAsState()
     var longPressTriggered by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(12.dp)
-    val borderColor = if (isFocused) Color(0xFFB6D9FF) else Color(0xFF2A3348)
-    val backgroundColor = if (isFocused) Color(0xFF222E44) else Color(0xFF161E2E)
+    val colors = AppTheme.colors
+    val borderColor = if (isFocused) AppTheme.colors.focus else AppTheme.colors.borderStrong
+    val backgroundColor = if (isFocused) AppTheme.colors.surfaceAlt else AppTheme.colors.surface
     val title = item.title
     val subtitle = item.subtitle
     val imageUrl = item.imageUrl
@@ -3695,26 +3773,26 @@ private fun ContinueWatchingCard(
                         Modifier.fillMaxWidth()
                                 .height(4.dp)
                                 .align(Alignment.BottomCenter)
-                                .background(Color(0x66000000))
+                                .background(AppTheme.colors.overlaySoft)
         ) {
             Box(
                     modifier =
                             Modifier.fillMaxWidth(progressPercent / 100f)
                                     .fillMaxHeight()
-                                    .background(Color(0xFF4F8CFF))
+                                    .background(AppTheme.colors.accent)
             )
         }
         Box(
                 modifier =
                         Modifier.fillMaxWidth()
                                 .align(Alignment.BottomStart)
-                                .background(Color(0x990A0F1A))
+                                .background(AppTheme.colors.overlay)
                                 .padding(10.dp)
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                         text = title,
-                        color = Color(0xFFE6ECF7),
+                        color = cardTitleColor(colors),
                         fontSize = 16.sp,
                         fontFamily = FontFamily.Serif,
                         fontWeight = FontWeight.SemiBold,
@@ -3722,7 +3800,7 @@ private fun ContinueWatchingCard(
                 )
                 Text(
                         text = "$subtitle • $progressPercent% watched",
-                        color = Color(0xFF94A3B8),
+                        color = cardSubtitleColor(colors),
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Serif,
                         letterSpacing = 0.2.sp
@@ -3773,7 +3851,9 @@ private fun CategoryCard(
         onActivate: () -> Unit,
         onMoveLeft: () -> Unit,
         onMoveUp: (() -> Unit)? = null,
-        onLongClick: (() -> Unit)? = null
+        onLongClick: (() -> Unit)? = null,
+        forceDarkText: Boolean = false,
+        useContrastText: Boolean = false
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -3781,8 +3861,15 @@ private fun CategoryCard(
     var keyDownArmed by remember { mutableStateOf(false) }
     var keyClickHandled by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(12.dp)
-    val borderColor = if (isFocused) Color(0xFFB6D9FF) else Color(0xFF2A3348)
-    val backgroundColor = if (isFocused) Color(0xFF222E44) else Color(0xFF161E2E)
+    val colors = AppTheme.colors
+    val borderColor = if (isFocused) colors.focus else colors.borderStrong
+    val backgroundColor = if (isFocused) colors.surfaceAlt else colors.surface
+    val labelColor =
+            when {
+                useContrastText -> bestContrastText(backgroundColor, colors.textPrimary, colors.textOnAccent)
+                forceDarkText -> colors.textPrimary
+                else -> cardTitleColor(colors)
+            }
     val context = LocalContext.current
     val imageRequest =
             remember(imageUrl) {
@@ -3895,7 +3982,11 @@ private fun CategoryCard(
                             Modifier.size(54.dp)
                                     .align(Alignment.TopStart)
                                     .clip(RoundedCornerShape(12.dp))
-                                    .border(1.dp, Color(0x66FFFFFF), RoundedCornerShape(12.dp))
+                                    .border(
+                                            1.dp,
+                                            colors.textPrimary.copy(alpha = 0.4f),
+                                            RoundedCornerShape(12.dp)
+                                    )
             )
         } else if (thumbnail != null) {
             Box(
@@ -3904,27 +3995,31 @@ private fun CategoryCard(
                                     .align(Alignment.TopStart)
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(thumbnail.brush)
-                                    .border(1.dp, Color(0x66FFFFFF), RoundedCornerShape(12.dp))
+                                    .border(
+                                            1.dp,
+                                            colors.textPrimary.copy(alpha = 0.4f),
+                                            RoundedCornerShape(12.dp)
+                                    )
             ) {
                 Icon(
                         painter = painterResource(thumbnail.iconRes),
                         contentDescription = null,
-                        tint = Color.White,
+                        tint = colors.textPrimary,
                         modifier = Modifier.align(Alignment.Center).size(26.dp)
                 )
             }
-        }
-        if (isFavorite) {
-            FavoriteIndicator(modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
-        }
-        Text(
-                text = label,
-                color = Color(0xFFE6ECF7),
-                fontSize = 16.sp,
-                fontFamily = FontFamily.Serif,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.3.sp
-        )
+    }
+    if (isFavorite) {
+        FavoriteIndicator(modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
+    }
+    Text(
+            text = label,
+            color = labelColor,
+            fontSize = 16.sp,
+            fontFamily = FontFamily.Serif,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.3.sp
+    )
     }
 }
 
@@ -3940,19 +4035,28 @@ private fun CategoryTypeTab(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val shape = RoundedCornerShape(10.dp)
+    val colors = AppTheme.colors
+    val selectedTextColor =
+            bestContrastText(colors.accentSelected, colors.textPrimary, colors.textOnAccent)
+    val selectedOutlineColor = selectedTextColor.copy(alpha = 0.7f)
     val borderColor =
             when {
-                isFocused -> Color(0xFFB6D9FF)
-                selected -> Color(0xFF42539A)
-                else -> Color(0xFF1E2533)
+                isFocused -> colors.focus
+                selected -> colors.accentSelected
+                else -> colors.border
             }
     val backgroundColor =
             when {
-                isFocused -> Color(0xFF4F8CFF)
-                selected -> Color(0xFF273479)
-                else -> Color(0xFF1A2233)
+                isFocused -> colors.accent
+                selected -> colors.accentSelected
+                else -> colors.surfaceAlt
             }
-    val textColor = if (isFocused) Color(0xFF0C1730) else Color(0xFFE6ECF7)
+    val textColor =
+            when {
+                isFocused -> colors.textOnAccent
+                selected -> selectedTextColor
+                else -> colors.textPrimary
+            }
     Box(
             modifier =
                     Modifier.then(
@@ -3996,6 +4100,13 @@ private fun CategoryTypeTab(
                             .clip(shape)
                             .background(backgroundColor)
                             .border(1.dp, borderColor, shape)
+                            .then(
+                                    if (selected) {
+                                        Modifier.border(2.dp, selectedOutlineColor, shape)
+                                    } else {
+                                        Modifier
+                                    }
+                            )
                             .padding(horizontal = 14.dp, vertical = 6.dp)
     ) {
         Text(
@@ -4030,14 +4141,15 @@ private fun SearchInput(
     val searchButtonInteractionSource = remember { MutableInteractionSource() }
     val isSearchButtonFocused by searchButtonInteractionSource.collectIsFocusedAsState()
     val context = LocalContext.current
+    val colors = AppTheme.colors
     val inputMethodManager =
             remember(context) {
                 context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             }
 
     val isAnyFocused = isWrapperFocused || isTextFieldFocused || isSearchButtonFocused
-    val borderColor = if (isAnyFocused) Color(0xFFB6D9FF) else Color(0xFF2A3348)
-    val backgroundColor = if (isAnyFocused) Color(0xFF222E44) else Color(0xFF161E2E)
+    val borderColor = if (isAnyFocused) colors.focus else colors.borderStrong
+    val backgroundColor = if (isAnyFocused) colors.surfaceAlt else colors.surface
     val triggerSearch = { onSearch?.invoke() }
     val showKeyboard = {
         // toggleSoftInput is more reliable on Android TV
@@ -4094,13 +4206,13 @@ private fun SearchInput(
                     singleLine = true,
                     textStyle =
                             TextStyle(
-                                    color = Color(0xFFE6ECF7),
+                                    color = colors.textPrimary,
                                     fontSize = 13.sp,
                                     fontFamily = FontFamily.Serif,
                                     fontWeight = FontWeight.Medium,
                                     letterSpacing = 0.3.sp
                             ),
-                    cursorBrush = SolidColor(Color(0xFFB6D9FF)),
+                    cursorBrush = SolidColor(colors.focus),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = { triggerSearch() }),
                     modifier =
@@ -4118,7 +4230,7 @@ private fun SearchInput(
                             if (query.isBlank()) {
                                 Text(
                                         text = placeholder,
-                                        color = Color(0xFF94A3B8),
+                                        color = colors.textSecondary,
                                         fontSize = 13.sp,
                                         fontFamily = FontFamily.Serif,
                                         letterSpacing = 0.3.sp
@@ -4167,8 +4279,8 @@ private fun SearchInput(
                                 }
                                 .background(
                                         color =
-                                                if (isSearchButtonFocused) Color(0xFFB6D9FF)
-                                                else Color(0xFF3A4A5E),
+                                                if (isSearchButtonFocused) colors.focus
+                                                else colors.accentMuted,
                                         shape = RoundedCornerShape(6.dp)
                                 )
                                 .padding(4.dp),
@@ -4177,7 +4289,9 @@ private fun SearchInput(
             Icon(
                     imageVector = Icons.Default.Search,
                     contentDescription = "Search",
-                    tint = if (isSearchButtonFocused) Color(0xFF161E2E) else Color(0xFFE6ECF7),
+                    tint =
+                            if (isSearchButtonFocused) colors.surface
+                            else colors.textPrimary,
                     modifier = Modifier.size(16.dp)
             )
         }
@@ -4274,10 +4388,10 @@ fun SectionScreen(
                                 .background(
                                         Brush.verticalGradient(
                                                 colors =
-                                                        listOf(Color(0xFF0F1626), Color(0xFF141C2E))
+                                                        listOf(AppTheme.colors.background, AppTheme.colors.backgroundAlt)
                                         )
                                 )
-                                .border(1.dp, Color(0xFF1E2738), shape)
+                                .border(1.dp, AppTheme.colors.border, shape)
                                 .padding(20.dp)
         ) {
             if (selectedSeries != null) {
@@ -4307,7 +4421,7 @@ fun SectionScreen(
                 ) {
                     Text(
                             text = title,
-                            color = Color.White,
+                            color = AppTheme.colors.textPrimary,
                             fontSize = 20.sp,
                             fontFamily = FontFamily.Serif,
                             fontWeight = FontWeight.Bold,
@@ -4331,7 +4445,7 @@ fun SectionScreen(
                             text =
                                     if (activeQuery.isBlank()) "Loading content..."
                                     else "Searching...",
-                            color = Color(0xFF94A3B8),
+                            color = AppTheme.colors.textSecondary,
                             fontSize = 14.sp,
                             fontFamily = FontFamily.Serif,
                             letterSpacing = 0.6.sp,
@@ -4343,7 +4457,7 @@ fun SectionScreen(
                             text =
                                     if (activeQuery.isBlank()) "Content failed to load"
                                     else "Search failed to load",
-                            color = Color(0xFFE4A9A9),
+                            color = AppTheme.colors.error,
                             fontSize = 14.sp,
                             fontFamily = FontFamily.Serif,
                             letterSpacing = 0.6.sp,
@@ -4355,7 +4469,7 @@ fun SectionScreen(
                             text =
                                     if (activeQuery.isBlank()) "No content yet"
                                     else "No results found",
-                            color = Color(0xFF94A3B8),
+                            color = AppTheme.colors.textSecondary,
                             fontSize = 14.sp,
                             fontFamily = FontFamily.Serif,
                             letterSpacing = 0.6.sp,
@@ -4422,7 +4536,8 @@ fun SectionScreen(
                                                 { onToggleFavorite(item) }
                                             } else {
                                                 null
-                                            }
+                                            },
+                                    forceDarkText = section == Section.LIVE
                             )
                         }
                     }
@@ -4459,10 +4574,10 @@ private fun LocalFilesScreen(
                                 .background(
                                         Brush.verticalGradient(
                                                 colors =
-                                                        listOf(Color(0xFF0F1626), Color(0xFF141C2E))
+                                                        listOf(AppTheme.colors.background, AppTheme.colors.backgroundAlt)
                                         )
                                 )
-                                .border(1.dp, Color(0xFF1E2738), shape)
+                                .border(1.dp, AppTheme.colors.border, shape)
                                 .padding(20.dp)
         ) {
             Row(
@@ -4472,7 +4587,7 @@ private fun LocalFilesScreen(
             ) {
                 Text(
                         text = title,
-                        color = Color.White,
+                        color = AppTheme.colors.textPrimary,
                         fontSize = 20.sp,
                         fontFamily = FontFamily.Serif,
                         fontWeight = FontWeight.Bold,
@@ -4483,8 +4598,8 @@ private fun LocalFilesScreen(
                         onClick = onPickFiles,
                         colors =
                                 ButtonDefaults.buttonColors(
-                                        containerColor = Color(0xFF4F8CFF),
-                                        contentColor = Color(0xFF0C1730)
+                                        containerColor = AppTheme.colors.accent,
+                                        contentColor = AppTheme.colors.textOnAccent
                                 ),
                         modifier =
                                 Modifier.height(42.dp)
@@ -4519,8 +4634,8 @@ private fun LocalFilesScreen(
                         onClick = onRefresh,
                         colors =
                                 ButtonDefaults.buttonColors(
-                                        containerColor = Color(0xFF3A4A5E),
-                                        contentColor = Color.White
+                                        containerColor = AppTheme.colors.accentMuted,
+                                        contentColor = AppTheme.colors.textPrimary
                                 ),
                         modifier =
                                 Modifier.height(42.dp)
@@ -4555,7 +4670,7 @@ private fun LocalFilesScreen(
             if (files.isEmpty()) {
                 Text(
                         text = "No media files found. Press the button to scan your device.",
-                        color = Color(0xFF94A3B8),
+                        color = AppTheme.colors.textSecondary,
                         fontSize = 14.sp,
                         fontFamily = FontFamily.Serif,
                         letterSpacing = 0.6.sp,
@@ -4583,11 +4698,11 @@ private fun LocalFilesScreen(
                                         modifier =
                                                 Modifier.weight(1f)
                                                         .height(1.dp)
-                                                        .background(Color(0xFF2A3348))
+                                                        .background(AppTheme.colors.borderStrong)
                                 )
                                 Text(
                                         text = volumeName,
-                                        color = Color(0xFF6B7A99),
+                                        color = AppTheme.colors.textTertiary,
                                         fontSize = 12.sp,
                                         fontFamily = FontFamily.Serif,
                                         fontWeight = FontWeight.Bold,
@@ -4598,7 +4713,7 @@ private fun LocalFilesScreen(
                                         modifier =
                                                 Modifier.weight(1f)
                                                         .height(1.dp)
-                                                        .background(Color(0xFF2A3348))
+                                                        .background(AppTheme.colors.borderStrong)
                                 )
                             }
                         }
@@ -4611,9 +4726,9 @@ private fun LocalFilesScreen(
                             val interactionSource = remember { MutableInteractionSource() }
                             val isFocused by interactionSource.collectIsFocusedAsState()
                             val borderColor =
-                                    if (isFocused) Color(0xFFB6D9FF) else Color(0xFF2A3348)
+                                    if (isFocused) AppTheme.colors.focus else AppTheme.colors.borderStrong
                             val backgroundColor =
-                                    if (isFocused) Color(0xFF1E2738) else Color(0xFF161E2E)
+                                    if (isFocused) AppTheme.colors.border else AppTheme.colors.surface
 
                             val itemFocusRequester =
                                     when {
@@ -4681,7 +4796,7 @@ private fun LocalFilesScreen(
                                 )
                                 Text(
                                         text = item.displayName,
-                                        color = Color.White,
+                                        color = AppTheme.colors.textPrimary,
                                         fontSize = 15.sp,
                                         fontFamily = FontFamily.Serif,
                                         fontWeight = FontWeight.Medium,
@@ -4735,11 +4850,12 @@ private fun categoryThumbnail(type: ContentType): ThumbnailSpec {
     }
 }
 
+@Composable
 private fun favoritesMenuThumbnail(isItems: Boolean): ThumbnailSpec {
     return if (isItems) {
         ThumbnailSpec(
                 iconRes = R.drawable.ic_favorites_items,
-                brush = Brush.linearGradient(colors = listOf(Color(0xFFFFD86A), Color(0xFFB86B1B)))
+                brush = Brush.linearGradient(colors = listOf(AppTheme.colors.warning, Color(0xFFB86B1B)))
         )
     } else {
         ThumbnailSpec(
@@ -4906,10 +5022,10 @@ fun FavoritesScreen(
                                 .background(
                                         Brush.verticalGradient(
                                                 colors =
-                                                        listOf(Color(0xFF0F1626), Color(0xFF141C2E))
+                                                        listOf(AppTheme.colors.background, AppTheme.colors.backgroundAlt)
                                         )
                                 )
-                                .border(1.dp, Color(0xFF1E2738), shape)
+                                .border(1.dp, AppTheme.colors.border, shape)
                                 .padding(20.dp)
         ) {
             Row(
@@ -4918,7 +5034,7 @@ fun FavoritesScreen(
             ) {
                 Text(
                         text = title,
-                        color = Color.White,
+                        color = AppTheme.colors.textPrimary,
                         fontSize = 20.sp,
                         fontFamily = FontFamily.Serif,
                         fontWeight = FontWeight.Bold,
@@ -4984,7 +5100,8 @@ fun FavoritesScreen(
                                     activeView = FavoritesView.ITEMS
                                     pendingViewFocus = true
                                 },
-                                onMoveLeft = onMoveLeft
+                                onMoveLeft = onMoveLeft,
+                                forceDarkText = isLightTheme(AppTheme.colors)
                         )
                     }
                     item {
@@ -5002,7 +5119,8 @@ fun FavoritesScreen(
                                     activeView = FavoritesView.CATEGORIES
                                     pendingViewFocus = true
                                 },
-                                onMoveLeft = onMoveLeft
+                                onMoveLeft = onMoveLeft,
+                                forceDarkText = isLightTheme(AppTheme.colors)
                         )
                     }
                 }
@@ -5109,7 +5227,7 @@ fun FavoritesScreen(
                         ) {
                             Text(
                                     text = "< BACK",
-                                    color = Color(0xFFE6ECF7),
+                                    color = AppTheme.colors.textPrimary,
                                     fontSize = 14.sp,
                                     fontFamily = FontFamily.Serif,
                                     fontWeight = FontWeight.SemiBold,
@@ -5148,7 +5266,7 @@ fun FavoritesScreen(
                             )
                             Text(
                                     text = category.name,
-                                    color = Color.White,
+                                    color = AppTheme.colors.textPrimary,
                                     fontSize = 16.sp,
                                     fontFamily = FontFamily.Serif,
                                     fontWeight = FontWeight.Medium
@@ -5160,7 +5278,7 @@ fun FavoritesScreen(
                         ) {
                             Text(
                                     text = "Loading content...",
-                                    color = Color(0xFF94A3B8),
+                                    color = AppTheme.colors.textSecondary,
                                     fontSize = 14.sp,
                                     fontFamily = FontFamily.Serif,
                                     letterSpacing = 0.6.sp
@@ -5168,7 +5286,7 @@ fun FavoritesScreen(
                         } else if (lazyItems.loadState.refresh is LoadState.Error) {
                             Text(
                                     text = "Content failed to load",
-                                    color = Color(0xFFE4A9A9),
+                                    color = AppTheme.colors.error,
                                     fontSize = 14.sp,
                                     fontFamily = FontFamily.Serif,
                                     letterSpacing = 0.6.sp
@@ -5176,7 +5294,7 @@ fun FavoritesScreen(
                         } else if (lazyItems.itemCount == 0) {
                             Text(
                                     text = "No content yet",
-                                    color = Color(0xFF94A3B8),
+                                    color = AppTheme.colors.textSecondary,
                                     fontSize = 14.sp,
                                     fontFamily = FontFamily.Serif,
                                     letterSpacing = 0.6.sp
@@ -5328,8 +5446,8 @@ private fun ColumnScope.EmptyFavoritesState(message: String, focusRequester: Foc
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val shape = RoundedCornerShape(14.dp)
-    val borderColor = if (isFocused) Color(0xFFB6D9FF) else Color(0xFF2A3348)
-    val backgroundColor = Color(0xFF161E2E)
+    val borderColor = if (isFocused) AppTheme.colors.focus else AppTheme.colors.borderStrong
+    val backgroundColor = AppTheme.colors.surface
     Box(
             modifier =
                     Modifier.fillMaxWidth()
@@ -5344,7 +5462,7 @@ private fun ColumnScope.EmptyFavoritesState(message: String, focusRequester: Foc
     ) {
         Text(
                 text = message,
-                color = Color(0xFF94A3B8),
+                color = AppTheme.colors.textSecondary,
                 fontSize = 14.sp,
                 fontFamily = FontFamily.Serif,
                 letterSpacing = 0.6.sp
@@ -5467,10 +5585,10 @@ fun CategorySectionScreen(
                                 .background(
                                         Brush.verticalGradient(
                                                 colors =
-                                                        listOf(Color(0xFF0F1626), Color(0xFF141C2E))
+                                                        listOf(AppTheme.colors.background, AppTheme.colors.backgroundAlt)
                                         )
                                 )
-                                .border(1.dp, Color(0xFF1E2738), shape)
+                                .border(1.dp, AppTheme.colors.border, shape)
                                 .padding(20.dp)
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
@@ -5480,7 +5598,7 @@ fun CategorySectionScreen(
                 ) {
                     Text(
                             text = title,
-                            color = Color.White,
+                            color = AppTheme.colors.textPrimary,
                             fontSize = 20.sp,
                             fontFamily = FontFamily.Serif,
                             fontWeight = FontWeight.Bold,
@@ -5550,6 +5668,8 @@ fun CategorySectionScreen(
             Spacer(modifier = Modifier.height(8.dp))
             if (selectedCategory != null) {
                 val category = selectedCategory!!
+                val useContrastText = activeType == ContentType.MOVIES || activeType == ContentType.SERIES
+                val forceDarkText = activeType == ContentType.LIVE
                 if (selectedSeries != null) {
                     SeriesSeasonsScreen(
                             seriesItem = selectedSeries!!,
@@ -5568,7 +5688,8 @@ fun CategorySectionScreen(
                                 selectedSeries = null
                             },
                             onToggleFavorite = onToggleFavorite,
-                            isItemFavorite = isItemFavorite
+                            isItemFavorite = isItemFavorite,
+                            forceDarkText = forceDarkText
                     )
                 } else {
                     val pagerFlow =
@@ -5617,7 +5738,7 @@ fun CategorySectionScreen(
                     // Don't auto-focus content - user must press Right to navigate there
                     Text(
                             text = if (activeQuery.isBlank()) category.name else "Search results",
-                            color = Color.White,
+                            color = AppTheme.colors.textPrimary,
                             fontSize = 16.sp,
                             fontFamily = FontFamily.Serif,
                             fontWeight = FontWeight.Medium
@@ -5629,7 +5750,7 @@ fun CategorySectionScreen(
                                 text =
                                         if (activeQuery.isBlank()) "Loading content..."
                                         else "Searching...",
-                                color = Color(0xFF94A3B8),
+                                color = AppTheme.colors.textSecondary,
                                 fontSize = 14.sp,
                                 fontFamily = FontFamily.Serif,
                                 letterSpacing = 0.6.sp,
@@ -5642,7 +5763,7 @@ fun CategorySectionScreen(
                                 text =
                                         if (activeQuery.isBlank()) "Content failed to load"
                                         else "Search failed to load",
-                                color = Color(0xFFE4A9A9),
+                                color = AppTheme.colors.error,
                                 fontSize = 14.sp,
                                 fontFamily = FontFamily.Serif,
                                 letterSpacing = 0.6.sp,
@@ -5655,7 +5776,7 @@ fun CategorySectionScreen(
                                 text =
                                         if (activeQuery.isBlank()) "No content yet"
                                         else "No results found",
-                                color = Color(0xFF94A3B8),
+                                color = AppTheme.colors.textSecondary,
                                 fontSize = 14.sp,
                                 fontFamily = FontFamily.Serif,
                                 letterSpacing = 0.6.sp,
@@ -5723,7 +5844,9 @@ fun CategorySectionScreen(
                                                     { onToggleFavorite(item) }
                                                 } else {
                                                     null
-                                                }
+                                                },
+                                        forceDarkText = forceDarkText,
+                                        useContrastText = useContrastText
                                 )
                             }
                         }
@@ -5732,7 +5855,7 @@ fun CategorySectionScreen(
             } else if (isLoading) {
                 Text(
                         text = "Loading categories...",
-                        color = Color(0xFF94A3B8),
+                        color = AppTheme.colors.textSecondary,
                         fontSize = 14.sp,
                         fontFamily = FontFamily.Serif,
                         letterSpacing = 0.6.sp,
@@ -5741,7 +5864,7 @@ fun CategorySectionScreen(
             } else if (errorMessage != null) {
                 Text(
                         text = errorMessage ?: "Failed to load categories",
-                        color = Color(0xFFE4A9A9),
+                        color = AppTheme.colors.error,
                         fontSize = 14.sp,
                         fontFamily = FontFamily.Serif,
                         letterSpacing = 0.6.sp,
@@ -5767,7 +5890,7 @@ fun CategorySectionScreen(
                 if (activeQuery.isNotBlank() && filteredCategories.isEmpty()) {
                     Text(
                             text = "No categories found",
-                            color = Color(0xFF94A3B8),
+                            color = AppTheme.colors.textSecondary,
                             fontSize = 14.sp,
                             fontFamily = FontFamily.Serif,
                             letterSpacing = 0.6.sp,
@@ -5819,7 +5942,11 @@ fun CategorySectionScreen(
                                             } else {
                                                 null
                                             },
-                                    onLongClick = { onToggleCategoryFavorite(category) }
+                                    onLongClick = { onToggleCategoryFavorite(category) },
+                                    forceDarkText = activeType == ContentType.LIVE,
+                                    useContrastText =
+                                            activeType == ContentType.MOVIES ||
+                                                    activeType == ContentType.SERIES
                             )
                         }
                     }
@@ -5860,15 +5987,15 @@ fun ContinueWatchingScreen(
                                 .background(
                                         Brush.verticalGradient(
                                                 colors =
-                                                        listOf(Color(0xFF0F1626), Color(0xFF141C2E))
+                                                        listOf(AppTheme.colors.background, AppTheme.colors.backgroundAlt)
                                         )
                                 )
-                                .border(1.dp, Color(0xFF1E2738), shape)
+                                .border(1.dp, AppTheme.colors.border, shape)
                                 .padding(20.dp)
         ) {
             Text(
                     text = title,
-                    color = Color.White,
+                    color = AppTheme.colors.textPrimary,
                     fontSize = 20.sp,
                     fontFamily = FontFamily.Serif,
                     fontWeight = FontWeight.Bold,
@@ -5880,7 +6007,7 @@ fun ContinueWatchingScreen(
             if (continueWatchingItems.isEmpty()) {
                 Text(
                         text = "No items in progress",
-                        color = Color(0xFF94A3B8),
+                        color = AppTheme.colors.textSecondary,
                         fontSize = 14.sp,
                         fontFamily = FontFamily.Serif,
                         letterSpacing = 0.6.sp,
@@ -5946,7 +6073,8 @@ fun SeriesSeasonsScreen(
         onMoveLeft: () -> Unit,
         onBack: () -> Unit,
         onToggleFavorite: (ContentItem) -> Unit,
-        isItemFavorite: (ContentItem) -> Boolean
+        isItemFavorite: (ContentItem) -> Boolean,
+        forceDarkText: Boolean = false
 ) {
     BackHandler(enabled = true) { onBack() }
     var seasonGroups by remember { mutableStateOf<List<SeasonGroup>>(emptyList()) }
@@ -6050,7 +6178,7 @@ fun SeriesSeasonsScreen(
             Spacer(modifier = Modifier.width(12.dp))
             Text(
                     text = seriesItem.title,
-                    color = Color.White,
+                    color = AppTheme.colors.textPrimary,
                     fontSize = 16.sp,
                     fontFamily = FontFamily.Serif,
                     fontWeight = FontWeight.Medium
@@ -6060,7 +6188,7 @@ fun SeriesSeasonsScreen(
         if (isLoading) {
             Text(
                     text = "Loading seasons...",
-                    color = Color(0xFF94A3B8),
+                    color = AppTheme.colors.textSecondary,
                     fontSize = 14.sp,
                     fontFamily = FontFamily.Serif,
                     letterSpacing = 0.6.sp,
@@ -6069,7 +6197,7 @@ fun SeriesSeasonsScreen(
         } else if (errorMessage != null) {
             Text(
                     text = errorMessage ?: "Failed to load seasons",
-                    color = Color(0xFFE4A9A9),
+                    color = AppTheme.colors.error,
                     fontSize = 14.sp,
                     fontFamily = FontFamily.Serif,
                     letterSpacing = 0.6.sp,
@@ -6078,7 +6206,7 @@ fun SeriesSeasonsScreen(
         } else if (seasonGroups.isEmpty()) {
             Text(
                     text = "No seasons yet",
-                    color = Color(0xFF94A3B8),
+                    color = AppTheme.colors.textSecondary,
                     fontSize = 14.sp,
                     fontFamily = FontFamily.Serif,
                     letterSpacing = 0.6.sp,
@@ -6094,13 +6222,13 @@ fun SeriesSeasonsScreen(
                                 Modifier.width(220.dp)
                                         .fillMaxHeight()
                                         .clip(RoundedCornerShape(14.dp))
-                                        .background(Color(0xFF111826))
-                                        .border(1.dp, Color(0xFF1F2B3E), RoundedCornerShape(14.dp))
+                                        .background(AppTheme.colors.panelBackground)
+                                        .border(1.dp, AppTheme.colors.panelBorder, RoundedCornerShape(14.dp))
                                         .padding(12.dp)
                 ) {
                     Text(
                             text = "SEASONS",
-                            color = Color(0xFF7F8CA6),
+                            color = AppTheme.colors.textTertiary,
                             fontSize = 11.sp,
                             fontFamily = FontFamily.Serif,
                             letterSpacing = 1.sp
@@ -6132,7 +6260,7 @@ fun SeriesSeasonsScreen(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                             text = selectedSeason?.displayLabel ?: "Select a season",
-                            color = Color.White,
+                            color = AppTheme.colors.textPrimary,
                             fontSize = 16.sp,
                             fontFamily = FontFamily.Serif,
                             fontWeight = FontWeight.Medium
@@ -6141,7 +6269,7 @@ fun SeriesSeasonsScreen(
                     if (selectedEpisodes.isEmpty()) {
                         Text(
                                 text = "No episodes yet",
-                                color = Color(0xFF94A3B8),
+                                color = AppTheme.colors.textSecondary,
                                 fontSize = 14.sp,
                                 fontFamily = FontFamily.Serif,
                                 letterSpacing = 0.6.sp
@@ -6184,10 +6312,11 @@ fun SeriesSeasonsScreen(
                                                     { backFocusRequester.requestFocus() }
                                                 } else {
                                                     null
-                                                },
+                                        },
                                         onLongClick = { onToggleFavorite(item) },
                                         titleFontSize = 13.sp,
-                                        subtitleFontSize = 10.sp
+                                        subtitleFontSize = 10.sp,
+                                        forceDarkText = forceDarkText
                                 )
                             }
                         }
@@ -6263,7 +6392,7 @@ fun SeriesEpisodesScreen(
             Spacer(modifier = Modifier.width(12.dp))
             Text(
                     text = seriesItem.title,
-                    color = Color.White,
+                    color = AppTheme.colors.textPrimary,
                     fontSize = 16.sp,
                     fontFamily = FontFamily.Serif,
                     fontWeight = FontWeight.Medium
@@ -6273,7 +6402,7 @@ fun SeriesEpisodesScreen(
         if (lazyItems.loadState.refresh is LoadState.Loading && lazyItems.itemCount == 0) {
             Text(
                     text = "Loading episodes...",
-                    color = Color(0xFF94A3B8),
+                    color = AppTheme.colors.textSecondary,
                     fontSize = 14.sp,
                     fontFamily = FontFamily.Serif,
                     letterSpacing = 0.6.sp,
@@ -6282,7 +6411,7 @@ fun SeriesEpisodesScreen(
         } else if (lazyItems.loadState.refresh is LoadState.Error) {
             Text(
                     text = "Episodes failed to load",
-                    color = Color(0xFFE4A9A9),
+                    color = AppTheme.colors.error,
                     fontSize = 14.sp,
                     fontFamily = FontFamily.Serif,
                     letterSpacing = 0.6.sp,
@@ -6291,7 +6420,7 @@ fun SeriesEpisodesScreen(
         } else if (lazyItems.itemCount == 0) {
             Text(
                     text = "No episodes yet",
-                    color = Color(0xFF94A3B8),
+                    color = AppTheme.colors.textSecondary,
                     fontSize = 14.sp,
                     fontFamily = FontFamily.Serif,
                     letterSpacing = 0.6.sp,

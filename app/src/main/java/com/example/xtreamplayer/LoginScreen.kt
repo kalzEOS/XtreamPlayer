@@ -32,7 +32,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -50,6 +49,7 @@ import android.content.Context
 import android.view.inputmethod.InputMethodManager
 import com.example.xtreamplayer.auth.AuthConfig
 import com.example.xtreamplayer.auth.AuthUiState
+import com.example.xtreamplayer.ui.theme.AppTheme
 
 @Composable
 fun LoginScreen(
@@ -75,7 +75,8 @@ fun LoginScreen(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val shape = RoundedCornerShape(18.dp)
-    val borderColor = if (isFocused) Color(0xFFB6D9FF) else Color(0xFF1E2738)
+    val colors = AppTheme.colors
+    val borderColor = if (isFocused) colors.focus else colors.border
     val scrollState = rememberScrollState()
     val isCompactHeight = LocalConfiguration.current.screenHeightDp < 520
     val verticalSpacing = if (isCompactHeight) 10.dp else 14.dp
@@ -104,8 +105,8 @@ fun LoginScreen(
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color(0xFF0F1626),
-                            Color(0xFF141C2E)
+                            colors.background,
+                            colors.backgroundAlt
                         )
                     )
                 )
@@ -117,7 +118,7 @@ fun LoginScreen(
         ) {
             Text(
                 text = "LOG IN",
-                color = Color.White,
+                color = colors.textPrimary,
                 fontSize = titleSize,
                 fontFamily = FontFamily.Serif,
                 fontWeight = FontWeight.Bold,
@@ -162,7 +163,7 @@ fun LoginScreen(
             if (authState.errorMessage != null) {
                 Text(
                     text = authState.errorMessage,
-                    color = Color(0xFFE4A9A9),
+                    color = colors.error,
                     fontSize = 14.sp,
                     fontFamily = FontFamily.Serif
                 )
@@ -171,10 +172,10 @@ fun LoginScreen(
                 onClick = { onSignIn(listName, serviceUrl, username, password) },
                 enabled = canSubmit,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF4F8CFF),
-                    contentColor = Color(0xFF0C1730),
-                    disabledContainerColor = Color(0xFF2A3348),
-                    disabledContentColor = Color(0xFF8A95B1)
+                    containerColor = colors.accent,
+                    contentColor = colors.textOnAccent,
+                    disabledContainerColor = colors.borderStrong,
+                    disabledContentColor = colors.textTertiary
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -197,7 +198,7 @@ fun LoginScreen(
             }
             Text(
                 text = "Use your Xtream list URL, username, and password.",
-                color = Color(0xFF94A3B8),
+                color = colors.textSecondary,
                 fontSize = 12.sp,
                 fontFamily = FontFamily.Serif
             )
@@ -252,6 +253,7 @@ private fun TvTextField(
     val textFieldFocusRequester = remember { FocusRequester() }
     var isTextFieldActive by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val colors = AppTheme.colors
     val inputMethodManager = remember(context) {
         context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
     }
@@ -268,7 +270,8 @@ private fun TvTextField(
     }
 
     // Wrapper border color changes based on focus state
-    val borderColor = if (isWrapperFocused || isTextFieldActive) Color(0xFFB6D9FF) else Color(0xFF2A3348)
+    val borderColor =
+        if (isWrapperFocused || isTextFieldActive) colors.focus else colors.borderStrong
 
     Box(
         modifier = modifier

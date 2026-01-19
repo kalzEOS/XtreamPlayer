@@ -6,12 +6,24 @@ enum class AudioLanguage(val label: String) {
     FRENCH("French")
 }
 
+enum class AppThemeOption(val label: String) {
+    DEFAULT("Default"),
+    DEFAULT_LIGHT("Default Light"),
+    DARK_PINK("Dark Pink"),
+    DARK_PINK_LIGHT("Pink Light"),
+    DARK_GREEN("Dark Green"),
+    DARK_GREEN_LIGHT("Green Light"),
+    DUSK_COPPER("Dusk Copper"),
+    DUSK_COPPER_LIGHT("Copper Light")
+}
+
 data class SettingsState(
     val autoPlayNext: Boolean = true,
     val subtitlesEnabled: Boolean = false,
     val audioLanguage: AudioLanguage = AudioLanguage.ENGLISH,
     val rememberLogin: Boolean = true,
     val autoSignIn: Boolean = true,
+    val appTheme: AppThemeOption = AppThemeOption.DEFAULT,
     val openSubtitlesApiKey: String = "",
     val openSubtitlesUserAgent: String = "XtreamPlayer"
 )

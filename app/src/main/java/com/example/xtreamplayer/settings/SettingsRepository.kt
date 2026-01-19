@@ -17,6 +17,7 @@ class SettingsRepository(private val context: Context) {
         val audio = parseAudioLanguage(prefs[Keys.AUDIO_LANGUAGE])
         val rememberLogin = prefs[Keys.REMEMBER_LOGIN] ?: true
         val autoSignIn = prefs[Keys.AUTO_SIGN_IN] ?: true
+        val appTheme = parseAppTheme(prefs[Keys.APP_THEME])
         val openSubtitlesApiKey = prefs[Keys.OPENSUBTITLES_API_KEY] ?: ""
         val openSubtitlesUserAgent = prefs[Keys.OPENSUBTITLES_USER_AGENT] ?: "XtreamPlayer"
 
@@ -26,6 +27,7 @@ class SettingsRepository(private val context: Context) {
             audioLanguage = audio,
             rememberLogin = rememberLogin,
             autoSignIn = autoSignIn,
+            appTheme = appTheme,
             openSubtitlesApiKey = openSubtitlesApiKey,
             openSubtitlesUserAgent = openSubtitlesUserAgent
         )
@@ -61,6 +63,12 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun setAppTheme(theme: AppThemeOption) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.APP_THEME] = theme.name
+        }
+    }
+
     suspend fun setOpenSubtitlesApiKey(apiKey: String) {
         context.dataStore.edit { prefs ->
             prefs[Keys.OPENSUBTITLES_API_KEY] = apiKey
@@ -77,12 +85,17 @@ class SettingsRepository(private val context: Context) {
         return AudioLanguage.values().firstOrNull { it.name == value } ?: AudioLanguage.ENGLISH
     }
 
+    private fun parseAppTheme(value: String?): AppThemeOption {
+        return AppThemeOption.values().firstOrNull { it.name == value } ?: AppThemeOption.DEFAULT
+    }
+
     private object Keys {
         val AUTO_PLAY_NEXT = booleanPreferencesKey("auto_play_next")
         val SUBTITLES_ENABLED = booleanPreferencesKey("subtitles_enabled")
         val AUDIO_LANGUAGE = stringPreferencesKey("audio_language")
         val REMEMBER_LOGIN = booleanPreferencesKey("remember_login")
         val AUTO_SIGN_IN = booleanPreferencesKey("auto_sign_in")
+        val APP_THEME = stringPreferencesKey("app_theme")
         val OPENSUBTITLES_API_KEY = stringPreferencesKey("opensubtitles_api_key")
         val OPENSUBTITLES_USER_AGENT = stringPreferencesKey("opensubtitles_user_agent")
     }
