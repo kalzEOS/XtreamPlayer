@@ -31,12 +31,6 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun toggleMatchFrameRate() {
-        viewModelScope.launch {
-            repository.setMatchFrameRate(!settings.value.matchFrameRate)
-        }
-    }
-
     fun cyclePlaybackQuality() {
         val options = PlaybackQuality.values()
         val currentIndex = options.indexOf(settings.value.playbackQuality).coerceAtLeast(0)
@@ -64,21 +58,6 @@ class SettingsViewModel @Inject constructor(
     fun toggleAutoSignIn() {
         viewModelScope.launch {
             repository.setAutoSignIn(!settings.value.autoSignIn)
-        }
-    }
-
-    fun toggleParentalPin() {
-        viewModelScope.launch {
-            repository.setParentalPinEnabled(!settings.value.parentalPinEnabled)
-        }
-    }
-
-    fun cycleParentalRating() {
-        val options = ParentalRating.values()
-        val currentIndex = options.indexOf(settings.value.parentalRating).coerceAtLeast(0)
-        val next = options[(currentIndex + 1) % options.size]
-        viewModelScope.launch {
-            repository.setParentalRating(next)
         }
     }
 

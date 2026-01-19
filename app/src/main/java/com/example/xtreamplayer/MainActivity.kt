@@ -815,8 +815,6 @@ fun RootScreen(
                                         onMoveLeft = handleMoveLeft,
                                         onToggleAutoPlay = settingsViewModel::toggleAutoPlayNext,
                                         onToggleSubtitles = settingsViewModel::toggleSubtitles,
-                                        onToggleMatchFrameRate =
-                                                settingsViewModel::toggleMatchFrameRate,
                                         onCyclePlaybackQuality =
                                                 settingsViewModel::cyclePlaybackQuality,
                                         onCycleAudioLanguage =
@@ -824,9 +822,6 @@ fun RootScreen(
                                         onToggleRememberLogin =
                                                 settingsViewModel::toggleRememberLogin,
                                         onToggleAutoSignIn = settingsViewModel::toggleAutoSignIn,
-                                        onToggleParentalPin = settingsViewModel::toggleParentalPin,
-                                        onCycleParentalRating =
-                                                settingsViewModel::cycleParentalRating,
                                         onOpenSubtitlesApiKey = { showApiKeyDialog = true },
                                         onManageLists = { showManageLists = true },
                                         onRefreshContent = {
@@ -3962,6 +3957,9 @@ private fun SearchInput(
 ) {
     val shape = RoundedCornerShape(12.dp)
     val searchButtonFocusRequester = remember { FocusRequester() }
+    val textFieldFocusRequester = remember { FocusRequester() }
+    val wrapperInteractionSource = remember { MutableInteractionSource() }
+    val isWrapperFocused by wrapperInteractionSource.collectIsFocusedAsState()
     var isTextFieldFocused by remember { mutableStateOf(false) }
     val searchButtonInteractionSource = remember { MutableInteractionSource() }
     val isSearchButtonFocused by searchButtonInteractionSource.collectIsFocusedAsState()
@@ -3971,7 +3969,7 @@ private fun SearchInput(
                 context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             }
 
-    val isAnyFocused = isTextFieldFocused || isSearchButtonFocused
+    val isAnyFocused = isWrapperFocused || isTextFieldFocused || isSearchButtonFocused
     val borderColor = if (isAnyFocused) Color(0xFFB6D9FF) else Color(0xFF2A3348)
     val backgroundColor = if (isAnyFocused) Color(0xFF222E44) else Color(0xFF161E2E)
     val triggerSearch = { onSearch?.invoke() }
@@ -3980,8 +3978,8 @@ private fun SearchInput(
         @Suppress("DEPRECATION")
         inputMethodManager.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0)
     }
-    val triggerKeyboard = {
-        focusRequester.requestFocus()
+    val activateTextField = {
+        textFieldFocusRequester.requestFocus()
         showKeyboard()
     }
 
@@ -3994,25 +3992,12 @@ private fun SearchInput(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        BasicTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                singleLine = true,
-                textStyle =
-                        TextStyle(
-                                color = Color(0xFFE6ECF7),
-                                fontSize = 13.sp,
-                                fontFamily = FontFamily.Serif,
-                                fontWeight = FontWeight.Medium,
-                                letterSpacing = 0.3.sp
-                        ),
-                cursorBrush = SolidColor(Color(0xFFB6D9FF)),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { triggerSearch() }),
+        // Focusable wrapper that receives D-pad focus without showing keyboard
+        Box(
                 modifier =
                         Modifier.weight(1f)
                                 .focusRequester(focusRequester)
-                                .onFocusChanged { state -> isTextFieldFocused = state.isFocused }
+                                .focusable(interactionSource = wrapperInteractionSource)
                                 .onKeyEvent {
                                     if (it.type != KeyEventType.KeyDown) {
                                         false
@@ -4020,7 +4005,7 @@ private fun SearchInput(
                                                     it.key == Key.NumPadEnter ||
                                                     it.key == Key.DirectionCenter
                                     ) {
-                                        triggerKeyboard()
+                                        activateTextField()
                                         true
                                     } else if (onMoveLeft != null && it.key == Key.DirectionLeft) {
                                         onMoveLeft()
@@ -4035,21 +4020,49 @@ private fun SearchInput(
                                         false
                                     }
                                 },
-                decorationBox = { innerTextField ->
-                    Box(contentAlignment = Alignment.CenterStart) {
-                        if (query.isBlank()) {
-                            Text(
-                                    text = placeholder,
-                                    color = Color(0xFF94A3B8),
+                contentAlignment = Alignment.CenterStart
+        ) {
+            BasicTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    singleLine = true,
+                    textStyle =
+                            TextStyle(
+                                    color = Color(0xFFE6ECF7),
                                     fontSize = 13.sp,
                                     fontFamily = FontFamily.Serif,
+                                    fontWeight = FontWeight.Medium,
                                     letterSpacing = 0.3.sp
-                            )
+                            ),
+                    cursorBrush = SolidColor(Color(0xFFB6D9FF)),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { triggerSearch() }),
+                    modifier =
+                            Modifier.fillMaxWidth()
+                                    .focusRequester(textFieldFocusRequester)
+                                    .onFocusChanged { state ->
+                                        isTextFieldFocused = state.isFocused
+                                        // Return to wrapper when text field loses focus
+                                        if (!state.isFocused && isWrapperFocused.not()) {
+                                            // Focus will naturally go elsewhere
+                                        }
+                                    },
+                    decorationBox = { innerTextField ->
+                        Box(contentAlignment = Alignment.CenterStart) {
+                            if (query.isBlank()) {
+                                Text(
+                                        text = placeholder,
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 13.sp,
+                                        fontFamily = FontFamily.Serif,
+                                        letterSpacing = 0.3.sp
+                                )
+                            }
+                            innerTextField()
                         }
-                        innerTextField()
                     }
-                }
-        )
+            )
+        }
 
         Spacer(modifier = Modifier.width(8.dp))
 
@@ -4149,7 +4162,42 @@ fun SectionScreen(
 
     // Don't auto-focus content - user must press Right to navigate there
 
-    BackHandler(enabled = selectedSeries != null) { selectedSeries = null }
+    BackHandler(enabled = selectedSeries != null) {
+        selectedSeries?.let(onItemFocused)
+        // Request focus immediately before state change to avoid focus flashing to MenuButton
+        runCatching { contentItemFocusRequester.requestFocus() }
+        pendingSeriesReturnFocus = true
+        selectedSeries = null
+    }
+
+    LaunchedEffect(pendingSeriesReturnFocus, selectedSeries, lazyItems.itemCount, resumeFocusId) {
+        if (pendingSeriesReturnFocus && selectedSeries == null) {
+            // Wait for items to be available
+            if (lazyItems.itemCount == 0) return@LaunchedEffect
+            // Wait for composition to complete
+            withFrameNanos {}
+            delay(32)
+            withFrameNanos {}
+            val shouldResume =
+                    resumeFocusId != null &&
+                            lazyItems.itemSnapshotList.items.any { it.id == resumeFocusId }
+            val requester =
+                    if (shouldResume) {
+                        resumeFocusRequester
+                    } else {
+                        contentItemFocusRequester
+                    }
+            // Retry focus request multiple times
+            repeat(5) { attempt ->
+                runCatching { requester.requestFocus() }
+                if (attempt < 4) {
+                    delay(32)
+                    withFrameNanos {}
+                }
+            }
+            pendingSeriesReturnFocus = false
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
@@ -4178,6 +4226,8 @@ fun SectionScreen(
                         onPlay = onPlay,
                         onMoveLeft = onMoveLeft,
                         onBack = {
+                            onItemFocused(selectedSeries!!)
+                            runCatching { contentItemFocusRequester.requestFocus() }
                             pendingSeriesReturnFocus = true
                             selectedSeries = null
                         },
@@ -4692,9 +4742,13 @@ fun FavoritesScreen(
     ) {
         if (selectedSeries != null) {
             onItemFocused(selectedSeries!!)
+            // Request focus immediately before state change to avoid focus flashing to MenuButton
+            runCatching { contentItemFocusRequester.requestFocus() }
             pendingSeriesReturnFocus = true
             selectedSeries = null
         } else if (selectedCategory != null) {
+            // Request focus immediately before state change
+            runCatching { contentItemFocusRequester.requestFocus() }
             selectedCategory = null
             pendingViewFocus = true
         } else {
@@ -4706,6 +4760,9 @@ fun FavoritesScreen(
 
     LaunchedEffect(pendingSeriesReturnFocus, selectedSeries) {
         if (pendingSeriesReturnFocus && selectedSeries == null) {
+            // Wait for composition to complete
+            withFrameNanos {}
+            delay(32)
             withFrameNanos {}
             val requester =
                     if (resumeFocusId != null) {
@@ -4713,14 +4770,12 @@ fun FavoritesScreen(
                     } else {
                         contentItemFocusRequester
                     }
-            repeat(4) { attempt ->
-                val focused = runCatching { requester.requestFocus() }.getOrElse { false }
-                if (focused) {
-                    pendingSeriesReturnFocus = false
-                    return@LaunchedEffect
-                }
-                if (attempt < 3) {
-                    delay(16)
+            // Retry focus request multiple times
+            repeat(5) { attempt ->
+                runCatching { requester.requestFocus() }
+                if (attempt < 4) {
+                    delay(32)
+                    withFrameNanos {}
                 }
             }
             pendingSeriesReturnFocus = false
@@ -4834,6 +4889,7 @@ fun FavoritesScreen(
                         onMoveLeft = onMoveLeft,
                         onBack = {
                             onItemFocused(selectedSeries!!)
+                            runCatching { contentItemFocusRequester.requestFocus() }
                             pendingSeriesReturnFocus = true
                             selectedSeries = null
                         },
@@ -4962,6 +5018,7 @@ fun FavoritesScreen(
                                 onMoveLeft = onMoveLeft,
                                 onBack = {
                                     onItemFocused(selectedSeries!!)
+                                    runCatching { contentItemFocusRequester.requestFocus() }
                                     pendingSeriesReturnFocus = true
                                     selectedSeries = null
                                 },
@@ -5272,6 +5329,8 @@ fun CategorySectionScreen(
     val activeQuery = debouncedQuery
 
     BackHandler(enabled = selectedCategory != null && selectedSeries == null) {
+        // Request focus immediately before state change to avoid focus flashing to MenuButton
+        runCatching { contentItemFocusRequester.requestFocus() }
         selectedCategory = null
         pendingCategoryReturnFocus = true
     }
@@ -5314,16 +5373,18 @@ fun CategorySectionScreen(
         if (!pendingCategoryReturnFocus || selectedCategory != null || selectedSeries != null) {
             return@LaunchedEffect
         }
+        // Wait for categories to be available
+        if (categories.isEmpty()) return@LaunchedEffect
+        // Wait for composition to complete
         withFrameNanos {}
-        repeat(6) { attempt ->
-            val focused =
-                    runCatching { contentItemFocusRequester.requestFocus() }.getOrElse { false }
-            if (focused) {
-                pendingCategoryReturnFocus = false
-                return@LaunchedEffect
-            }
-            if (attempt < 5) {
-                delay(16)
+        delay(32)
+        withFrameNanos {}
+        // Retry focus request multiple times
+        repeat(5) { attempt ->
+            runCatching { contentItemFocusRequester.requestFocus() }
+            if (attempt < 4) {
+                delay(32)
+                withFrameNanos {}
             }
         }
         pendingCategoryReturnFocus = false
@@ -5436,6 +5497,7 @@ fun CategorySectionScreen(
                             onMoveLeft = onMoveLeft,
                             onBack = {
                                 onItemFocused(selectedSeries!!)
+                                runCatching { contentItemFocusRequester.requestFocus() }
                                 pendingSeriesReturnFocus = true
                                 selectedSeries = null
                             },
@@ -5463,20 +5525,25 @@ fun CategorySectionScreen(
                                 }
                             }
                     val lazyItems = pagerFlow.collectAsLazyPagingItems()
-                    LaunchedEffect(pendingCategoryEnterFocus, lazyItems.itemCount) {
+                    LaunchedEffect(
+                            pendingCategoryEnterFocus,
+                            lazyItems.itemCount,
+                            lazyItems.loadState.refresh
+                    ) {
                         if (!pendingCategoryEnterFocus || selectedSeries != null)
                                 return@LaunchedEffect
+                        // Wait for items to be available before attempting focus
+                        if (lazyItems.itemCount == 0) return@LaunchedEffect
+                        // Wait for composition to complete with multiple frame delays
                         withFrameNanos {}
-                        repeat(6) { attempt ->
-                            val focused =
-                                    runCatching { contentItemFocusRequester.requestFocus() }
-                                            .getOrElse { false }
-                            if (focused) {
-                                pendingCategoryEnterFocus = false
-                                return@LaunchedEffect
-                            }
-                            if (attempt < 5) {
-                                delay(16)
+                        delay(32)
+                        withFrameNanos {}
+                        // Retry focus request multiple times to handle composition timing
+                        repeat(5) { attempt ->
+                            runCatching { contentItemFocusRequester.requestFocus() }
+                            if (attempt < 4) {
+                                delay(32)
+                                withFrameNanos {}
                             }
                         }
                         pendingCategoryEnterFocus = false
