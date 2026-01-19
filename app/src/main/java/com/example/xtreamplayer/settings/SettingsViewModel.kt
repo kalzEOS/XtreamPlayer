@@ -31,15 +31,6 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun cyclePlaybackQuality() {
-        val options = PlaybackQuality.values()
-        val currentIndex = options.indexOf(settings.value.playbackQuality).coerceAtLeast(0)
-        val next = options[(currentIndex + 1) % options.size]
-        viewModelScope.launch {
-            repository.setPlaybackQuality(next)
-        }
-    }
-
     fun cycleAudioLanguage() {
         val options = AudioLanguage.values()
         val currentIndex = options.indexOf(settings.value.audioLanguage).coerceAtLeast(0)

@@ -50,6 +50,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.xtreamplayer.api.SubtitleSearchResult
+import com.example.xtreamplayer.player.VideoTrackInfo
+import kotlin.math.abs
 
 private val DialogBackground = Color(0xFF0F1626)
 private val SecondaryBorderColor = Color(0xFF2A3348)
@@ -1122,5 +1124,432 @@ fun AudioBoostDialog(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun PlaybackSettingsDialog(
+    audioLabel: String,
+    speedLabel: String,
+    resolutionLabel: String,
+    onAudio: () -> Unit,
+    onSpeed: () -> Unit,
+    onResolution: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val audioFocusRequester = remember { FocusRequester() }
+    val speedFocusRequester = remember { FocusRequester() }
+    val resolutionFocusRequester = remember { FocusRequester() }
+    val closeFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        audioFocusRequester.requestFocus()
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.45f)
+                .clip(RoundedCornerShape(12.dp))
+                .background(DialogBackground)
+                .border(1.dp, SecondaryBorderColor, RoundedCornerShape(12.dp))
+                .padding(24.dp)
+                .onKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                        onDismiss()
+                        true
+                    } else {
+                        false
+                    }
+                }
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "Settings",
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Bold
+                )
+
+                SettingsOptionRow(
+                    label = "Audio",
+                    value = audioLabel,
+                    focusRequester = audioFocusRequester,
+                    onClick = onAudio
+                )
+                SettingsOptionRow(
+                    label = "Speed",
+                    value = speedLabel,
+                    focusRequester = speedFocusRequester,
+                    onClick = onSpeed
+                )
+                SettingsOptionRow(
+                    label = "Resolution",
+                    value = resolutionLabel,
+                    focusRequester = resolutionFocusRequester,
+                    onClick = onResolution
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                FocusableButton(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF2A3348),
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .focusRequester(closeFocusRequester)
+                ) {
+                    Text(
+                        text = "Close",
+                        fontSize = 14.sp,
+                        fontFamily = FontFamily.Serif,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PlaybackSpeedDialog(
+    currentSpeed: Float,
+    onSpeedSelected: (Float) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val closeFocusRequester = remember { FocusRequester() }
+    val speeds = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+
+    LaunchedEffect(Unit) {
+        closeFocusRequester.requestFocus()
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.4f)
+                .clip(RoundedCornerShape(12.dp))
+                .background(DialogBackground)
+                .border(1.dp, SecondaryBorderColor, RoundedCornerShape(12.dp))
+                .padding(24.dp)
+        ) {
+            Column {
+                Text(
+                    text = "Playback Speed",
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f, fill = false)
+                ) {
+                    items(speeds) { speed ->
+                        val interactionSource = remember { MutableInteractionSource() }
+                        val isFocused by interactionSource.collectIsFocusedAsState()
+                        val isSelected = abs(speed - currentSpeed) < 0.01f
+                        val borderColor = if (isFocused) FocusBorderColor else SecondaryBorderColor
+                        val backgroundColor =
+                            if (isSelected) Color(0xFF1E2738) else ContentAreaBackground
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(backgroundColor)
+                                .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+                                .clickable(
+                                    interactionSource = interactionSource,
+                                    indication = null
+                                ) {
+                                    onSpeedSelected(speed)
+                                    onDismiss()
+                                }
+                                .focusable(interactionSource = interactionSource)
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (isSelected) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .background(EnabledIndicatorColor, CircleShape)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                            }
+                            Text(
+                                text = "${speed}x",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontFamily = FontFamily.Serif
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                FocusableButton(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF2A3348),
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .focusRequester(closeFocusRequester)
+                ) {
+                    Text(
+                        text = "Close",
+                        fontSize = 14.sp,
+                        fontFamily = FontFamily.Serif,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun VideoResolutionDialog(
+    availableTracks: List<VideoTrackInfo>,
+    onTrackSelected: (Int, Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val closeFocusRequester = remember { FocusRequester() }
+    val supportedTrackCount = availableTracks.count { it.isSupported }
+    val hasSingleTrack = supportedTrackCount <= 1
+
+    LaunchedEffect(Unit) {
+        closeFocusRequester.requestFocus()
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.5f)
+                .clip(RoundedCornerShape(12.dp))
+                .background(DialogBackground)
+                .border(1.dp, SecondaryBorderColor, RoundedCornerShape(12.dp))
+                .padding(24.dp)
+        ) {
+            Column {
+                Text(
+                    text = "Resolution",
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                if (availableTracks.isEmpty()) {
+                    Text(
+                        text = "No video tracks available",
+                        color = MutedTextColor,
+                        fontSize = 14.sp,
+                        fontFamily = FontFamily.Serif,
+                        modifier = Modifier.padding(vertical = 24.dp)
+                    )
+                } else {
+                    if (!availableTracks.any { it.isSupported }) {
+                        Text(
+                            text = "No supported video tracks available",
+                            color = MutedTextColor,
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Serif,
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        )
+                    }
+                    if (hasSingleTrack) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF94A3B8))
+                            )
+                            Text(
+                                text = "Only one resolution available",
+                                color = MutedTextColor,
+                                fontSize = 12.sp,
+                                fontFamily = FontFamily.Serif
+                            )
+                        }
+                    }
+
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f, fill = false)
+                    ) {
+                        items(availableTracks) { track ->
+                            val interactionSource = remember { MutableInteractionSource() }
+                            val isFocused by interactionSource.collectIsFocusedAsState()
+                            val isSelectable = track.isSupported && !hasSingleTrack
+                            val isSelected = track.isSelected || (hasSingleTrack && track.isSupported)
+                            val borderColor =
+                                if (isFocused && isSelectable) {
+                                    FocusBorderColor
+                                } else {
+                                    SecondaryBorderColor
+                                }
+                            val backgroundColor =
+                                if (isSelected) Color(0xFF1E2738) else ContentAreaBackground
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(backgroundColor)
+                                    .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+                                    .then(
+                                        if (isSelectable) {
+                                            Modifier.clickable(
+                                                interactionSource = interactionSource,
+                                                indication = null
+                                            ) {
+                                                onTrackSelected(track.groupIndex, track.trackIndex)
+                                                onDismiss()
+                                            }
+                                        } else {
+                                            Modifier
+                                        }
+                                    )
+                                    .padding(16.dp)
+                                    .then(
+                                        if (isSelectable) {
+                                            Modifier.focusable(interactionSource = interactionSource)
+                                        } else {
+                                            Modifier
+                                        }
+                                    ),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (isSelected) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .background(EnabledIndicatorColor, CircleShape)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                }
+
+                                Text(
+                                    text = track.label,
+                                    color = if (!track.isSupported || hasSingleTrack) {
+                                        MutedTextColor
+                                    } else {
+                                        Color.White
+                                    },
+                                    fontSize = 14.sp,
+                                    fontFamily = FontFamily.Serif
+                                )
+
+                                if (!track.isSupported) {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Unsupported",
+                                        color = MutedTextColor,
+                                        fontSize = 12.sp,
+                                        fontFamily = FontFamily.Serif
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                FocusableButton(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF2A3348),
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .focusRequester(closeFocusRequester)
+                ) {
+                    Text(
+                        text = "Close",
+                        fontSize = 14.sp,
+                        fontFamily = FontFamily.Serif,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsOptionRow(
+    label: String,
+    value: String,
+    focusRequester: FocusRequester,
+    onClick: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val borderColor = if (isFocused) FocusBorderColor else SecondaryBorderColor
+    val backgroundColor = if (isFocused) Color(0xFF1E2738) else ContentAreaBackground
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(backgroundColor)
+            .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
+            .focusRequester(focusRequester)
+            .focusable(interactionSource = interactionSource)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            color = Color.White,
+            fontSize = 14.sp,
+            fontFamily = FontFamily.Serif,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = value,
+            color = MutedTextColor,
+            fontSize = 12.sp,
+            fontFamily = FontFamily.Serif
+        )
     }
 }
