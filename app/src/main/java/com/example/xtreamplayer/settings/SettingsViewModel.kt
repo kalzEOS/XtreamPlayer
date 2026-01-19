@@ -52,6 +52,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setAppTheme(theme: AppThemeOption) {
+        viewModelScope.launch {
+            repository.setAppTheme(theme)
+        }
+    }
+
     fun setOpenSubtitlesApiKey(apiKey: String) {
         viewModelScope.launch {
             repository.setOpenSubtitlesApiKey(apiKey)

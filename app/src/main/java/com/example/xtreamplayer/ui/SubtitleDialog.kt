@@ -51,18 +51,29 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.xtreamplayer.api.SubtitleSearchResult
 import com.example.xtreamplayer.player.VideoTrackInfo
+import com.example.xtreamplayer.ui.theme.AppTheme
 import kotlin.math.abs
 
-private val DialogBackground = Color(0xFF0F1626)
-private val SecondaryBorderColor = Color(0xFF2A3348)
-private val PrimaryButtonColor = Color(0xFF4F8CFF)
-private val MutedTextColor = Color(0xFF94A3B8)
-private val FocusBorderColor = Color(0xFFB6D9FF)
-private val EnabledIndicatorColor = Color(0xFF3CCB7F)
-private val DisabledIndicatorColor = Color(0xFF8A95B1)
-private val InputBackground = Color(0xFF222E44)
-private val InputTextColor = Color(0xFFE6ECF7)
-private val ContentAreaBackground = Color(0xFF161E2E)
+private val DialogBackground: Color
+    @Composable get() = AppTheme.colors.background
+private val SecondaryBorderColor: Color
+    @Composable get() = AppTheme.colors.borderStrong
+private val PrimaryButtonColor: Color
+    @Composable get() = AppTheme.colors.accent
+private val MutedTextColor: Color
+    @Composable get() = AppTheme.colors.textSecondary
+private val FocusBorderColor: Color
+    @Composable get() = AppTheme.colors.focus
+private val EnabledIndicatorColor: Color
+    @Composable get() = AppTheme.colors.success
+private val DisabledIndicatorColor: Color
+    @Composable get() = AppTheme.colors.textTertiary
+private val InputBackground: Color
+    @Composable get() = AppTheme.colors.surfaceAlt
+private val InputTextColor: Color
+    @Composable get() = AppTheme.colors.textPrimary
+private val ContentAreaBackground: Color
+    @Composable get() = AppTheme.colors.surface
 
 sealed class SubtitleDialogState {
     object Idle : SubtitleDialogState()
@@ -171,7 +182,7 @@ fun SubtitleSearchDialog(
                         enabled = query.isNotBlank() && state !is SubtitleDialogState.Searching,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = PrimaryButtonColor,
-                            contentColor = Color(0xFF0C1730),
+                            contentColor = AppTheme.colors.textOnAccent,
                             disabledContainerColor = SecondaryBorderColor,
                             disabledContentColor = DisabledIndicatorColor
                         ),
@@ -209,7 +220,8 @@ fun SubtitleSearchDialog(
                     val toggleIndicatorColor =
                         if (subtitlesEnabled) EnabledIndicatorColor else DisabledIndicatorColor
                     val toggleButtonColor =
-                        if (subtitlesEnabled) Color(0xFF1F3A2A) else SecondaryBorderColor
+                        if (subtitlesEnabled) AppTheme.colors.success.copy(alpha = 0.25f)
+                        else SecondaryBorderColor
 
                     FocusableButton(
                         onClick = onToggleSubtitles,
@@ -330,7 +342,7 @@ fun SubtitleSearchDialog(
                         is SubtitleDialogState.Error -> {
                             Text(
                                 text = state.message,
-                                color = Color(0xFFE4A9A9),
+                                color = AppTheme.colors.error,
                                 fontSize = 14.sp,
                                 fontFamily = FontFamily.Serif,
                                 modifier = Modifier.align(Alignment.Center)
@@ -474,7 +486,9 @@ fun SubtitleOptionsDialog(
 
                 val statusColor = if (subtitlesEnabled) EnabledIndicatorColor else DisabledIndicatorColor
                 val toggleColor = if (subtitlesEnabled) SecondaryBorderColor else PrimaryButtonColor
-                val toggleTextColor = if (subtitlesEnabled) Color.White else Color(0xFF0C1730)
+                val toggleTextColor =
+                    if (subtitlesEnabled) AppTheme.colors.textPrimary
+                    else AppTheme.colors.textOnAccent
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -528,7 +542,7 @@ fun SubtitleOptionsDialog(
                     onClick = onDismiss,
                     modifier = Modifier.focusRequester(closeFocusRequester),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF1E2438),
+                        containerColor = AppTheme.colors.surfaceAlt,
                         contentColor = Color.White
                     )
                 ) {
@@ -745,7 +759,7 @@ fun ApiKeyInputDialog(
                         onClick = { onSave(apiKey, userAgent) },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = PrimaryButtonColor,
-                            contentColor = Color(0xFF0C1730)
+                            contentColor = AppTheme.colors.textOnAccent
                         ),
                         modifier = Modifier.focusRequester(saveFocusRequester)
                     ) {
@@ -768,7 +782,8 @@ private fun SubtitleItem(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
-    val backgroundColor = if (isFocused) Color(0xFF2A3A5E) else Color.Transparent
+    val backgroundColor =
+        if (isFocused) AppTheme.colors.surfaceAlt else Color.Transparent
 
     Row(
         modifier = Modifier
@@ -812,7 +827,7 @@ private fun SubtitleItem(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "HI",
-                        color = Color(0xFFFFB74D),
+                        color = AppTheme.colors.warning,
                         fontSize = 11.sp,
                         fontFamily = FontFamily.Serif,
                         fontWeight = FontWeight.Bold
@@ -889,7 +904,7 @@ fun AudioTrackDialog(
                                 modifier = Modifier
                                     .size(8.dp)
                                     .clip(CircleShape)
-                                    .background(Color(0xFF94A3B8))
+                                    .background(AppTheme.colors.textSecondary)
                             )
                             Text(
                                 text = "Only one audio track available",
@@ -914,7 +929,7 @@ fun AudioTrackDialog(
                                 SecondaryBorderColor
                             }
                             val backgroundColor = if (track.isSelected) {
-                                Color(0xFF1E2738)
+                                AppTheme.colors.panelBackground
                             } else {
                                 ContentAreaBackground
                             }
@@ -997,7 +1012,7 @@ fun AudioTrackDialog(
                 FocusableButton(
                     onClick = onDismiss,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF2A3348),
+                        containerColor = AppTheme.colors.borderStrong,
                         contentColor = Color.White
                     ),
                     modifier = Modifier
@@ -1199,7 +1214,7 @@ fun PlaybackSettingsDialog(
                 FocusableButton(
                     onClick = onDismiss,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF2A3348),
+                        containerColor = AppTheme.colors.borderStrong,
                         contentColor = Color.White
                     ),
                     modifier = Modifier
@@ -1265,7 +1280,8 @@ fun PlaybackSpeedDialog(
                         val isSelected = abs(speed - currentSpeed) < 0.01f
                         val borderColor = if (isFocused) FocusBorderColor else SecondaryBorderColor
                         val backgroundColor =
-                            if (isSelected) Color(0xFF1E2738) else ContentAreaBackground
+                            if (isSelected) AppTheme.colors.panelBackground
+                            else ContentAreaBackground
 
                         Row(
                             modifier = Modifier
@@ -1307,7 +1323,7 @@ fun PlaybackSpeedDialog(
                 FocusableButton(
                     onClick = onDismiss,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF2A3348),
+                        containerColor = AppTheme.colors.borderStrong,
                         contentColor = Color.White
                     ),
                     modifier = Modifier
@@ -1392,7 +1408,7 @@ fun VideoResolutionDialog(
                                 modifier = Modifier
                                     .size(8.dp)
                                     .clip(CircleShape)
-                                    .background(Color(0xFF94A3B8))
+                                    .background(AppTheme.colors.textSecondary)
                             )
                             Text(
                                 text = "Only one resolution available",
@@ -1419,7 +1435,8 @@ fun VideoResolutionDialog(
                                     SecondaryBorderColor
                                 }
                             val backgroundColor =
-                                if (isSelected) Color(0xFF1E2738) else ContentAreaBackground
+                                if (isSelected) AppTheme.colors.panelBackground
+                                else ContentAreaBackground
 
                             Row(
                                 modifier = Modifier
@@ -1489,7 +1506,7 @@ fun VideoResolutionDialog(
                 FocusableButton(
                     onClick = onDismiss,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF2A3348),
+                        containerColor = AppTheme.colors.borderStrong,
                         contentColor = Color.White
                     ),
                     modifier = Modifier
@@ -1519,7 +1536,8 @@ private fun SettingsOptionRow(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val borderColor = if (isFocused) FocusBorderColor else SecondaryBorderColor
-    val backgroundColor = if (isFocused) Color(0xFF1E2738) else ContentAreaBackground
+    val backgroundColor =
+        if (isFocused) AppTheme.colors.panelBackground else ContentAreaBackground
 
     Row(
         modifier = Modifier

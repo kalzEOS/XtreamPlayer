@@ -32,7 +32,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -44,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.xtreamplayer.auth.AuthConfig
 import com.example.xtreamplayer.settings.SettingsState
+import com.example.xtreamplayer.ui.theme.AppTheme
 
 @Composable
 fun SettingsScreen(
@@ -54,6 +54,7 @@ fun SettingsScreen(
     onToggleAutoPlay: () -> Unit,
     onToggleSubtitles: () -> Unit,
     onCycleAudioLanguage: () -> Unit,
+    onOpenThemeSelector: () -> Unit,
     onToggleRememberLogin: () -> Unit,
     onToggleAutoSignIn: () -> Unit,
     onOpenSubtitlesApiKey: () -> Unit,
@@ -63,11 +64,13 @@ fun SettingsScreen(
 ) {
     val shape = RoundedCornerShape(18.dp)
     val scrollState = rememberScrollState()
+    val colors = AppTheme.colors
     val apiKeyLabel = if (settings.openSubtitlesApiKey.isNotBlank()) "Configured" else "Not set"
     val actions = listOf(
         SettingsAction("Auto-play next", flagLabel(settings.autoPlayNext), onToggleAutoPlay),
         SettingsAction("Subtitles", flagLabel(settings.subtitlesEnabled), onToggleSubtitles),
         SettingsAction("Audio language", settings.audioLanguage.label, onCycleAudioLanguage),
+        SettingsAction("Theme", settings.appTheme.label, onOpenThemeSelector),
         SettingsAction("OpenSubtitles API key", apiKeyLabel, onOpenSubtitlesApiKey),
         SettingsAction("Remember login", flagLabel(settings.rememberLogin), onToggleRememberLogin),
         SettingsAction("Auto sign-in", flagLabel(settings.autoSignIn), onToggleAutoSignIn),
@@ -90,17 +93,17 @@ fun SettingsScreen(
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color(0xFF0F1626),
-                            Color(0xFF141C2E)
+                            colors.background,
+                            colors.backgroundAlt
                         )
                     )
                 )
-                .border(1.dp, Color(0xFF1E2738), shape)
+                .border(1.dp, colors.border, shape)
                 .padding(20.dp)
         ) {
             Text(
                 text = "SETTINGS",
-                color = Color.White,
+                color = colors.textPrimary,
                 fontSize = 20.sp,
                 fontFamily = FontFamily.Serif,
                 fontWeight = FontWeight.Bold,
@@ -143,6 +146,7 @@ fun ManageListsScreen(
 ) {
     val shape = RoundedCornerShape(18.dp)
     val scrollState = rememberScrollState()
+    val colors = AppTheme.colors
     val actions = buildList {
         add(SettingsAction("Edit list details", null, onEditList))
         add(SettingsAction("Sign out", null, onSignOut))
@@ -166,17 +170,17 @@ fun ManageListsScreen(
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color(0xFF0F1626),
-                            Color(0xFF141C2E)
+                            colors.background,
+                            colors.backgroundAlt
                         )
                     )
                 )
-                .border(1.dp, Color(0xFF1E2738), shape)
+                .border(1.dp, colors.border, shape)
                 .padding(20.dp)
         ) {
             Text(
                 text = "MANAGE LISTS",
-                color = Color.White,
+                color = colors.textPrimary,
                 fontSize = 20.sp,
                 fontFamily = FontFamily.Serif,
                 fontWeight = FontWeight.Bold,
@@ -221,6 +225,7 @@ private data class SettingsAction(
 
 @Composable
 private fun SettingsInfoRow(label: String, value: String) {
+    val colors = AppTheme.colors
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -228,13 +233,13 @@ private fun SettingsInfoRow(label: String, value: String) {
     ) {
         Text(
             text = label,
-            color = Color(0xFF94A3B8),
+            color = colors.textSecondary,
             fontSize = 14.sp,
             fontFamily = FontFamily.Serif
         )
         Text(
             text = value,
-            color = Color(0xFFE6ECF7),
+            color = colors.textPrimary,
             fontSize = 14.sp,
             fontFamily = FontFamily.Serif,
             fontWeight = FontWeight.SemiBold
@@ -254,6 +259,7 @@ private fun SettingsActionRow(
     val isFocused by interactionSource.collectIsFocusedAsState()
     val shape = RoundedCornerShape(12.dp)
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val colors = AppTheme.colors
 
     LaunchedEffect(isFocused) {
         if (isFocused) {
@@ -264,21 +270,21 @@ private fun SettingsActionRow(
     val backgroundBrush = if (isFocused) {
         Brush.horizontalGradient(
             colors = listOf(
-                Color(0xFF4F8CFF),
-                Color(0xFF7FCBFF)
+                colors.accent,
+                colors.accentAlt
             )
         )
     } else {
         Brush.horizontalGradient(
             colors = listOf(
-                Color(0xFF2B3240),
-                Color(0xFF222833)
+                colors.accentMutedAlt,
+                colors.surfaceAlt
             )
         )
     }
-    val borderColor = if (isFocused) Color(0xFFB6D9FF) else Color(0xFF1E2533)
-    val textColor = if (isFocused) Color(0xFF0C1730) else Color(0xFFE6ECF7)
-    val valueColor = if (isFocused) Color(0xFF0C1730) else Color(0xFF94A3B8)
+    val borderColor = if (isFocused) colors.focus else colors.border
+    val textColor = if (isFocused) colors.textOnAccent else colors.textPrimary
+    val valueColor = if (isFocused) colors.textOnAccent else colors.textSecondary
 
     Box(
         modifier = Modifier

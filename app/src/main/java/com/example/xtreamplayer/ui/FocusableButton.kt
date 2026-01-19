@@ -21,8 +21,10 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.example.xtreamplayer.ui.theme.AppTheme
 
-private val FocusBorderColor = Color(0xFFB6D9FF)
+private val FocusBorderColor: Color
+    @Composable get() = AppTheme.colors.focus
 private val GlowColor = Color(0x40FFFFFF)
 
 @Composable
