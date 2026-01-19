@@ -4725,6 +4725,8 @@ private fun LocalFilesScreen(
                             val itemIndex = startIndex + localIndex
                             val interactionSource = remember { MutableInteractionSource() }
                             val isFocused by interactionSource.collectIsFocusedAsState()
+                            var keyDownArmed by remember { mutableStateOf(false) }
+                            var keyClickHandled by remember { mutableStateOf(false) }
                             val borderColor =
                                     if (isFocused) AppTheme.colors.focus else AppTheme.colors.borderStrong
                             val backgroundColor =
@@ -4738,6 +4740,12 @@ private fun LocalFilesScreen(
                                     }
 
                             val isFirstItem = itemIndex == 0
+                            LaunchedEffect(isFocused) {
+                                if (!isFocused) {
+                                    keyDownArmed = false
+                                    keyClickHandled = false
+                                }
+                            }
 
                             Row(
                                     modifier =
@@ -4755,24 +4763,52 @@ private fun LocalFilesScreen(
                                                             interactionSource = interactionSource
                                                     )
                                                     .onKeyEvent {
-                                                        if (it.type != KeyEventType.KeyDown) {
-                                                            false
-                                                        } else if (it.key == Key.DirectionLeft) {
-                                                            onMoveLeft()
-                                                            true
-                                                        } else if (it.key == Key.DirectionUp &&
-                                                                        isFirstItem
-                                                        ) {
-                                                            refreshFocusRequester.requestFocus()
-                                                            true
-                                                        } else {
-                                                            false
+                                                        val isSelectKey =
+                                                                it.key == Key.Enter ||
+                                                                        it.key == Key.NumPadEnter ||
+                                                                        it.key == Key.DirectionCenter
+                                                        when (it.type) {
+                                                            KeyEventType.KeyDown -> {
+                                                                when {
+                                                                    isSelectKey -> {
+                                                                        keyDownArmed = true
+                                                                        true
+                                                                    }
+                                                                    it.key == Key.DirectionLeft -> {
+                                                                        onMoveLeft()
+                                                                        true
+                                                                    }
+                                                                    it.key == Key.DirectionUp &&
+                                                                            isFirstItem -> {
+                                                                        refreshFocusRequester.requestFocus()
+                                                                        true
+                                                                    }
+                                                                    else -> false
+                                                                }
+                                                            }
+                                                            KeyEventType.KeyUp -> {
+                                                                if (isSelectKey && keyDownArmed) {
+                                                                    keyDownArmed = false
+                                                                    keyClickHandled = true
+                                                                    onPlayFile(itemIndex)
+                                                                    true
+                                                                } else {
+                                                                    false
+                                                                }
+                                                            }
+                                                            else -> false
                                                         }
                                                     }
                                                     .clickable(
                                                             interactionSource = interactionSource,
                                                             indication = null
-                                                    ) { onPlayFile(itemIndex) }
+                                                    ) {
+                                                        if (keyClickHandled) {
+                                                            keyClickHandled = false
+                                                        } else {
+                                                            onPlayFile(itemIndex)
+                                                        }
+                                                    }
                                                     .background(
                                                             backgroundColor,
                                                             RoundedCornerShape(12.dp)

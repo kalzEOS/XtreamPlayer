@@ -25,13 +25,20 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -102,11 +109,29 @@ fun ThemeSelectionDialog(
                         itemsIndexed(themes) { index, theme ->
                             val interactionSource = remember { MutableInteractionSource() }
                             val isFocused by interactionSource.collectIsFocusedAsState()
+                            var keyDownArmed by remember { mutableStateOf(false) }
+                            var keyClickHandled by remember { mutableStateOf(false) }
                             val isSelected = theme == currentTheme
                             val borderColor =
-                                if (isFocused || isSelected) colors.focus else colors.borderStrong
+                                when {
+                                    isFocused && isSelected -> colors.focus
+                                    isFocused -> colors.accentAlt
+                                    isSelected -> colors.accentSelected
+                                    else -> colors.borderStrong
+                                }
                             val backgroundColor =
-                                if (isSelected) colors.panelBackground else colors.surface
+                                when {
+                                    isFocused && isSelected -> colors.panelBackground
+                                    isFocused -> colors.surfaceAlt
+                                    isSelected -> colors.panelBackground
+                                    else -> colors.surface
+                                }
+                            LaunchedEffect(isFocused) {
+                                if (!isFocused) {
+                                    keyDownArmed = false
+                                    keyClickHandled = false
+                                }
+                            }
 
                             Row(
                                 modifier = Modifier
@@ -116,12 +141,44 @@ fun ThemeSelectionDialog(
                                     .border(1.dp, borderColor, RoundedCornerShape(8.dp))
                                     .focusRequester(itemFocusRequesters[index])
                                     .focusable(interactionSource = interactionSource)
+                                    .onKeyEvent {
+                                        val isSelectKey =
+                                            it.key == Key.Enter ||
+                                                it.key == Key.NumPadEnter ||
+                                                it.key == Key.DirectionCenter
+                                        when (it.type) {
+                                            KeyEventType.KeyDown -> {
+                                                if (isSelectKey) {
+                                                    keyDownArmed = true
+                                                    true
+                                                } else {
+                                                    false
+                                                }
+                                            }
+                                            KeyEventType.KeyUp -> {
+                                                if (isSelectKey && keyDownArmed) {
+                                                    keyDownArmed = false
+                                                    keyClickHandled = true
+                                                    onThemeSelected(theme)
+                                                    onDismiss()
+                                                    true
+                                                } else {
+                                                    false
+                                                }
+                                            }
+                                            else -> false
+                                        }
+                                    }
                                     .clickable(
                                         interactionSource = interactionSource,
                                         indication = null
                                     ) {
-                                        onThemeSelected(theme)
-                                        onDismiss()
+                                        if (keyClickHandled) {
+                                            keyClickHandled = false
+                                        } else {
+                                            onThemeSelected(theme)
+                                            onDismiss()
+                                        }
                                     }
                                     .padding(16.dp),
                                 verticalAlignment = Alignment.CenterVertically
