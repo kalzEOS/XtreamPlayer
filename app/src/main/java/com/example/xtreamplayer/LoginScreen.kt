@@ -40,11 +40,14 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.content.Context
+import android.view.inputmethod.InputMethodManager
 import com.example.xtreamplayer.auth.AuthConfig
 import com.example.xtreamplayer.auth.AuthUiState
 
@@ -121,71 +124,39 @@ fun LoginScreen(
                 letterSpacing = 1.sp
             )
             Spacer(modifier = Modifier.height(4.dp))
-            OutlinedTextField(
+            TvTextField(
                 value = listName,
                 onValueChange = { listName = it },
-                label = { Text("List name") },
-                singleLine = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusRequester(listNameFocusRequester)
-                    .onPreviewKeyEvent {
-                        handleNavKey(
-                            event = it,
-                            onDown = { serviceUrlFocusRequester.requestFocus() }
-                        )
-                    },
+                label = "List name",
+                focusRequester = listNameFocusRequester,
+                onMoveDown = { serviceUrlFocusRequester.requestFocus() },
                 textStyle = fieldTextStyle
             )
-            OutlinedTextField(
+            TvTextField(
                 value = serviceUrl,
                 onValueChange = { serviceUrl = it },
-                label = { Text("Xtream service URL") },
-                singleLine = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusRequester(serviceUrlFocusRequester)
-                    .onPreviewKeyEvent {
-                        handleNavKey(
-                            event = it,
-                            onUp = { listNameFocusRequester.requestFocus() },
-                            onDown = { usernameFocusRequester.requestFocus() }
-                        )
-                    },
+                label = "Xtream service URL",
+                focusRequester = serviceUrlFocusRequester,
+                onMoveUp = { listNameFocusRequester.requestFocus() },
+                onMoveDown = { usernameFocusRequester.requestFocus() },
                 textStyle = fieldTextStyle
             )
-            OutlinedTextField(
+            TvTextField(
                 value = username,
                 onValueChange = { username = it },
-                label = { Text("Username") },
-                singleLine = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusRequester(usernameFocusRequester)
-                    .onPreviewKeyEvent {
-                        handleNavKey(
-                            event = it,
-                            onUp = { serviceUrlFocusRequester.requestFocus() },
-                            onDown = { passwordFocusRequester.requestFocus() }
-                        )
-                    },
+                label = "Username",
+                focusRequester = usernameFocusRequester,
+                onMoveUp = { serviceUrlFocusRequester.requestFocus() },
+                onMoveDown = { passwordFocusRequester.requestFocus() },
                 textStyle = fieldTextStyle
             )
-            OutlinedTextField(
+            TvTextField(
                 value = password,
                 onValueChange = { password = it },
-                label = { Text("Password") },
-                singleLine = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusRequester(passwordFocusRequester)
-                    .onPreviewKeyEvent {
-                        handleNavKey(
-                            event = it,
-                            onUp = { usernameFocusRequester.requestFocus() },
-                            onDown = { submitFocusRequester.requestFocus() }
-                        )
-                    },
+                label = "Password",
+                focusRequester = passwordFocusRequester,
+                onMoveUp = { usernameFocusRequester.requestFocus() },
+                onMoveDown = { submitFocusRequester.requestFocus() },
                 textStyle = fieldTextStyle
             )
             if (authState.errorMessage != null) {
@@ -262,5 +233,105 @@ private fun handleNavKey(
             onRight != null
         }
         else -> false
+    }
+}
+
+@Composable
+private fun TvTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    focusRequester: FocusRequester,
+    modifier: Modifier = Modifier,
+    onMoveUp: (() -> Unit)? = null,
+    onMoveDown: (() -> Unit)? = null,
+    textStyle: TextStyle = TextStyle.Default
+) {
+    val wrapperInteractionSource = remember { MutableInteractionSource() }
+    val isWrapperFocused by wrapperInteractionSource.collectIsFocusedAsState()
+    val textFieldFocusRequester = remember { FocusRequester() }
+    var isTextFieldActive by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val inputMethodManager = remember(context) {
+        context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+    }
+
+    val showKeyboard = {
+        @Suppress("DEPRECATION")
+        inputMethodManager.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0)
+    }
+
+    val activateTextField = {
+        isTextFieldActive = true
+        textFieldFocusRequester.requestFocus()
+        showKeyboard()
+    }
+
+    // Wrapper border color changes based on focus state
+    val borderColor = if (isWrapperFocused || isTextFieldActive) Color(0xFFB6D9FF) else Color(0xFF2A3348)
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .focusRequester(focusRequester)
+            .focusable(interactionSource = wrapperInteractionSource)
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) {
+                    false
+                } else when (event.key) {
+                    Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> {
+                        activateTextField()
+                        true
+                    }
+                    Key.DirectionUp -> {
+                        onMoveUp?.invoke()
+                        onMoveUp != null
+                    }
+                    Key.Tab, Key.DirectionDown -> {
+                        onMoveDown?.invoke()
+                        onMoveDown != null
+                    }
+                    else -> false
+                }
+            }
+            .border(
+                width = if (isWrapperFocused) 2.dp else 1.dp,
+                color = borderColor,
+                shape = RoundedCornerShape(4.dp)
+            )
+    ) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            label = { Text(label) },
+            singleLine = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(textFieldFocusRequester)
+                .onPreviewKeyEvent { event ->
+                    // When text field is active, handle navigation to exit it
+                    if (!isTextFieldActive) return@onPreviewKeyEvent false
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionUp -> {
+                            isTextFieldActive = false
+                            onMoveUp?.invoke() ?: focusRequester.requestFocus()
+                            true
+                        }
+                        Key.Tab, Key.DirectionDown -> {
+                            isTextFieldActive = false
+                            onMoveDown?.invoke() ?: focusRequester.requestFocus()
+                            true
+                        }
+                        Key.Escape, Key.Back -> {
+                            isTextFieldActive = false
+                            focusRequester.requestFocus()
+                            true
+                        }
+                        else -> false
+                    }
+                },
+            textStyle = textStyle
+        )
     }
 }
