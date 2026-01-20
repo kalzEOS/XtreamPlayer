@@ -1,11 +1,5 @@
 package com.example.xtreamplayer.settings
 
-enum class AudioLanguage(val label: String) {
-    ENGLISH("English"),
-    SPANISH("Spanish"),
-    FRENCH("French")
-}
-
 enum class AppThemeOption(val label: String) {
     DEFAULT("Default"),
     DEFAULT_LIGHT("Default Light"),
@@ -19,8 +13,8 @@ enum class AppThemeOption(val label: String) {
 
 data class SettingsState(
     val autoPlayNext: Boolean = true,
+    val nextEpisodeThresholdSeconds: Int = 60,
     val subtitlesEnabled: Boolean = false,
-    val audioLanguage: AudioLanguage = AudioLanguage.ENGLISH,
     val rememberLogin: Boolean = true,
     val autoSignIn: Boolean = true,
     val appTheme: AppThemeOption = AppThemeOption.DEFAULT,

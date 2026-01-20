@@ -123,6 +123,8 @@ import com.example.xtreamplayer.ui.ApiKeyInputDialog
 import com.example.xtreamplayer.ui.AudioBoostDialog
 import com.example.xtreamplayer.ui.AudioTrackDialog
 import com.example.xtreamplayer.ui.FocusableButton
+import com.example.xtreamplayer.ui.NextEpisodeOverlay
+import com.example.xtreamplayer.ui.NextEpisodeThresholdDialog
 import com.example.xtreamplayer.ui.PlaybackSettingsDialog
 import com.example.xtreamplayer.ui.PlaybackSpeedDialog
 import com.example.xtreamplayer.ui.SubtitleDialogState
@@ -229,6 +231,7 @@ fun RootScreen(
     var showManageLists by remember { mutableStateOf(false) }
     var showApiKeyDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
+    var showNextEpisodeThresholdDialog by remember { mutableStateOf(false) }
     var activePlaybackQueue by remember { mutableStateOf<PlaybackQueue?>(null) }
     var activePlaybackTitle by remember { mutableStateOf<String?>(null) }
     var activePlaybackItem by remember { mutableStateOf<ContentItem?>(null) }
@@ -823,9 +826,8 @@ fun RootScreen(
                                         contentItemFocusRequester = contentItemFocusRequester,
                                         onMoveLeft = handleMoveLeft,
                                         onToggleAutoPlay = settingsViewModel::toggleAutoPlayNext,
+                                        onOpenNextEpisodeThreshold = { showNextEpisodeThresholdDialog = true },
                                         onToggleSubtitles = settingsViewModel::toggleSubtitles,
-                                        onCycleAudioLanguage =
-                                                settingsViewModel::cycleAudioLanguage,
                                         onOpenThemeSelector = { showThemeDialog = true },
                                         onToggleRememberLogin =
                                                 settingsViewModel::toggleRememberLogin,
@@ -1066,6 +1068,13 @@ fun RootScreen(
         }
 
         if (activePlaybackQueue != null) {
+            // Calculate next episode info for auto-play
+            val currentIndex = playbackEngine.player.currentMediaItemIndex
+            val queueItems = activePlaybackQueue?.items ?: emptyList()
+            val hasNextEpisode = currentIndex >= 0 && currentIndex < queueItems.size - 1
+            val nextEpisodeTitle = queueItems.getOrNull(currentIndex + 1)?.title
+            val currentType = queueItems.getOrNull(currentIndex)?.type
+
             PlayerOverlay(
                     title = activePlaybackTitle ?: "",
                     player = playbackEngine.player,
@@ -1081,7 +1090,13 @@ fun RootScreen(
                         activePlaybackTitle = null
                         activePlaybackItem = null
                         resumePositionMs = null
-                    }
+                    },
+                    autoPlayNextEnabled = settings.autoPlayNext,
+                    nextEpisodeThresholdSeconds = settings.nextEpisodeThresholdSeconds,
+                    currentContentType = currentType,
+                    nextEpisodeTitle = nextEpisodeTitle,
+                    hasNextEpisode = hasNextEpisode,
+                    onPlayNextEpisode = { playbackEngine.player.seekToNextMediaItem() }
             )
         }
     }
@@ -1109,6 +1124,15 @@ fun RootScreen(
                     showThemeDialog = false
                 },
                 onDismiss = { showThemeDialog = false }
+        )
+    }
+    if (showNextEpisodeThresholdDialog) {
+        NextEpisodeThresholdDialog(
+                currentSeconds = settings.nextEpisodeThresholdSeconds,
+                onSecondsChange = { seconds ->
+                    settingsViewModel.setNextEpisodeThreshold(seconds)
+                },
+                onDismiss = { showNextEpisodeThresholdDialog = false }
         )
     }
     }
@@ -1153,7 +1177,13 @@ private fun PlayerOverlay(
         openSubtitlesUserAgent: String,
         mediaId: String,
         onRequestOpenSubtitlesApiKey: () -> Unit,
-        onExit: () -> Unit
+        onExit: () -> Unit,
+        autoPlayNextEnabled: Boolean,
+        nextEpisodeThresholdSeconds: Int,
+        currentContentType: ContentType?,
+        nextEpisodeTitle: String?,
+        hasNextEpisode: Boolean,
+        onPlayNextEpisode: () -> Unit
 ) {
     val context = LocalContext.current
     val interactionSource = remember { MutableInteractionSource() }
@@ -1179,6 +1209,49 @@ private fun PlayerOverlay(
     var hasEmbeddedSubtitles by remember { mutableStateOf(false) }
     var activeSubtitle by remember { mutableStateOf<ActiveSubtitle?>(null) }
 
+    // Next episode overlay state
+    var showNextEpisodeOverlay by remember { mutableStateOf(false) }
+    var countdownRemaining by remember { mutableIntStateOf(15) }
+    var shouldAutoPlayNext by remember { mutableStateOf(false) }
+
+    // Threshold from settings (converted to milliseconds)
+    val episodeEndThresholdMs = nextEpisodeThresholdSeconds * 1000L
+
+    // Detect when episode is about to end (for series with auto-play enabled)
+    // Countdown is based on actual remaining video time
+    LaunchedEffect(player, autoPlayNextEnabled, currentContentType, hasNextEpisode) {
+        if (!autoPlayNextEnabled ||
+            currentContentType != ContentType.SERIES ||
+            !hasNextEpisode
+        ) {
+            showNextEpisodeOverlay = false
+            shouldAutoPlayNext = false
+            return@LaunchedEffect
+        }
+
+        while (true) {
+            val duration = player.duration
+            val position = player.currentPosition
+            val isPlaying = player.isPlaying
+
+            if (duration > 0 && position > 0) {
+                val remainingMs = duration - position
+
+                if (remainingMs <= episodeEndThresholdMs && remainingMs > 0) {
+                    showNextEpisodeOverlay = true
+                    shouldAutoPlayNext = true
+                    // Countdown based on actual remaining time (capped at 30 seconds)
+                    countdownRemaining = (remainingMs / 1000).toInt().coerceIn(0, 30)
+                } else {
+                    showNextEpisodeOverlay = false
+                    shouldAutoPlayNext = false
+                }
+            }
+
+            delay(500) // Check every 500ms for responsiveness
+        }
+    }
+
     DisposableEffect(player) {
         val listener =
                 object : Player.Listener {
@@ -1190,6 +1263,15 @@ private fun PlayerOverlay(
 
                     override fun onTracksChanged(tracks: Tracks) {
                         hasEmbeddedSubtitles = hasEmbeddedTextTracks(player)
+                    }
+
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        // Auto-play next episode when current one ends
+                        if (playbackState == Player.STATE_ENDED && shouldAutoPlayNext) {
+                            shouldAutoPlayNext = false
+                            showNextEpisodeOverlay = false
+                            onPlayNextEpisode()
+                        }
                     }
                 }
         player.addListener(listener)
@@ -1417,6 +1499,21 @@ private fun PlayerOverlay(
                 )
             }
         }
+
+        // Next Episode Overlay
+        if (showNextEpisodeOverlay && nextEpisodeTitle != null) {
+            NextEpisodeOverlay(
+                nextEpisodeTitle = nextEpisodeTitle,
+                countdownSeconds = (episodeEndThresholdMs / 1000).toInt(),
+                remainingSeconds = countdownRemaining,
+                controlsVisible = controlsVisible,
+                onPlayNext = {
+                    showNextEpisodeOverlay = false
+                    onPlayNextEpisode()
+                },
+                modifier = Modifier.align(Alignment.BottomEnd)
+            )
+        }
     }
 
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
@@ -1606,6 +1703,7 @@ private fun hasEmbeddedTextTracks(player: Player): Boolean {
     return hasTextTracks && !hasExternalSubtitles(player)
 }
 
+@OptIn(UnstableApi::class)
 private enum class PlayerResizeMode(
         val label: String,
         val resizeMode: Int,

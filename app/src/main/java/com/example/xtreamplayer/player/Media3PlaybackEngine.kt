@@ -19,9 +19,9 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import com.example.xtreamplayer.PlaybackQueueItem
-import com.example.xtreamplayer.settings.AudioLanguage
 import com.example.xtreamplayer.settings.SettingsState
 
+@OptIn(UnstableApi::class)
 class Media3PlaybackEngine(context: Context) : PlaybackEngine {
     private val appContext = context.applicationContext
     private val renderersFactory = DefaultRenderersFactory(appContext)
@@ -89,16 +89,10 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
 
     @OptIn(UnstableApi::class)
     override fun applySettings(settings: SettingsState) {
-        player.repeatMode = if (settings.autoPlayNext) {
-            Player.REPEAT_MODE_ALL
-        } else {
-            Player.REPEAT_MODE_OFF
-        }
+        // Auto-play is handled manually in UI for series episodes only
+        player.repeatMode = Player.REPEAT_MODE_OFF
 
         val builder = player.trackSelectionParameters.buildUpon()
-            .setPreferredTextLanguage(
-                if (settings.subtitlesEnabled) languageCode(settings.audioLanguage) else null
-            )
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !settings.subtitlesEnabled)
             .setAudioOffloadPreferences(
                 TrackSelectionParameters.AudioOffloadPreferences.Builder()
@@ -325,14 +319,6 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
         player.seekTo(currentPosition)
         if (wasPlaying) {
             player.play()
-        }
-    }
-
-    private fun languageCode(language: AudioLanguage): String {
-        return when (language) {
-            AudioLanguage.ENGLISH -> "en"
-            AudioLanguage.SPANISH -> "es"
-            AudioLanguage.FRENCH -> "fr"
         }
     }
 

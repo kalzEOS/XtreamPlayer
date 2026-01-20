@@ -25,18 +25,15 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun toggleSubtitles() {
+    fun setNextEpisodeThreshold(seconds: Int) {
         viewModelScope.launch {
-            repository.setSubtitlesEnabled(!settings.value.subtitlesEnabled)
+            repository.setNextEpisodeThreshold(seconds)
         }
     }
 
-    fun cycleAudioLanguage() {
-        val options = AudioLanguage.values()
-        val currentIndex = options.indexOf(settings.value.audioLanguage).coerceAtLeast(0)
-        val next = options[(currentIndex + 1) % options.size]
+    fun toggleSubtitles() {
         viewModelScope.launch {
-            repository.setAudioLanguage(next)
+            repository.setSubtitlesEnabled(!settings.value.subtitlesEnabled)
         }
     }
 
