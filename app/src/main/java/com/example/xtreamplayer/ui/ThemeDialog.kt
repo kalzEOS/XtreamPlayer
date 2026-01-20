@@ -25,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -47,6 +48,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.xtreamplayer.settings.AppThemeOption
 import com.example.xtreamplayer.ui.theme.AppTheme
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun ThemeSelectionDialog(
@@ -56,6 +59,7 @@ fun ThemeSelectionDialog(
     onDismiss: () -> Unit
 ) {
     val colors = AppTheme.colors
+    val coroutineScope = rememberCoroutineScope()
     val closeFocusRequester = remember { FocusRequester() }
     val itemFocusRequesters =
         remember(themes.size) { List(themes.size) { FocusRequester() } }
@@ -161,6 +165,10 @@ fun ThemeSelectionDialog(
                                                     keyClickHandled = true
                                                     onThemeSelected(theme)
                                                     onDismiss()
+                                                    coroutineScope.launch {
+                                                        delay(120)
+                                                        keyClickHandled = false
+                                                    }
                                                     true
                                                 } else {
                                                     false
