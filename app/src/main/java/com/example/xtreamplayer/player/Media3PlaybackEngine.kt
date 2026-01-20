@@ -405,7 +405,7 @@ data class VideoTrackInfo(
     val isSupported: Boolean
 )
 
-private const val MIN_BUFFER_MS = 15_000
-private const val MAX_BUFFER_MS = 60_000
-private const val BUFFER_FOR_PLAYBACK_MS = 2_000
-private const val BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 4_000
+private const val MIN_BUFFER_MS = 20_000
+private const val MAX_BUFFER_MS = 90_000
+private const val BUFFER_FOR_PLAYBACK_MS = 2_500
+private const val BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 5_000

@@ -73,6 +73,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -3304,7 +3305,10 @@ private fun StaticContentList(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        items(items.size) { index ->
+        items(
+                count = items.size,
+                key = { index -> items[index].id }
+        ) { index ->
             val item = items[index]
             val requester =
                     when {
@@ -3417,12 +3421,17 @@ private fun ContentListItem(
     var keyDownArmed by remember { mutableStateOf(false) }
     var keyClickHandled by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val density = LocalDensity.current
+    val listThumbnailPx = remember(density) { with(density) { 52.dp.roundToPx() } }
     val imageRequest =
-            remember(item.imageUrl) {
+            remember(item.imageUrl, listThumbnailPx) {
                 if (item.imageUrl.isNullOrBlank()) {
                     null
                 } else {
-                    ImageRequest.Builder(context).data(item.imageUrl).size(120).build()
+                    ImageRequest.Builder(context)
+                            .data(item.imageUrl)
+                            .size(listThumbnailPx)
+                            .build()
                 }
             }
     LaunchedEffect(isFocused) {
@@ -3972,12 +3981,17 @@ private fun CategoryCard(
                 else -> cardTitleColor(colors)
             }
     val context = LocalContext.current
+    val density = LocalDensity.current
+    val categoryThumbnailPx = remember(density) { with(density) { 54.dp.roundToPx() } }
     val imageRequest =
-            remember(imageUrl) {
+            remember(imageUrl, categoryThumbnailPx) {
                 if (imageUrl.isNullOrBlank()) {
                     null
                 } else {
-                    ImageRequest.Builder(context).data(imageUrl).size(120).build()
+                    ImageRequest.Builder(context)
+                            .data(imageUrl)
+                            .size(categoryThumbnailPx)
+                            .build()
                 }
             }
     LaunchedEffect(isFocused) {
@@ -6375,7 +6389,10 @@ fun SeriesSeasonsScreen(
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                             modifier = Modifier.fillMaxSize()
                     ) {
-                        items(seasonGroups.size) { index ->
+                        items(
+                                count = seasonGroups.size,
+                                key = { index -> seasonGroups[index].displayLabel }
+                        ) { index ->
                             val season = seasonGroups[index]
                             val label = "${season.displayLabel} (${season.episodes.size})"
                             CategoryTypeTab(
