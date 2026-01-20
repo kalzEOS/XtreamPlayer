@@ -705,8 +705,11 @@ fun RootScreen(
                 !savedConfigLoaded && settings.autoSignIn && settings.rememberLogin
         val showAuthLoading =
                 !authState.isSignedIn &&
+                        !authState.isEditingList &&
                         authState.errorMessage == null &&
-                        (authState.isLoading || shouldAutoSignIn || isWaitingForSavedConfig)
+                        (authState.isLoading ||
+                                (!authState.autoSignInSuppressed &&
+                                        (shouldAutoSignIn || isWaitingForSavedConfig)))
 
         if (showAuthLoading) {
             AuthLoadingScreen()
@@ -1054,7 +1057,7 @@ fun RootScreen(
         } else {
             LoginScreen(
                     authState = authState,
-                    initialConfig = savedConfig,
+                    initialConfig = authState.activeConfig ?: savedConfig,
                     onSignIn = { listName, baseUrl, username, password ->
                         authViewModel.signIn(
                                 listName = listName,

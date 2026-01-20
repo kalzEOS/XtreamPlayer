@@ -19,5 +19,5 @@ data class SettingsState(
     val autoSignIn: Boolean = true,
     val appTheme: AppThemeOption = AppThemeOption.DEFAULT,
     val openSubtitlesApiKey: String = "",
-    val openSubtitlesUserAgent: String = "XtreamPlayer"
+    val openSubtitlesUserAgent: String = ""
 )

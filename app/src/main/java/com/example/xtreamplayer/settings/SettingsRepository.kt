@@ -20,7 +20,7 @@ class SettingsRepository(private val context: Context) {
         val autoSignIn = prefs[Keys.AUTO_SIGN_IN] ?: true
         val appTheme = parseAppTheme(prefs[Keys.APP_THEME])
         val openSubtitlesApiKey = prefs[Keys.OPENSUBTITLES_API_KEY] ?: ""
-        val openSubtitlesUserAgent = prefs[Keys.OPENSUBTITLES_USER_AGENT] ?: "XtreamPlayer"
+        val openSubtitlesUserAgent = prefs[Keys.OPENSUBTITLES_USER_AGENT] ?: ""
 
         SettingsState(
             autoPlayNext = autoPlay,
