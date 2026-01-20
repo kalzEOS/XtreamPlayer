@@ -4687,6 +4687,7 @@ private fun LocalFilesScreen(
     val shape = RoundedCornerShape(18.dp)
     val scanFocusRequester = remember { FocusRequester() }
     val refreshFocusRequester = remember { FocusRequester() }
+    val coroutineScope = rememberCoroutineScope()
 
     // Focus is managed by user navigation - no auto-focus on screen load
 
