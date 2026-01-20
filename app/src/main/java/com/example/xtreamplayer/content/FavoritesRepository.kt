@@ -7,7 +7,9 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.example.xtreamplayer.Section
 import com.example.xtreamplayer.auth.AuthConfig
 import org.json.JSONObject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 
 private val Context.favoritesDataStore by preferencesDataStore(name = "favorites")
@@ -24,18 +26,22 @@ class FavoritesRepository(private val context: Context) {
         }
 
     val favoriteContentEntries: Flow<List<FavoriteContentEntry>> =
-        context.favoritesDataStore.data.map { prefs ->
-            prefs[Keys.FAVORITE_CONTENT_META]
-                ?.mapNotNull { parseContentEntry(it) }
-                ?: emptyList()
-        }
+        context.favoritesDataStore.data
+            .map { prefs ->
+                prefs[Keys.FAVORITE_CONTENT_META]
+                    ?.mapNotNull { parseContentEntry(it) }
+                    ?: emptyList()
+            }
+            .flowOn(Dispatchers.Default)
 
     val favoriteCategoryEntries: Flow<List<FavoriteCategoryEntry>> =
-        context.favoritesDataStore.data.map { prefs ->
-            prefs[Keys.FAVORITE_CATEGORY_META]
-                ?.mapNotNull { parseCategoryEntry(it) }
-                ?: emptyList()
-        }
+        context.favoritesDataStore.data
+            .map { prefs ->
+                prefs[Keys.FAVORITE_CATEGORY_META]
+                    ?.mapNotNull { parseCategoryEntry(it) }
+                    ?: emptyList()
+            }
+            .flowOn(Dispatchers.Default)
 
     fun isContentFavorite(keys: Set<String>, config: AuthConfig, item: ContentItem): Boolean {
         return keys.contains(contentKey(config, item))
