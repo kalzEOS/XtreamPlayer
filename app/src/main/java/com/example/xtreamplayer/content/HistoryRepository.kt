@@ -6,7 +6,9 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.xtreamplayer.Section
 import com.example.xtreamplayer.auth.AuthConfig
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
@@ -15,10 +17,12 @@ private val Context.historyDataStore by preferencesDataStore(name = "history")
 
 class HistoryRepository(private val context: Context) {
     val historyEntries: Flow<List<HistoryEntry>> =
-        context.historyDataStore.data.map { prefs ->
-            val raw = prefs[Keys.HISTORY_ENTRIES] ?: "[]"
-            parseEntries(raw)
-        }
+        context.historyDataStore.data
+            .map { prefs ->
+                val raw = prefs[Keys.HISTORY_ENTRIES] ?: "[]"
+                parseEntries(raw)
+            }
+            .flowOn(Dispatchers.Default)
 
     suspend fun addToHistory(config: AuthConfig, item: ContentItem) {
         val key = contentKey(config, item)

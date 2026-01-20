@@ -6,7 +6,9 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.xtreamplayer.Section
 import com.example.xtreamplayer.auth.AuthConfig
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
@@ -15,10 +17,12 @@ private val Context.continueWatchingDataStore by preferencesDataStore(name = "co
 
 class ContinueWatchingRepository(private val context: Context) {
     val continueWatchingEntries: Flow<List<ContinueWatchingEntry>> =
-        context.continueWatchingDataStore.data.map { prefs ->
-            val raw = prefs[Keys.CONTINUE_WATCHING_ENTRIES] ?: "[]"
-            parseEntries(raw)
-        }
+        context.continueWatchingDataStore.data
+            .map { prefs ->
+                val raw = prefs[Keys.CONTINUE_WATCHING_ENTRIES] ?: "[]"
+                parseEntries(raw)
+            }
+            .flowOn(Dispatchers.Default)
 
     suspend fun updateProgress(
         config: AuthConfig,
@@ -151,18 +155,26 @@ class ContinueWatchingRepository(private val context: Context) {
     private fun parseEntries(raw: String): List<ContinueWatchingEntry> {
         val allEntries = parseAllEntries(raw)
 
-        // Filter by progress percentage (5% to 90%)
-        val filtered = allEntries.filter { entry ->
+        // Build filtered list first
+        val result = ArrayList<ContinueWatchingEntry>(10)
+        allEntries.forEach { entry ->
             val progressPercent = if (entry.durationMs > 0) {
                 (entry.positionMs * 100) / entry.durationMs
-            } else {
-                0
+            } else { 0 }
+            if (progressPercent in MIN_PROGRESS_PERCENT..MAX_PROGRESS_PERCENT) {
+                result.add(entry)
             }
-            progressPercent in MIN_PROGRESS_PERCENT..MAX_PROGRESS_PERCENT
         }
 
-        // Sort by timestamp descending (most recent first) and take top 10
-        return filtered.sortedByDescending { it.timestampMs }.take(10)
+        // Partial sort for top 10
+        return if (result.size <= 10) {
+            result.sortedByDescending { it.timestampMs }
+        } else {
+            result.asSequence()
+                .sortedByDescending { it.timestampMs }
+                .take(10)
+                .toList()
+        }
     }
 
     private object Keys {

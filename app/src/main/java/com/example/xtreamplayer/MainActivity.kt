@@ -767,7 +767,7 @@ fun RootScreen(
                     )
 
                     Box(modifier = Modifier.fillMaxHeight().weight(1f)) {
-                        val sectionTitle =
+                        val sectionTitle = remember(selectedSection) {
                                 when (selectedSection) {
                                     Section.ALL -> "ALL CONTENT"
                                     Section.CONTINUE_WATCHING -> "CONTINUE WATCHING"
@@ -779,12 +779,15 @@ fun RootScreen(
                                     Section.LOCAL_FILES -> "PLAY LOCAL FILES"
                                     Section.SETTINGS -> "SETTINGS"
                                 }
+                        }
 
-                        val handleMoveLeft = {
-                            if (!navExpanded) {
-                                navExpanded = true
+                        val handleMoveLeft = remember {
+                            {
+                                if (!navExpanded) {
+                                    navExpanded = true
+                                }
+                                moveFocusToNav = true
                             }
-                            moveFocusToNav = true
                         }
 
                         if (selectedSection == Section.SETTINGS) {
@@ -797,24 +800,24 @@ fun RootScreen(
                                         onBack = { showManageLists = false },
                                         onEditList = {
                                             showManageLists = false
-                                            contentRepository.clearCache()
                                             coroutineScope.launch {
+                                                contentRepository.clearCache()
                                                 contentRepository.clearDiskCache()
                                             }
                                             authViewModel.enterEditMode()
                                         },
                                         onSignOut = {
                                             showManageLists = false
-                                            contentRepository.clearCache()
                                             coroutineScope.launch {
+                                                contentRepository.clearCache()
                                                 contentRepository.clearDiskCache()
                                             }
                                             authViewModel.signOut(keepSaved = true)
                                         },
                                         onForgetList = {
                                             showManageLists = false
-                                            contentRepository.clearCache()
                                             coroutineScope.launch {
+                                                contentRepository.clearCache()
                                                 contentRepository.clearDiskCache()
                                             }
                                             authViewModel.signOut(keepSaved = false)
@@ -846,8 +849,8 @@ fun RootScreen(
                                             }
                                         },
                                         onSignOut = {
-                                            contentRepository.clearCache()
                                             coroutineScope.launch {
+                                                contentRepository.clearCache()
                                                 contentRepository.clearDiskCache()
                                             }
                                             authViewModel.signOut(keepSaved = true)
@@ -2032,7 +2035,17 @@ fun SideNav(
             )
     val scrollState = rememberScrollState()
 
-    val items =
+    val items = remember(
+            allNavItemFocusRequester,
+            continueWatchingNavItemFocusRequester,
+            favoritesNavItemFocusRequester,
+            moviesNavItemFocusRequester,
+            seriesNavItemFocusRequester,
+            liveNavItemFocusRequester,
+            categoriesNavItemFocusRequester,
+            localFilesNavItemFocusRequester,
+            settingsNavItemFocusRequester
+    ) {
             listOf(
                     NavEntry("All", Section.ALL, allNavItemFocusRequester),
                     NavEntry(
@@ -2052,6 +2065,7 @@ fun SideNav(
                     ),
                     NavEntry("Settings", Section.SETTINGS, settingsNavItemFocusRequester)
             )
+    }
 
     Box(modifier = Modifier.fillMaxHeight().width(animatedNavWidth).clipToBounds()) {
         Column(
@@ -2225,15 +2239,16 @@ fun MenuButton(expanded: Boolean, onToggle: () -> Unit) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val label = if (expanded) "CLOSE" else "MENU"
-    val shape = RoundedCornerShape(12.dp)
+    val shape = remember { RoundedCornerShape(12.dp) }
     val colors = AppTheme.colors
     val borderColor = if (isFocused) colors.focus else colors.borderStrong
-    val buttonBrush =
-            if (isFocused) {
-                Brush.horizontalGradient(colors = listOf(colors.accent, colors.accentAlt))
-            } else {
-                Brush.horizontalGradient(colors = listOf(colors.accentMutedAlt, colors.surfaceAlt))
-            }
+    val focusedBrush = remember(colors.accent, colors.accentAlt) {
+        Brush.horizontalGradient(colors = listOf(colors.accent, colors.accentAlt))
+    }
+    val unfocusedBrush = remember(colors.accentMutedAlt, colors.surfaceAlt) {
+        Brush.horizontalGradient(colors = listOf(colors.accentMutedAlt, colors.surfaceAlt))
+    }
+    val buttonBrush = if (isFocused) focusedBrush else unfocusedBrush
 
     Box(
             modifier =

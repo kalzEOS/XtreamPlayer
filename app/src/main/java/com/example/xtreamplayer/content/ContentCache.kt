@@ -150,7 +150,8 @@ class ContentCache(context: Context) {
     suspend fun clearAll() {
         withContext(Dispatchers.IO) {
             runCatching {
-                cacheDir.listFiles()?.forEach { it.delete() }
+                val files = cacheDir.listFiles()
+                files?.forEach { it.delete() }
             }
         }
     }
@@ -159,7 +160,8 @@ class ContentCache(context: Context) {
         val accountHash = accountHash(config)
         withContext(Dispatchers.IO) {
             runCatching {
-                cacheDir.listFiles()?.forEach { file ->
+                val files = cacheDir.listFiles()
+                files?.forEach { file ->
                     if (file.name.endsWith("_$accountHash.json")) {
                         file.delete()
                     }
@@ -172,7 +174,8 @@ class ContentCache(context: Context) {
     suspend fun hasCacheFor(config: AuthConfig): Boolean {
         val accountHash = accountHash(config)
         return withContext(Dispatchers.IO) {
-            cacheDir.listFiles()?.any { it.name.endsWith("_$accountHash.json") } == true
+            val files = cacheDir.listFiles()
+            files?.any { it.name.endsWith("_$accountHash.json") } == true
         }
     }
 

@@ -298,7 +298,7 @@ class XtreamApi(
                         val slice = if (offset >= allItems.size) {
                             emptyList()
                         } else {
-                            allItems.drop(offset).take(limit)
+                            allItems.subList(offset, (offset + limit).coerceAtMost(allItems.size))
                         }
                         val endReached = offset + limit >= allItems.size
                         Result.success(ContentPage(items = slice, endReached = endReached))

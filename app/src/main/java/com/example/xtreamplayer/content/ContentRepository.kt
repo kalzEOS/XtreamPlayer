@@ -31,7 +31,11 @@ class ContentRepository(
             return size > 200
         }
     }
-    private val categoryThumbnailCache = mutableMapOf<String, String?>()
+    private val categoryThumbnailCache = object : LinkedHashMap<String, String?>(50, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String?>): Boolean {
+            return size > 50
+        }
+    }
     private val sectionIndexCache = mutableMapOf<String, List<ContentItem>>()
     private val seriesEpisodesCache = object : LinkedHashMap<String, List<ContentItem>>(50, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<ContentItem>>): Boolean {
@@ -45,7 +49,15 @@ class ContentRepository(
     }
     private val locks = Section.values().associateWith { Mutex() }
     private val categoryLock = Mutex()
-    private val categoryCache = mutableMapOf<ContentType, List<CategoryItem>>()
+    private val memoryCacheMutex = Mutex()
+    private val seriesEpisodesMutex = Mutex()
+    private val seriesSeasonCountMutex = Mutex()
+    private val categoryThumbnailMutex = Mutex()
+    private val categoryCache = object : LinkedHashMap<String, List<CategoryItem>>(100, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<CategoryItem>>): Boolean {
+            return size > 100
+        }
+    }
 
     fun pager(section: Section, authConfig: AuthConfig): Pager<Int, ContentItem> {
         return Pager(
@@ -172,7 +184,7 @@ class ContentRepository(
             return loadCategoryPage(type, categoryId, page, limit, authConfig)
         }
         val key = cacheKey("search-${type.name}-$categoryId-$normalizedQuery", page, limit)
-        synchronized(memoryCache) {
+        memoryCacheMutex.withLock {
             memoryCache[key]?.let { return it }
         }
         return searchFilterPages(
@@ -186,7 +198,7 @@ class ContentRepository(
             },
             maxScanPages = 6
         ).also { pageData ->
-            synchronized(memoryCache) { memoryCache[key] = pageData }
+            memoryCacheMutex.withLock { memoryCache[key] = pageData }
         }
     }
 
@@ -199,18 +211,18 @@ class ContentRepository(
     ): ContentPage {
         val cacheKey = "category-${type.name}-$categoryId"
         val key = cacheKey(cacheKey, page, limit)
-        synchronized(memoryCache) {
+        memoryCacheMutex.withLock {
             memoryCache[key]?.let { return it }
         }
         val cached = contentCache.readPage(cacheKey, authConfig, page, limit)
         if (cached != null) {
-            synchronized(memoryCache) { memoryCache[key] = cached }
+            memoryCacheMutex.withLock { memoryCache[key] = cached }
             return cached
         }
         val result = api.fetchCategoryPage(type, authConfig, categoryId, page, limit)
         val pageData = result.getOrElse { throw it }
         contentCache.writePage(cacheKey, authConfig, page, limit, pageData)
-        synchronized(memoryCache) { memoryCache[key] = pageData }
+        memoryCacheMutex.withLock { memoryCache[key] = pageData }
         return pageData
     }
 
@@ -225,7 +237,7 @@ class ContentRepository(
         val slice = if (offset >= allEpisodes.size) {
             emptyList()
         } else {
-            allEpisodes.drop(offset).take(limit)
+            allEpisodes.subList(offset, (offset + limit).coerceAtMost(allEpisodes.size))
         }
         val endReached = offset + limit >= allEpisodes.size
         return ContentPage(items = slice, endReached = endReached)
@@ -235,14 +247,14 @@ class ContentRepository(
         seriesId: String,
         authConfig: AuthConfig
     ): List<ContentItem> {
-        val cachedSeries = synchronized(seriesEpisodesCache) { seriesEpisodesCache[seriesId] }
+        val cachedSeries = seriesEpisodesMutex.withLock { seriesEpisodesCache[seriesId] }
         if (cachedSeries != null) {
             return cachedSeries
         }
         val result = api.fetchSeriesEpisodesPage(authConfig, seriesId, 0, Int.MAX_VALUE)
         val pageData = result.getOrElse { throw it }
         val fullList = pageData.items
-        synchronized(seriesEpisodesCache) { seriesEpisodesCache[seriesId] = fullList }
+        seriesEpisodesMutex.withLock { seriesEpisodesCache[seriesId] = fullList }
         return fullList
     }
 
@@ -251,12 +263,12 @@ class ContentRepository(
         authConfig: AuthConfig
     ): Int? {
         val key = seasonCountKey(seriesId, authConfig)
-        synchronized(seriesSeasonCountCache) {
+        seriesSeasonCountMutex.withLock {
             seriesSeasonCountCache[key]?.let { return it }
         }
         val result = api.fetchSeriesSeasonCount(authConfig, seriesId)
         val count = result.getOrNull() ?: return null
-        synchronized(seriesSeasonCountCache) { seriesSeasonCountCache[key] = count }
+        seriesSeasonCountMutex.withLock { seriesSeasonCountCache[key] = count }
         return count
     }
 
@@ -266,17 +278,18 @@ class ContentRepository(
         forceRefresh: Boolean = false
     ): List<CategoryItem> {
         categoryLock.withLock {
+            val key = "${accountKey(authConfig)}-${type.name}"
             if (!forceRefresh) {
-                categoryCache[type]?.let { return it }
+                categoryCache[key]?.let { return it }
                 val cached = contentCache.readCategories(type, authConfig)
                 if (cached != null) {
-                    categoryCache[type] = cached
+                    categoryCache[key] = cached
                     return cached
                 }
             }
             val result = api.fetchCategories(type, authConfig)
             val categories = result.getOrElse { throw it }
-            categoryCache[type] = categories
+            categoryCache[key] = categories
             contentCache.writeCategories(type, authConfig, categories)
             return categories
         }
@@ -289,18 +302,18 @@ class ContentRepository(
         authConfig: AuthConfig
     ): ContentPage {
         val key = cacheKey(section.name, page, limit)
-        synchronized(memoryCache) {
+        memoryCacheMutex.withLock {
             memoryCache[key]?.let { return it }
         }
 
         val lock = locks[section] ?: Mutex()
         return lock.withLock {
-            synchronized(memoryCache) {
+            memoryCacheMutex.withLock {
                 memoryCache[key]?.let { return it }
             }
             val cached = contentCache.readPage(section, authConfig, page, limit)
             if (cached != null) {
-                synchronized(memoryCache) { memoryCache[key] = cached }
+                memoryCacheMutex.withLock { memoryCache[key] = cached }
                 return@withLock cached
             }
 
@@ -309,7 +322,7 @@ class ContentRepository(
             if (pageData.items.isNotEmpty()) {
                 contentCache.writePage(section, authConfig, page, limit, pageData)
             }
-            synchronized(memoryCache) { memoryCache[key] = pageData }
+            memoryCacheMutex.withLock { memoryCache[key] = pageData }
             return@withLock pageData
         }
     }
@@ -335,7 +348,7 @@ class ContentRepository(
             return loadSectionPage(section, page, limit, authConfig)
         }
         val key = cacheKey("search-${section.name}-$normalizedQuery", page, limit)
-        synchronized(memoryCache) {
+        memoryCacheMutex.withLock {
             memoryCache[key]?.let { return it }
         }
         val apiResult = api.fetchSearchPage(section, authConfig, normalizedQuery, page, limit)
@@ -349,7 +362,7 @@ class ContentRepository(
                 },
                 maxScanPages = 10
             ).also { fallback ->
-                synchronized(memoryCache) { memoryCache[key] = fallback }
+                memoryCacheMutex.withLock { memoryCache[key] = fallback }
             }
         }
         val filtered = withContext(Dispatchers.Default) {
@@ -359,7 +372,7 @@ class ContentRepository(
         }
         if (filtered.isNotEmpty() || page > 0 || pageData.endReached) {
             return ContentPage(items = filtered, endReached = pageData.endReached).also { finalPage ->
-                synchronized(memoryCache) { memoryCache[key] = finalPage }
+                memoryCacheMutex.withLock { memoryCache[key] = finalPage }
             }
         }
         return searchFilterPages(
@@ -373,7 +386,7 @@ class ContentRepository(
             },
             maxScanPages = 10
         ).also { fallback ->
-            synchronized(memoryCache) { memoryCache[key] = fallback }
+            memoryCacheMutex.withLock { memoryCache[key] = fallback }
         }
     }
 
@@ -383,7 +396,7 @@ class ContentRepository(
         authConfig: AuthConfig
     ): ContentPage {
         val key = cacheKey(Section.ALL.name, page, limit)
-        synchronized(memoryCache) {
+        memoryCacheMutex.withLock {
             memoryCache[key]?.let { return it }
         }
 
@@ -392,12 +405,11 @@ class ContentRepository(
         val movies = loadSectionPage(Section.MOVIES, page, perSectionLimit, authConfig)
         val series = loadSectionPage(Section.SERIES, page, perSectionLimit, authConfig)
 
-        val mixed = interleaveLists(listOf(live.items, movies.items, series.items))
-            .take(limit)
+        val mixed = interleaveLists(listOf(live.items, movies.items, series.items), maxItems = limit)
         val endReached = live.endReached && movies.endReached && series.endReached
 
         val pageData = ContentPage(items = mixed, endReached = endReached)
-        synchronized(memoryCache) { memoryCache[key] = pageData }
+        memoryCacheMutex.withLock { memoryCache[key] = pageData }
         return pageData
     }
 
@@ -408,7 +420,7 @@ class ContentRepository(
         authConfig: AuthConfig
     ): ContentPage {
         val key = cacheKey("search-${Section.ALL.name}-$query", page, limit)
-        synchronized(memoryCache) {
+        memoryCacheMutex.withLock {
             memoryCache[key]?.let { return it }
         }
 
@@ -417,12 +429,11 @@ class ContentRepository(
         val movies = searchSectionPage(Section.MOVIES, query, page, perSectionLimit, authConfig)
         val series = searchSectionPage(Section.SERIES, query, page, perSectionLimit, authConfig)
 
-        val mixed = interleaveLists(listOf(live.items, movies.items, series.items))
-            .take(limit)
+        val mixed = interleaveLists(listOf(live.items, movies.items, series.items), maxItems = limit)
         val endReached = live.endReached && movies.endReached && series.endReached
 
         val pageData = ContentPage(items = mixed, endReached = endReached)
-        synchronized(memoryCache) { memoryCache[key] = pageData }
+        memoryCacheMutex.withLock { memoryCache[key] = pageData }
         return pageData
     }
 
@@ -461,6 +472,11 @@ class ContentRepository(
                 }
             }
             matchIndex = matchResult.second
+            // Early termination: if requesting page 2+ but first page has no matches, stop
+            if (rawPage == 0 && page > 0 && matchIndex == 0) {
+                endReached = true
+                break
+            }
             if (pageData.endReached) {
                 endReached = true
                 break
@@ -515,7 +531,7 @@ class ContentRepository(
             val slice = if (start >= filtered.size) {
                 emptyList()
             } else {
-                filtered.drop(start).take(limit)
+                filtered.subList(start, (start + limit).coerceAtMost(filtered.size))
             }
             val endReached = start + limit >= filtered.size
             ContentPage(items = slice, endReached = endReached)
@@ -686,6 +702,10 @@ class ContentRepository(
         return raw.coerceIn(0.05f, 0.95f)
     }
 
+    private fun accountKey(authConfig: AuthConfig): String {
+        return "${authConfig.baseUrl}|${authConfig.username}|${authConfig.listName}"
+    }
+
     private fun indexKey(section: Section, authConfig: AuthConfig): String {
         return "${section.name}|${authConfig.baseUrl}|${authConfig.username}|${authConfig.listName}"
     }
@@ -694,13 +714,13 @@ class ContentRepository(
         return "seasons|${authConfig.baseUrl}|${authConfig.username}|${authConfig.listName}|$seriesId"
     }
 
-    fun clearCache() {
-        synchronized(memoryCache) { memoryCache.clear() }
-        categoryCache.clear()
-        categoryThumbnailCache.clear()
+    suspend fun clearCache() {
+        memoryCacheMutex.withLock { memoryCache.clear() }
+        categoryLock.withLock { categoryCache.clear() }
+        categoryThumbnailMutex.withLock { categoryThumbnailCache.clear() }
         sectionIndexCache.clear()
-        synchronized(seriesEpisodesCache) { seriesEpisodesCache.clear() }
-        synchronized(seriesSeasonCountCache) { seriesSeasonCountCache.clear() }
+        seriesEpisodesMutex.withLock { seriesEpisodesCache.clear() }
+        seriesSeasonCountMutex.withLock { seriesSeasonCountCache.clear() }
     }
 
     suspend fun clearDiskCache() {
@@ -726,11 +746,15 @@ class ContentRepository(
         categoryId: String,
         authConfig: AuthConfig
     ): String? {
-        val key = "${type.name}-$categoryId"
-        categoryThumbnailCache[key]?.let { return it }
+        val key = "${accountKey(authConfig)}-${type.name}-$categoryId"
+        categoryThumbnailMutex.withLock {
+            categoryThumbnailCache[key]?.let { return it }
+        }
         val cached = contentCache.readCategoryThumbnail(type, categoryId, authConfig)
         if (cached != null) {
-            categoryThumbnailCache[key] = cached
+            categoryThumbnailMutex.withLock {
+                categoryThumbnailCache[key] = cached
+            }
             return cached
         }
         val page = runCatching {
@@ -738,7 +762,9 @@ class ContentRepository(
         }.getOrNull()
         val imageUrl = page?.items?.firstOrNull()?.imageUrl
         contentCache.writeCategoryThumbnail(type, categoryId, authConfig, imageUrl)
-        categoryThumbnailCache[key] = imageUrl
+        categoryThumbnailMutex.withLock {
+            categoryThumbnailCache[key] = imageUrl
+        }
         return imageUrl
     }
 
@@ -746,14 +772,15 @@ class ContentRepository(
         return "$sectionKey-$page-$limit"
     }
 
-    private fun interleaveLists(lists: List<List<ContentItem>>): List<ContentItem> {
+    private fun interleaveLists(lists: List<List<ContentItem>>, maxItems: Int = Int.MAX_VALUE): List<ContentItem> {
         val totalSize = lists.sumOf { it.size }
-        val result = ArrayList<ContentItem>(totalSize)
+        val result = ArrayList<ContentItem>(totalSize.coerceAtMost(maxItems))
         val max = lists.maxOfOrNull { it.size } ?: 0
         for (index in 0 until max) {
             for (list in lists) {
                 if (index < list.size) {
                     result.add(list[index])
+                    if (result.size >= maxItems) return result
                 }
             }
         }
