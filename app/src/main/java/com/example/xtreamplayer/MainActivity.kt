@@ -4624,6 +4624,16 @@ fun SectionScreen(
                             val isTopRow = index < columns
                             val subtitleOverride =
                                     rememberSeriesSubtitle(item, contentRepository, authConfig)
+                            val useContrastText =
+                                    section == Section.ALL &&
+                                            (item?.contentType == ContentType.MOVIES ||
+                                                    item?.contentType == ContentType.SERIES)
+                            val forceDarkText =
+                                    if (section == Section.ALL) {
+                                        item?.contentType == ContentType.LIVE
+                                    } else {
+                                        section == Section.LIVE
+                                    }
                             ContentCard(
                                     item = item,
                                     subtitleOverride = subtitleOverride,
@@ -4662,7 +4672,8 @@ fun SectionScreen(
                                             } else {
                                                 null
                                             },
-                                    forceDarkText = section == Section.LIVE
+                                    forceDarkText = forceDarkText,
+                                    useContrastText = useContrastText
                             )
                         }
                     }
@@ -5536,7 +5547,11 @@ fun FavoritesScreen(
                                                         { onToggleFavorite(item) }
                                                     } else {
                                                         null
-                                                    }
+                                                    },
+                                            forceDarkText = category.type == ContentType.LIVE,
+                                            useContrastText =
+                                                    category.type == ContentType.MOVIES ||
+                                                            category.type == ContentType.SERIES
                                     )
                                 }
                             }
@@ -5598,7 +5613,11 @@ fun FavoritesScreen(
                                                 } else {
                                                     null
                                                 },
-                                        onLongClick = { onToggleCategoryFavorite(category) }
+                                        onLongClick = { onToggleCategoryFavorite(category) },
+                                        forceDarkText = category.type == ContentType.LIVE,
+                                        useContrastText =
+                                                category.type == ContentType.MOVIES ||
+                                                        category.type == ContentType.SERIES
                                 )
                             }
                         }
