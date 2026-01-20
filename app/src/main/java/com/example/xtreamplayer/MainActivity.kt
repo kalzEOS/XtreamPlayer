@@ -1241,7 +1241,8 @@ private fun PlayerOverlay(
             if (duration > 0 && position > 0) {
                 val remainingMs = duration - position
 
-                if (remainingMs <= episodeEndThresholdMs && remainingMs > 0) {
+                val overlayEnabled = episodeEndThresholdMs > 0
+                if (overlayEnabled && remainingMs <= episodeEndThresholdMs && remainingMs > 0) {
                     showNextEpisodeOverlay = true
                     shouldAutoPlayNext = true
                     // Countdown based on actual remaining time (capped at 30 seconds)
@@ -1271,7 +1272,16 @@ private fun PlayerOverlay(
 
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         // Auto-play next episode when current one ends
-                        if (playbackState == Player.STATE_ENDED && shouldAutoPlayNext) {
+                        val canAutoPlay =
+                                autoPlayNextEnabled &&
+                                        currentContentType == ContentType.SERIES &&
+                                        hasNextEpisode
+                        val autoPlayAtEnd =
+                                episodeEndThresholdMs == 0L && playbackState == Player.STATE_ENDED
+                        if (playbackState == Player.STATE_ENDED &&
+                                        canAutoPlay &&
+                                        (shouldAutoPlayNext || autoPlayAtEnd)
+                        ) {
                             shouldAutoPlayNext = false
                             showNextEpisodeOverlay = false
                             onPlayNextEpisode()
@@ -4906,6 +4916,12 @@ private fun LocalFilesScreen(
                                                                     keyDownArmed = false
                                                                     keyClickHandled = true
                                                                     onPlayFile(itemIndex)
+                                                                    // Only suppress the next click briefly to avoid
+                                                                    // eating a real pointer click after a key press.
+                                                                    coroutineScope.launch {
+                                                                        delay(120)
+                                                                        keyClickHandled = false
+                                                                    }
                                                                     true
                                                                 } else {
                                                                     false
