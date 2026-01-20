@@ -131,7 +131,7 @@ fun SubtitleSearchDialog(
             Column {
                 Text(
                     text = "DOWNLOAD SUBTITLES",
-                    color = Color.White,
+                    color = AppTheme.colors.textPrimary,
                     fontSize = 18.sp,
                     fontFamily = FontFamily.Serif,
                     fontWeight = FontWeight.Bold,
@@ -220,14 +220,14 @@ fun SubtitleSearchDialog(
                     val toggleIndicatorColor =
                         if (subtitlesEnabled) EnabledIndicatorColor else DisabledIndicatorColor
                     val toggleButtonColor =
-                        if (subtitlesEnabled) AppTheme.colors.success.copy(alpha = 0.25f)
+                        if (subtitlesEnabled) AppTheme.colors.success.copy(alpha = 0.35f)
                         else SecondaryBorderColor
 
                     FocusableButton(
                         onClick = onToggleSubtitles,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = toggleButtonColor,
-                            contentColor = Color.White
+                            contentColor = AppTheme.colors.textPrimary
                         ),
                         modifier = Modifier
                             .focusRequester(toggleFocusRequester)
@@ -358,7 +358,7 @@ fun SubtitleSearchDialog(
                     onClick = onDismiss,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = SecondaryBorderColor,
-                        contentColor = Color.White
+                        contentColor = AppTheme.colors.textPrimary
                     ),
                     modifier = Modifier
                         .align(Alignment.End)
@@ -477,7 +477,7 @@ fun SubtitleOptionsDialog(
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
                     text = "SUBTITLES",
-                    color = Color.White,
+                    color = AppTheme.colors.textPrimary,
                     fontSize = 18.sp,
                     fontFamily = FontFamily.Serif,
                     fontWeight = FontWeight.Bold,
@@ -528,7 +528,7 @@ fun SubtitleOptionsDialog(
                     modifier = Modifier.focusRequester(secondaryFocusRequester),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = SecondaryBorderColor,
-                        contentColor = Color.White
+                        contentColor = AppTheme.colors.textPrimary
                     )
                 ) {
                     Text(
@@ -543,7 +543,7 @@ fun SubtitleOptionsDialog(
                     modifier = Modifier.focusRequester(closeFocusRequester),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = AppTheme.colors.surfaceAlt,
-                        contentColor = Color.White
+                        contentColor = AppTheme.colors.textPrimary
                     )
                 ) {
                     Text(
@@ -593,7 +593,7 @@ fun ApiKeyInputDialog(
             Column {
                 Text(
                     text = "OPENSUBTITLES API KEY",
-                    color = Color.White,
+                    color = AppTheme.colors.textPrimary,
                     fontSize = 18.sp,
                     fontFamily = FontFamily.Serif,
                     fontWeight = FontWeight.Bold,
@@ -743,7 +743,7 @@ fun ApiKeyInputDialog(
                         onClick = onDismiss,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = SecondaryBorderColor,
-                            contentColor = Color.White
+                            contentColor = AppTheme.colors.textPrimary
                         )
                     ) {
                         Text(
@@ -803,7 +803,7 @@ private fun SubtitleItem(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = subtitle.release,
-                color = Color.White,
+                color = AppTheme.colors.textPrimary,
                 fontSize = 13.sp,
                 fontFamily = FontFamily.Serif,
                 fontWeight = FontWeight.Medium,

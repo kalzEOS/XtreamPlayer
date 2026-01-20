@@ -52,8 +52,8 @@ fun SettingsScreen(
     contentItemFocusRequester: FocusRequester,
     onMoveLeft: () -> Unit,
     onToggleAutoPlay: () -> Unit,
+    onOpenNextEpisodeThreshold: () -> Unit,
     onToggleSubtitles: () -> Unit,
-    onCycleAudioLanguage: () -> Unit,
     onOpenThemeSelector: () -> Unit,
     onToggleRememberLogin: () -> Unit,
     onToggleAutoSignIn: () -> Unit,
@@ -66,10 +66,11 @@ fun SettingsScreen(
     val scrollState = rememberScrollState()
     val colors = AppTheme.colors
     val apiKeyLabel = if (settings.openSubtitlesApiKey.isNotBlank()) "Configured" else "Not set"
+    val thresholdLabel = "${settings.nextEpisodeThresholdSeconds}s"
     val actions = listOf(
         SettingsAction("Auto-play next", flagLabel(settings.autoPlayNext), onToggleAutoPlay),
+        SettingsAction("Next episode prompt", thresholdLabel, onOpenNextEpisodeThreshold),
         SettingsAction("Subtitles", flagLabel(settings.subtitlesEnabled), onToggleSubtitles),
-        SettingsAction("Audio language", settings.audioLanguage.label, onCycleAudioLanguage),
         SettingsAction("Theme", settings.appTheme.label, onOpenThemeSelector),
         SettingsAction("OpenSubtitles API key", apiKeyLabel, onOpenSubtitlesApiKey),
         SettingsAction("Remember login", flagLabel(settings.rememberLogin), onToggleRememberLogin),

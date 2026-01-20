@@ -3,6 +3,7 @@ package com.example.xtreamplayer.settings
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -13,18 +14,18 @@ private val Context.dataStore by preferencesDataStore(name = "settings")
 class SettingsRepository(private val context: Context) {
     val settings: Flow<SettingsState> = context.dataStore.data.map { prefs ->
         val autoPlay = prefs[Keys.AUTO_PLAY_NEXT] ?: true
+        val nextEpisodeThreshold = prefs[Keys.NEXT_EPISODE_THRESHOLD] ?: 60
         val subtitles = prefs[Keys.SUBTITLES_ENABLED] ?: false
-        val audio = parseAudioLanguage(prefs[Keys.AUDIO_LANGUAGE])
         val rememberLogin = prefs[Keys.REMEMBER_LOGIN] ?: true
         val autoSignIn = prefs[Keys.AUTO_SIGN_IN] ?: true
         val appTheme = parseAppTheme(prefs[Keys.APP_THEME])
         val openSubtitlesApiKey = prefs[Keys.OPENSUBTITLES_API_KEY] ?: ""
-        val openSubtitlesUserAgent = prefs[Keys.OPENSUBTITLES_USER_AGENT] ?: "XtreamPlayer"
+        val openSubtitlesUserAgent = prefs[Keys.OPENSUBTITLES_USER_AGENT] ?: ""
 
         SettingsState(
             autoPlayNext = autoPlay,
+            nextEpisodeThresholdSeconds = nextEpisodeThreshold,
             subtitlesEnabled = subtitles,
-            audioLanguage = audio,
             rememberLogin = rememberLogin,
             autoSignIn = autoSignIn,
             appTheme = appTheme,
@@ -39,15 +40,15 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    suspend fun setSubtitlesEnabled(enabled: Boolean) {
+    suspend fun setNextEpisodeThreshold(seconds: Int) {
         context.dataStore.edit { prefs ->
-            prefs[Keys.SUBTITLES_ENABLED] = enabled
+            prefs[Keys.NEXT_EPISODE_THRESHOLD] = seconds.coerceIn(0, 300)
         }
     }
 
-    suspend fun setAudioLanguage(language: AudioLanguage) {
+    suspend fun setSubtitlesEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs ->
-            prefs[Keys.AUDIO_LANGUAGE] = language.name
+            prefs[Keys.SUBTITLES_ENABLED] = enabled
         }
     }
 
@@ -81,18 +82,14 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    private fun parseAudioLanguage(value: String?): AudioLanguage {
-        return AudioLanguage.values().firstOrNull { it.name == value } ?: AudioLanguage.ENGLISH
-    }
-
     private fun parseAppTheme(value: String?): AppThemeOption {
         return AppThemeOption.values().firstOrNull { it.name == value } ?: AppThemeOption.DEFAULT
     }
 
     private object Keys {
         val AUTO_PLAY_NEXT = booleanPreferencesKey("auto_play_next")
+        val NEXT_EPISODE_THRESHOLD = intPreferencesKey("next_episode_threshold")
         val SUBTITLES_ENABLED = booleanPreferencesKey("subtitles_enabled")
-        val AUDIO_LANGUAGE = stringPreferencesKey("audio_language")
         val REMEMBER_LOGIN = booleanPreferencesKey("remember_login")
         val AUTO_SIGN_IN = booleanPreferencesKey("auto_sign_in")
         val APP_THEME = stringPreferencesKey("app_theme")

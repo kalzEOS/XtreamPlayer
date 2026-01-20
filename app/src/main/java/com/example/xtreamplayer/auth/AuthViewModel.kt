@@ -38,7 +38,14 @@ class AuthViewModel @Inject constructor(
     }
 
     fun tryAutoSignIn(settings: SettingsState) {
-        if (_uiState.value.isSignedIn || _uiState.value.isLoading) return
+        val state = _uiState.value
+        if (state.isSignedIn ||
+            state.isLoading ||
+            state.isEditingList ||
+            state.autoSignInSuppressed
+        ) {
+            return
+        }
         if (!settings.autoSignIn || !settings.rememberLogin) return
         val config = savedConfig.value ?: return
         signInWithConfig(config, rememberLogin = true)
@@ -51,6 +58,7 @@ class AuthViewModel @Inject constructor(
         password: String,
         rememberLogin: Boolean
     ) {
+        _uiState.value = _uiState.value.copy(autoSignInSuppressed = false)
         val config = AuthConfig(
             listName = listName.trim(),
             baseUrl = baseUrl.trim(),
@@ -63,7 +71,7 @@ class AuthViewModel @Inject constructor(
     fun signOut() {
         viewModelScope.launch {
             repository.clear()
-            _uiState.value = AuthUiState()
+            _uiState.value = AuthUiState(autoSignInSuppressed = true)
         }
     }
 
@@ -72,17 +80,27 @@ class AuthViewModel @Inject constructor(
             if (!keepSaved) {
                 repository.clear()
             }
-            _uiState.value = AuthUiState()
+            _uiState.value = AuthUiState(autoSignInSuppressed = true)
         }
     }
 
     fun enterEditMode() {
-        _uiState.value = AuthUiState()
+        val currentConfig = _uiState.value.activeConfig
+        _uiState.value = AuthUiState(
+            activeConfig = currentConfig,
+            isEditingList = true,
+            autoSignInSuppressed = true
+        )
     }
 
     private fun signInWithConfig(config: AuthConfig, rememberLogin: Boolean) {
         if (_uiState.value.isLoading) return
-        _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
+        _uiState.value =
+            _uiState.value.copy(
+                isLoading = true,
+                errorMessage = null,
+                autoSignInSuppressed = false
+            )
         viewModelScope.launch {
             val result = api.authenticate(config)
             result.onSuccess {
@@ -95,7 +113,8 @@ class AuthViewModel @Inject constructor(
                     isSignedIn = true,
                     isLoading = false,
                     errorMessage = null,
-                    activeConfig = config
+                    activeConfig = config,
+                    autoSignInSuppressed = false
                 )
             }.onFailure { error ->
                 Timber.e(error, "Authentication failed for user: ${config.username}")
