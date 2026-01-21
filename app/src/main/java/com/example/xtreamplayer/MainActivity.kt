@@ -70,6 +70,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -3695,6 +3696,16 @@ private fun ContentCard(
                                     }
                             )
                             .focusable(interactionSource = interactionSource)
+                            .onPreviewKeyEvent {
+                                if (it.type != KeyEventType.KeyDown || onMoveUp == null) {
+                                    false
+                                } else if (it.key == Key.DirectionUp) {
+                                    onMoveUp()
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
                             .onKeyEvent {
                                 val isSelectKey =
                                         it.key == Key.Enter ||
@@ -4205,7 +4216,8 @@ private fun CategoryTypeTab(
         focusRequester: FocusRequester?,
         onActivate: () -> Unit,
         onMoveLeft: (() -> Unit)? = null,
-        onMoveRight: (() -> Unit)? = null
+        onMoveRight: (() -> Unit)? = null,
+        onMoveDown: (() -> Unit)? = null
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -4255,6 +4267,10 @@ private fun CategoryTypeTab(
                                             }
                                             onMoveRight != null && it.key == Key.DirectionRight -> {
                                                 onMoveRight()
+                                                true
+                                            }
+                                            onMoveDown != null && it.key == Key.DirectionDown -> {
+                                                onMoveDown()
                                                 true
                                             }
                                             isSelectKey -> {
@@ -5125,7 +5141,6 @@ fun FavoritesScreen(
     var lastMenuSelection by remember { mutableStateOf(FavoritesView.ITEMS) }
     val menuFocusRequesters = remember { listOf(FocusRequester(), FocusRequester()) }
     val backFocusRequester = remember { FocusRequester() }
-    val categoryContentBackFocusRequester = remember { FocusRequester() }
     val itemsEmptyFocusRequester = remember { FocusRequester() }
     val categoriesEmptyFocusRequester = remember { FocusRequester() }
     val sortedContent =
@@ -5287,7 +5302,8 @@ fun FavoritesScreen(
                                 activeView = FavoritesView.MENU
                                 pendingViewFocus = true
                             },
-                            onMoveLeft = onMoveLeft
+                            onMoveLeft = onMoveLeft,
+                            onMoveDown = { contentItemFocusRequester.requestFocus() }
                     )
                 }
             }
@@ -5478,60 +5494,13 @@ fun FavoritesScreen(
                             pendingCategoryEnterFocus = false
                         }
                         // Focus is managed by user navigation - no auto-focus on content load
-                        Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                    text = "< BACK",
-                                    color = AppTheme.colors.textPrimary,
-                                    fontSize = 14.sp,
-                                    fontFamily = AppTheme.fontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier =
-                                            Modifier.focusRequester(categoryContentBackFocusRequester)
-                                                    .focusable()
-                                                    .clickable(
-                                                            interactionSource =
-                                                                    remember {
-                                                                        MutableInteractionSource()
-                                                                    },
-                                                            indication = null
-                                                    ) {
-                                                        selectedCategory = null
-                                                        pendingViewFocus = true
-                                                    }
-                                                    .onKeyEvent {
-                                                        if (it.type != KeyEventType.KeyDown) {
-                                                            false
-                                                        } else if (it.key == Key.DirectionLeft) {
-                                                            onMoveLeft()
-                                                            true
-                                                        } else if (it.key == Key.DirectionDown) {
-                                                            contentItemFocusRequester.requestFocus()
-                                                            true
-                                                        } else if (it.key == Key.Enter ||
-                                                                        it.key == Key.NumPadEnter ||
-                                                                        it.key ==
-                                                                                Key.DirectionCenter
-                                                        ) {
-                                                            selectedCategory = null
-                                                            pendingViewFocus = true
-                                                            true
-                                                        } else {
-                                                            false
-                                                        }
-                                                    }
-                                                    .padding(end = 12.dp)
-                            )
-                            Text(
-                                    text = category.name,
-                                    color = AppTheme.colors.textPrimary,
-                                    fontSize = 16.sp,
-                                    fontFamily = AppTheme.fontFamily,
-                                    fontWeight = FontWeight.Medium
-                            )
-                        }
+                        Text(
+                                text = category.name,
+                                color = AppTheme.colors.textPrimary,
+                                fontSize = 16.sp,
+                                fontFamily = AppTheme.fontFamily,
+                                fontWeight = FontWeight.Medium
+                        )
                         Spacer(modifier = Modifier.height(8.dp))
                         if (lazyItems.loadState.refresh is LoadState.Loading &&
                                         lazyItems.itemCount == 0
@@ -5628,7 +5597,7 @@ fun FavoritesScreen(
                                             onMoveLeft = onMoveLeft,
                                             onMoveUp =
                                                     if (isTopRow) {
-                                                        { categoryContentBackFocusRequester.requestFocus() }
+                                                        { backFocusRequester.requestFocus() }
                                                     } else {
                                                         null
                                                     },
