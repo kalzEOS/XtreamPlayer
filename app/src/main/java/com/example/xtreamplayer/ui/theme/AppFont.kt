@@ -9,5 +9,6 @@ enum class AppFont(val label: String, val fontFamily: FontFamily) {
     ROBOTO("Roboto", FontFamily(Font(R.font.roboto))),
     LATO("Lato", FontFamily(Font(R.font.lato))),
     MONTSERRAT("Montserrat", FontFamily(Font(R.font.montserrat))),
-    OPEN_SANS("Open Sans", FontFamily(Font(R.font.opensans)))
+    OPEN_SANS("Open Sans", FontFamily(Font(R.font.opensans))),
+    PRODUCT_SANS("Product Sans", FontFamily(Font(R.font.productsans)))
 }
