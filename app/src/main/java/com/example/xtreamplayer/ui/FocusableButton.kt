@@ -33,6 +33,7 @@ fun FocusableButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     colors: ButtonColors = ButtonDefaults.buttonColors(),
+    showFocusBorder: Boolean = true,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
     content: @Composable () -> Unit
 ) {
@@ -75,7 +76,7 @@ fun FocusableButton(
                 }
             }
             .then(
-                if (isFocused) {
+                if (isFocused && showFocusBorder) {
                     Modifier.border(2.dp, FocusBorderColor, shape)
                 } else {
                     Modifier

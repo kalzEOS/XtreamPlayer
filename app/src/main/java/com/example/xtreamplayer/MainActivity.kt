@@ -142,6 +142,7 @@ import com.example.xtreamplayer.ui.theme.XtreamPlayerTheme
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -238,6 +239,7 @@ fun RootScreen(
     var showThemeDialog by remember { mutableStateOf(false) }
     var showFontDialog by remember { mutableStateOf(false) }
     var showNextEpisodeThresholdDialog by remember { mutableStateOf(false) }
+    var showLocalFilesGuest by remember { mutableStateOf(false) }
     var activePlaybackQueue by remember { mutableStateOf<PlaybackQueue?>(null) }
     var activePlaybackTitle by remember { mutableStateOf<String?>(null) }
     var activePlaybackItem by remember { mutableStateOf<ContentItem?>(null) }
@@ -347,6 +349,12 @@ fun RootScreen(
         authViewModel.tryAutoSignIn(settings)
     }
 
+    LaunchedEffect(authState.activeConfig) {
+        if (authState.activeConfig != null) {
+            showLocalFilesGuest = false
+        }
+    }
+
     LaunchedEffect(
             authState.activeConfig?.username,
             authState.activeConfig?.baseUrl,
@@ -357,8 +365,12 @@ fun RootScreen(
     val accountKey = activeConfig?.let { "${it.baseUrl}|${it.username}|${it.listName}" }
     var lastRefreshedAccountKey by remember { mutableStateOf<String?>(null) }
     var isRefreshing by remember { mutableStateOf(false) }
+    var refreshJob by remember { mutableStateOf<Job?>(null) }
+    var refreshToken by remember { mutableStateOf(0) }
     var hasCacheForAccount by remember { mutableStateOf<Boolean?>(null) }
     var isLibrarySyncing by remember { mutableStateOf(false) }
+    var librarySyncJob by remember { mutableStateOf<Job?>(null) }
+    var librarySyncToken by remember { mutableStateOf(0) }
     var hasSearchIndex by remember { mutableStateOf<Boolean?>(null) }
     var librarySyncProgress by remember { mutableStateOf(0f) }
     var librarySyncItems by remember { mutableStateOf(0) }
@@ -370,13 +382,19 @@ fun RootScreen(
         librarySyncItems = 0
         librarySyncSection = Section.SERIES
         Toast.makeText(context, reason, Toast.LENGTH_SHORT).show()
-        coroutineScope.launch {
+        val token = librarySyncToken
+        val configKey = "${config.baseUrl}|${config.username}|${config.listName}"
+        librarySyncJob = coroutineScope.launch {
             val result = runCatching {
                 contentRepository.syncSearchIndex(config, force) { progress ->
                     librarySyncProgress = progress.progress
                     librarySyncItems = progress.itemsIndexed
                     librarySyncSection = progress.section
                 }
+            }
+            if (token != librarySyncToken || accountKey != configKey) {
+                isLibrarySyncing = false
+                return@launch
             }
             val message =
                     if (result.isSuccess) {
@@ -394,8 +412,14 @@ fun RootScreen(
         if (isRefreshing) return
         isRefreshing = true
         Toast.makeText(context, reason, Toast.LENGTH_SHORT).show()
-        coroutineScope.launch {
+        val token = refreshToken
+        val configKey = "${config.baseUrl}|${config.username}|${config.listName}"
+        refreshJob = coroutineScope.launch {
             val result = runCatching { contentRepository.refreshContent(config) }
+            if (token != refreshToken || accountKey != configKey) {
+                isRefreshing = false
+                return@launch
+            }
             val message =
                     if (result.isSuccess) {
                         hasCacheForAccount = true
@@ -443,6 +467,14 @@ fun RootScreen(
             selectedSection = Section.ALL
             showManageLists = false
         } else {
+            refreshToken++
+            librarySyncToken++
+            refreshJob?.cancel()
+            librarySyncJob?.cancel()
+            refreshJob = null
+            librarySyncJob = null
+            isRefreshing = false
+            isLibrarySyncing = false
             lastRefreshedAccountKey = null
             hasCacheForAccount = null
             hasSearchIndex = null
@@ -1081,19 +1113,106 @@ fun RootScreen(
                 }
             }
         } else {
-            LoginScreen(
-                    authState = authState,
-                    initialConfig = authState.activeConfig ?: savedConfig,
-                    onSignIn = { listName, baseUrl, username, password ->
-                        authViewModel.signIn(
-                                listName = listName,
-                                baseUrl = baseUrl,
-                                username = username,
-                                password = password,
-                                rememberLogin = settings.rememberLogin
-                        )
-                    }
-            )
+            if (showLocalFilesGuest) {
+                BackHandler(enabled = true) { showLocalFilesGuest = false }
+                LocalFilesScreen(
+                        title = "PLAY LOCAL FILES",
+                        files = localFiles,
+                        contentItemFocusRequester = contentItemFocusRequester,
+                        resumeFocusId = resumeFocusId,
+                        resumeFocusRequester = resumeFocusRequester,
+                        onPickFiles = {
+                            if (hasStoragePermission(context)) {
+                                val scanned = scanMediaStoreMedia(context)
+                                scanned.forEach { item ->
+                                    if (localFiles.none { it.uri == item.uri }) {
+                                        localFiles.add(item)
+                                    }
+                                }
+                                if (scanned.isEmpty()) {
+                                    Toast.makeText(
+                                                    context,
+                                                    "No media files found on device",
+                                                    Toast.LENGTH_SHORT
+                                    )
+                                            .show()
+                                } else {
+                                    val videoCount =
+                                            scanned.count { it.mediaType == LocalMediaType.VIDEO }
+                                    val audioCount =
+                                            scanned.count { it.mediaType == LocalMediaType.AUDIO }
+                                    Toast.makeText(
+                                                    context,
+                                                    "Found $videoCount video(s), $audioCount audio file(s)",
+                                                    Toast.LENGTH_SHORT
+                                    )
+                                            .show()
+                                }
+                            } else {
+                                storagePermissionLauncher.launch(getRequiredMediaPermissions())
+                            }
+                        },
+                        onRefresh = {
+                            if (hasStoragePermission(context)) {
+                                localFiles.clear()
+                                val scanned = scanMediaStoreMedia(context)
+                                localFiles.addAll(scanned)
+                                if (scanned.isEmpty()) {
+                                    Toast.makeText(
+                                                    context,
+                                                    "No media files found",
+                                                    Toast.LENGTH_SHORT
+                                    )
+                                            .show()
+                                } else {
+                                    val videoCount =
+                                            scanned.count {
+                                                it.mediaType == LocalMediaType.VIDEO
+                                            }
+                                    val audioCount =
+                                            scanned.count {
+                                                it.mediaType == LocalMediaType.AUDIO
+                                            }
+                                    Toast.makeText(
+                                                    context,
+                                                    "Refreshed: $videoCount video(s), $audioCount audio file(s)",
+                                                    Toast.LENGTH_SHORT
+                                    )
+                                            .show()
+                                }
+                            } else {
+                                Toast.makeText(
+                                                context,
+                                                "Scan for media first to grant permissions",
+                                                Toast.LENGTH_SHORT
+                                )
+                                        .show()
+                            }
+                        },
+                        onPlayFile = handlePlayLocalFile,
+                        onMoveLeft = { showLocalFilesGuest = false },
+                        showBackButton = true,
+                        onBack = { showLocalFilesGuest = false }
+                )
+            } else {
+                LoginScreen(
+                        authState = authState,
+                        initialConfig = authState.activeConfig ?: savedConfig,
+                        onSignIn = { listName, baseUrl, username, password ->
+                            authViewModel.signIn(
+                                    listName = listName,
+                                    baseUrl = baseUrl,
+                                    username = username,
+                                    password = password,
+                                    rememberLogin = settings.rememberLogin
+                            )
+                        },
+                        onOpenLocalFiles = {
+                            showLocalFilesGuest = true
+                            focusToContentTrigger++
+                        }
+                )
+            }
         }
 
         if (activePlaybackQueue != null) {
@@ -4764,12 +4883,22 @@ private fun LocalFilesScreen(
         onPickFiles: () -> Unit,
         onRefresh: () -> Unit,
         onPlayFile: (Int) -> Unit,
-        onMoveLeft: () -> Unit
+        onMoveLeft: () -> Unit,
+        showBackButton: Boolean = false,
+        onBack: () -> Unit = {}
 ) {
     val shape = RoundedCornerShape(18.dp)
+    val backFocusRequester = remember { FocusRequester() }
     val scanFocusRequester = remember { FocusRequester() }
     val refreshFocusRequester = remember { FocusRequester() }
+    val emptyFocusRequester = remember { FocusRequester() }
     val coroutineScope = rememberCoroutineScope()
+    val handleMoveLeft: () -> Unit =
+            if (showBackButton) {
+                { backFocusRequester.requestFocus() }
+            } else {
+                onMoveLeft
+            }
 
     // Focus is managed by user navigation - no auto-focus on screen load
 
@@ -4793,6 +4922,44 @@ private fun LocalFilesScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                if (showBackButton) {
+                    FocusableButton(
+                            onClick = onBack,
+                            colors =
+                                    ButtonDefaults.buttonColors(
+                                            containerColor = AppTheme.colors.accentMutedAlt,
+                                            contentColor = AppTheme.colors.textPrimary
+                                    ),
+                            modifier =
+                                    Modifier.height(40.dp)
+                                            .focusRequester(backFocusRequester)
+                                            .onPreviewKeyEvent {
+                                                if (it.type != KeyEventType.KeyDown) {
+                                                    false
+                                                } else if (it.key == Key.DirectionRight ||
+                                                        it.key == Key.DirectionDown
+                                                ) {
+                                                    if (it.key == Key.DirectionDown &&
+                                                            files.isEmpty()
+                                                    ) {
+                                                        emptyFocusRequester.requestFocus()
+                                                    } else {
+                                                        contentItemFocusRequester.requestFocus()
+                                                    }
+                                                    true
+                                                } else {
+                                                    false
+                                                }
+                                            }
+                    ) {
+                        Text(
+                                text = "Back",
+                                fontSize = 13.sp,
+                                fontFamily = AppTheme.fontFamily,
+                                fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
                 Text(
                         text = title,
                         color = AppTheme.colors.textPrimary,
@@ -4816,7 +4983,7 @@ private fun LocalFilesScreen(
                                             if (it.type != KeyEventType.KeyDown) {
                                                 false
                                             } else if (it.key == Key.DirectionLeft) {
-                                                onMoveLeft()
+                                                handleMoveLeft()
                                                 true
                                             } else if (it.key == Key.DirectionRight) {
                                                 refreshFocusRequester.requestFocus()
@@ -4825,6 +4992,11 @@ private fun LocalFilesScreen(
                                                             files.isNotEmpty()
                                             ) {
                                                 scanFocusRequester.requestFocus()
+                                                true
+                                            } else if (it.key == Key.DirectionDown &&
+                                                            files.isEmpty()
+                                            ) {
+                                                emptyFocusRequester.requestFocus()
                                                 true
                                             } else {
                                                 false
@@ -4854,10 +5026,12 @@ private fun LocalFilesScreen(
                                             } else if (it.key == Key.DirectionLeft) {
                                                 contentItemFocusRequester.requestFocus()
                                                 true
-                                            } else if (it.key == Key.DirectionDown &&
-                                                            files.isNotEmpty()
-                                            ) {
-                                                scanFocusRequester.requestFocus()
+                                            } else if (it.key == Key.DirectionDown) {
+                                                if (files.isNotEmpty()) {
+                                                    scanFocusRequester.requestFocus()
+                                                } else {
+                                                    emptyFocusRequester.requestFocus()
+                                                }
                                                 true
                                             } else {
                                                 false
@@ -4876,13 +5050,39 @@ private fun LocalFilesScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             if (files.isEmpty()) {
-                Text(
-                        text = "No media files found. Press the button to scan your device.",
-                        color = AppTheme.colors.textSecondary,
-                        fontSize = 14.sp,
-                        fontFamily = AppTheme.fontFamily,
-                        letterSpacing = 0.6.sp
-                )
+                val emptyInteractionSource = remember { MutableInteractionSource() }
+                val isEmptyFocused by emptyInteractionSource.collectIsFocusedAsState()
+                val emptyBorderColor =
+                        if (isEmptyFocused) AppTheme.colors.focus else AppTheme.colors.borderStrong
+                Box(
+                        modifier =
+                                Modifier.fillMaxWidth()
+                                        .border(1.dp, emptyBorderColor, RoundedCornerShape(14.dp))
+                                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                                        .focusRequester(emptyFocusRequester)
+                                        .focusable(interactionSource = emptyInteractionSource)
+                                        .onKeyEvent {
+                                            if (it.type != KeyEventType.KeyDown) {
+                                                false
+                                            } else if (it.key == Key.DirectionUp) {
+                                                contentItemFocusRequester.requestFocus()
+                                                true
+                                            } else if (it.key == Key.DirectionLeft) {
+                                                handleMoveLeft()
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        }
+                ) {
+                    Text(
+                            text = "No media files found. Press the button to scan your device.",
+                            color = AppTheme.colors.textSecondary,
+                            fontSize = 14.sp,
+                            fontFamily = AppTheme.fontFamily,
+                            letterSpacing = 0.6.sp
+                    )
+                }
             } else {
                 // Group files by volume name
                 val groupedFiles = files.groupBy { it.volumeName }
@@ -4982,7 +5182,7 @@ private fun LocalFilesScreen(
                                                                         true
                                                                     }
                                                                     it.key == Key.DirectionLeft -> {
-                                                                        onMoveLeft()
+                                                                        handleMoveLeft()
                                                                         true
                                                                     }
                                                                     it.key == Key.DirectionUp &&

@@ -8,6 +8,7 @@ import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,6 +33,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -55,7 +57,8 @@ import com.example.xtreamplayer.ui.theme.AppTheme
 fun LoginScreen(
     authState: AuthUiState,
     initialConfig: AuthConfig?,
-    onSignIn: (String, String, String, String) -> Unit
+    onSignIn: (String, String, String, String) -> Unit,
+    onOpenLocalFiles: () -> Unit
 ) {
     val initialKey = remember(initialConfig) {
         initialConfig?.let {
@@ -72,9 +75,15 @@ fun LoginScreen(
     val usernameFocusRequester = remember { FocusRequester() }
     val passwordFocusRequester = remember { FocusRequester() }
     val submitFocusRequester = remember { FocusRequester() }
+    val localFilesFocusRequester = remember { FocusRequester() }
+    val loginButtonInteraction = remember { MutableInteractionSource() }
+    val localFilesButtonInteraction = remember { MutableInteractionSource() }
+    val isLoginButtonFocused by loginButtonInteraction.collectIsFocusedAsState()
+    val isLocalFilesButtonFocused by localFilesButtonInteraction.collectIsFocusedAsState()
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val shape = RoundedCornerShape(18.dp)
+    val buttonShape = RoundedCornerShape(50)
     val colors = AppTheme.colors
     val borderColor = if (isFocused) colors.focus else colors.border
     val scrollState = rememberScrollState()
@@ -168,39 +177,130 @@ fun LoginScreen(
                     fontFamily = AppTheme.fontFamily
                 )
             }
-            FocusableButton(
-                onClick = { onSignIn(listName, serviceUrl, username, password) },
-                enabled = canSubmit,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = colors.accent,
-                    contentColor = colors.textOnAccent,
-                    disabledContainerColor = colors.borderStrong,
-                    disabledContentColor = colors.textTertiary
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp)
-                    .focusRequester(submitFocusRequester)
-                    .onPreviewKeyEvent {
-                        handleNavKey(
-                            event = it,
-                            onUp = { passwordFocusRequester.requestFocus() }
+            Box(
+                modifier =
+                    Modifier.fillMaxWidth()
+                        .border(
+                            width = 2.dp,
+                            color =
+                                if (isLoginButtonFocused) colors.textPrimary else Color.Transparent,
+                            shape = buttonShape
                         )
-                    }
+                        .padding(2.dp)
             ) {
-                Text(
-                    text = if (authState.isLoading) "Logging in..." else "Log In",
-                    fontSize = 16.sp,
-                    fontFamily = AppTheme.fontFamily,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 0.6.sp
-                )
+                FocusableButton(
+                    onClick = { onSignIn(listName, serviceUrl, username, password) },
+                    enabled = canSubmit,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = colors.accent,
+                        contentColor = colors.textOnAccent,
+                        disabledContainerColor = colors.borderStrong,
+                        disabledContentColor = colors.textTertiary
+                    ),
+                    showFocusBorder = false,
+                    interactionSource = loginButtonInteraction,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .focusRequester(submitFocusRequester)
+                        .onPreviewKeyEvent {
+                            handleNavKey(
+                                event = it,
+                                onUp = { passwordFocusRequester.requestFocus() },
+                                onDown = { localFilesFocusRequester.requestFocus() }
+                            )
+                        }
+                ) {
+                    Text(
+                        text = if (authState.isLoading) "Logging in..." else "Log In",
+                        fontSize = 16.sp,
+                        fontFamily = AppTheme.fontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 0.6.sp
+                    )
+                }
             }
             Text(
                 text = "Use your Xtream list URL, username, and password.",
                 color = colors.textSecondary,
                 fontSize = 12.sp,
                 fontFamily = AppTheme.fontFamily
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier =
+                        Modifier.weight(1f)
+                            .height(1.dp)
+                            .background(colors.borderStrong)
+                )
+                Text(
+                    text = "OR",
+                    color = colors.textTertiary,
+                    fontSize = 12.sp,
+                    fontFamily = AppTheme.fontFamily,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 2.sp,
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                )
+                Box(
+                    modifier =
+                        Modifier.weight(1f)
+                            .height(1.dp)
+                            .background(colors.borderStrong)
+                )
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            Box(
+                modifier =
+                    Modifier.fillMaxWidth()
+                        .border(
+                            width = 2.dp,
+                            color =
+                                if (isLocalFilesButtonFocused) colors.textPrimary
+                                else Color.Transparent,
+                            shape = buttonShape
+                        )
+                        .padding(2.dp)
+            ) {
+                FocusableButton(
+                    onClick = onOpenLocalFiles,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = colors.accent,
+                        contentColor = colors.textOnAccent
+                    ),
+                    showFocusBorder = false,
+                    interactionSource = localFilesButtonInteraction,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .focusRequester(localFilesFocusRequester)
+                        .onPreviewKeyEvent {
+                            handleNavKey(
+                                event = it,
+                                onUp = { submitFocusRequester.requestFocus() }
+                            )
+                        }
+                ) {
+                    Text(
+                        text = "Play Local Files",
+                        fontSize = 16.sp,
+                        fontFamily = AppTheme.fontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 0.6.sp
+                    )
+                }
+            }
+            Text(
+                text =
+                    "Play Local Files can scan and play video/audio from internal storage and connected external drives.",
+                color = colors.textSecondary,
+                fontSize = 12.sp,
+                fontFamily = AppTheme.fontFamily,
+                modifier = Modifier.padding(top = 4.dp)
             )
         }
     }
