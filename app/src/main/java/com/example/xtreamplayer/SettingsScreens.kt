@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.xtreamplayer.auth.AuthConfig
 import com.example.xtreamplayer.settings.SettingsState
+import com.example.xtreamplayer.ui.theme.AppFont
 import com.example.xtreamplayer.ui.theme.AppTheme
 
 @Composable
@@ -54,7 +55,7 @@ fun SettingsScreen(
     onToggleAutoPlay: () -> Unit,
     onOpenNextEpisodeThreshold: () -> Unit,
     onToggleSubtitles: () -> Unit,
-    onOpenThemeSelector: () -> Unit,
+    onOpenAppearance: () -> Unit,
     onToggleRememberLogin: () -> Unit,
     onToggleAutoSignIn: () -> Unit,
     onOpenSubtitlesApiKey: () -> Unit,
@@ -71,7 +72,7 @@ fun SettingsScreen(
         SettingsAction("Auto-play next", flagLabel(settings.autoPlayNext), onToggleAutoPlay),
         SettingsAction("Next episode prompt", thresholdLabel, onOpenNextEpisodeThreshold),
         SettingsAction("Subtitles", flagLabel(settings.subtitlesEnabled), onToggleSubtitles),
-        SettingsAction("Theme", settings.appTheme.label, onOpenThemeSelector),
+        SettingsAction("Appearance", null, onOpenAppearance),
         SettingsAction("OpenSubtitles API key", apiKeyLabel, onOpenSubtitlesApiKey),
         SettingsAction("Remember login", flagLabel(settings.rememberLogin), onToggleRememberLogin),
         SettingsAction("Auto sign-in", flagLabel(settings.autoSignIn), onToggleAutoSignIn),
@@ -106,12 +107,12 @@ fun SettingsScreen(
                 text = "SETTINGS",
                 color = colors.textPrimary,
                 fontSize = 20.sp,
-                fontFamily = FontFamily.Serif,
+                fontFamily = settings.appFont.fontFamily,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.sp
             )
             Spacer(modifier = Modifier.height(8.dp))
-            SettingsInfoRow(label = "Active list", value = activeListName)
+            SettingsInfoRow(label = "Active list", value = activeListName, fontFamily = settings.appFont.fontFamily)
             Spacer(modifier = Modifier.height(12.dp))
             Column(
                 modifier = Modifier
@@ -126,7 +127,8 @@ fun SettingsScreen(
                         value = action.value,
                         focusRequester = if (index == 0) contentItemFocusRequester else null,
                         onMoveLeft = onMoveLeft,
-                        onActivate = action.onActivate
+                        onActivate = action.onActivate,
+                        fontFamily = settings.appFont.fontFamily
                     )
                 }
             }
@@ -138,6 +140,7 @@ fun SettingsScreen(
 fun ManageListsScreen(
     savedConfig: AuthConfig?,
     activeConfig: AuthConfig?,
+    settings: SettingsState,
     contentItemFocusRequester: FocusRequester,
     onMoveLeft: () -> Unit,
     onBack: () -> Unit,
@@ -183,18 +186,20 @@ fun ManageListsScreen(
                 text = "MANAGE LISTS",
                 color = colors.textPrimary,
                 fontSize = 20.sp,
-                fontFamily = FontFamily.Serif,
+                fontFamily = settings.appFont.fontFamily,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.sp
             )
             Spacer(modifier = Modifier.height(8.dp))
             SettingsInfoRow(
                 label = "Active list",
-                value = activeConfig?.listName ?: "Not set"
+                value = activeConfig?.listName ?: "Not set",
+                fontFamily = settings.appFont.fontFamily
             )
             SettingsInfoRow(
                 label = "Saved list",
-                value = savedConfig?.listName ?: "Not set"
+                value = savedConfig?.listName ?: "Not set",
+                fontFamily = settings.appFont.fontFamily
             )
             Spacer(modifier = Modifier.height(12.dp))
             Column(
@@ -210,7 +215,79 @@ fun ManageListsScreen(
                         value = action.value,
                         focusRequester = if (index == 0) contentItemFocusRequester else null,
                         onMoveLeft = onMoveLeft,
-                        onActivate = action.onActivate
+                        onActivate = action.onActivate,
+                        fontFamily = settings.appFont.fontFamily
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AppearanceScreen(
+    settings: SettingsState,
+    contentItemFocusRequester: FocusRequester,
+    onMoveLeft: () -> Unit,
+    onBack: () -> Unit,
+    onOpenThemeSelector: () -> Unit,
+    onOpenFontSelector: () -> Unit
+) {
+    val shape = RoundedCornerShape(18.dp)
+    val scrollState = rememberScrollState()
+    val colors = AppTheme.colors
+    val actions = listOf(
+        SettingsAction("Theme", settings.appTheme.label, onOpenThemeSelector),
+        SettingsAction("Font", settings.appFont.label, onOpenFontSelector),
+        SettingsAction("Back", null, onBack)
+    )
+
+    // Focus is managed by user navigation - no auto-focus on screen load
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 32.dp, end = 32.dp, top = 4.dp, bottom = 12.dp)
+                .clip(shape)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            colors.background,
+                            colors.backgroundAlt
+                        )
+                    )
+                )
+                .border(1.dp, colors.border, shape)
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "APPEARANCE",
+                color = colors.textPrimary,
+                fontSize = 20.sp,
+                fontFamily = settings.appFont.fontFamily,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(scrollState),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                actions.forEachIndexed { index, action ->
+                    SettingsActionRow(
+                        label = action.label,
+                        value = action.value,
+                        focusRequester = if (index == 0) contentItemFocusRequester else null,
+                        onMoveLeft = onMoveLeft,
+                        onActivate = action.onActivate,
+                        fontFamily = settings.appFont.fontFamily
                     )
                 }
             }
@@ -225,7 +302,7 @@ private data class SettingsAction(
 )
 
 @Composable
-private fun SettingsInfoRow(label: String, value: String) {
+private fun SettingsInfoRow(label: String, value: String, fontFamily: FontFamily = FontFamily.Serif) {
     val colors = AppTheme.colors
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -236,13 +313,13 @@ private fun SettingsInfoRow(label: String, value: String) {
             text = label,
             color = colors.textSecondary,
             fontSize = 14.sp,
-            fontFamily = FontFamily.Serif
+            fontFamily = fontFamily
         )
         Text(
             text = value,
             color = colors.textPrimary,
             fontSize = 14.sp,
-            fontFamily = FontFamily.Serif,
+            fontFamily = fontFamily,
             fontWeight = FontWeight.SemiBold
         )
     }
@@ -254,7 +331,8 @@ private fun SettingsActionRow(
     value: String?,
     focusRequester: FocusRequester?,
     onMoveLeft: () -> Unit,
-    onActivate: () -> Unit
+    onActivate: () -> Unit,
+    fontFamily: FontFamily = FontFamily.Serif
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -330,7 +408,7 @@ private fun SettingsActionRow(
                 text = label,
                 color = textColor,
                 fontSize = 16.sp,
-                fontFamily = FontFamily.Serif,
+                fontFamily = fontFamily,
                 fontWeight = FontWeight.SemiBold
             )
             if (value != null) {
@@ -338,7 +416,7 @@ private fun SettingsActionRow(
                     text = value,
                     color = valueColor,
                     fontSize = 13.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = fontFamily,
                     fontWeight = FontWeight.Medium
                 )
             } else {

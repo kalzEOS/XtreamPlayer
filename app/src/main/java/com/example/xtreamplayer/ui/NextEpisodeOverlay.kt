@@ -114,7 +114,7 @@ fun NextEpisodeOverlay(
                     color = Color.White,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Serif
+                    fontFamily = AppTheme.fontFamily
                 )
             }
             Spacer(modifier = Modifier.width(16.dp))
@@ -123,14 +123,14 @@ fun NextEpisodeOverlay(
                     text = "Up Next",
                     color = Color.White.copy(alpha = 0.7f),
                     fontSize = 12.sp,
-                    fontFamily = FontFamily.Serif
+                    fontFamily = AppTheme.fontFamily
                 )
                 Text(
                     text = nextEpisodeTitle,
                     color = Color.White,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )

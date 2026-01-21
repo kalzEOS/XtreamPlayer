@@ -133,7 +133,7 @@ fun SubtitleSearchDialog(
                     text = "DOWNLOAD SUBTITLES",
                     color = AppTheme.colors.textPrimary,
                     fontSize = 18.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp
                 )
@@ -154,7 +154,7 @@ fun SubtitleSearchDialog(
                             text = "Embedded subtitles detected for this video",
                             color = MutedTextColor,
                             fontSize = 12.sp,
-                            fontFamily = FontFamily.Serif
+                            fontFamily = AppTheme.fontFamily
                         )
                     }
                 }
@@ -210,7 +210,7 @@ fun SubtitleSearchDialog(
                     ) {
                         Text(
                             text = "Search",
-                            fontFamily = FontFamily.Serif,
+                            fontFamily = AppTheme.fontFamily,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
@@ -257,7 +257,7 @@ fun SubtitleSearchDialog(
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = if (subtitlesEnabled) "Subtitles On" else "Subtitles Off",
-                                fontFamily = FontFamily.Serif,
+                                fontFamily = AppTheme.fontFamily,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
@@ -281,7 +281,7 @@ fun SubtitleSearchDialog(
                                 text = "Enter a title to search for subtitles",
                                 color = MutedTextColor,
                                 fontSize = 14.sp,
-                                fontFamily = FontFamily.Serif,
+                                fontFamily = AppTheme.fontFamily,
                                 modifier = Modifier.align(Alignment.Center)
                             )
                         }
@@ -298,7 +298,7 @@ fun SubtitleSearchDialog(
                                     text = "Searching...",
                                     color = MutedTextColor,
                                     fontSize = 14.sp,
-                                    fontFamily = FontFamily.Serif
+                                    fontFamily = AppTheme.fontFamily
                                 )
                             }
                         }
@@ -308,7 +308,7 @@ fun SubtitleSearchDialog(
                                     text = "No subtitles found",
                                     color = MutedTextColor,
                                     fontSize = 14.sp,
-                                    fontFamily = FontFamily.Serif,
+                                    fontFamily = AppTheme.fontFamily,
                                     modifier = Modifier.align(Alignment.Center)
                                 )
                             } else {
@@ -335,7 +335,7 @@ fun SubtitleSearchDialog(
                                     text = "Downloading subtitle...",
                                     color = MutedTextColor,
                                     fontSize = 14.sp,
-                                    fontFamily = FontFamily.Serif
+                                    fontFamily = AppTheme.fontFamily
                                 )
                             }
                         }
@@ -344,7 +344,7 @@ fun SubtitleSearchDialog(
                                 text = state.message,
                                 color = AppTheme.colors.error,
                                 fontSize = 14.sp,
-                                fontFamily = FontFamily.Serif,
+                                fontFamily = AppTheme.fontFamily,
                                 modifier = Modifier.align(Alignment.Center)
                             )
                         }
@@ -372,7 +372,7 @@ fun SubtitleSearchDialog(
                 ) {
                     Text(
                         text = "Close",
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -402,7 +402,7 @@ private fun SearchField(
         textStyle = TextStyle(
             color = InputTextColor,
             fontSize = 14.sp,
-            fontFamily = FontFamily.Serif
+            fontFamily = AppTheme.fontFamily
         ),
         cursorBrush = SolidColor(FocusBorderColor),
         modifier = modifier
@@ -434,7 +434,7 @@ private fun SearchField(
                         text = "Search for subtitles...",
                         color = MutedTextColor,
                         fontSize = 14.sp,
-                        fontFamily = FontFamily.Serif
+                        fontFamily = AppTheme.fontFamily
                     )
                 }
                 innerTextField()
@@ -479,7 +479,7 @@ fun SubtitleOptionsDialog(
                     text = "SUBTITLES",
                     color = AppTheme.colors.textPrimary,
                     fontSize = 18.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp
                 )
@@ -504,7 +504,7 @@ fun SubtitleOptionsDialog(
                         text = if (subtitlesEnabled) "Status: On" else "Status: Off",
                         color = MutedTextColor,
                         fontSize = 12.sp,
-                        fontFamily = FontFamily.Serif
+                        fontFamily = AppTheme.fontFamily
                     )
                 }
 
@@ -518,7 +518,7 @@ fun SubtitleOptionsDialog(
                 ) {
                     Text(
                         text = if (subtitlesEnabled) "Turn subtitles off" else "Turn subtitles on",
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -533,7 +533,7 @@ fun SubtitleOptionsDialog(
                 ) {
                     Text(
                         text = "Download subtitles",
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -548,7 +548,7 @@ fun SubtitleOptionsDialog(
                 ) {
                     Text(
                         text = "Close",
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -595,7 +595,7 @@ fun ApiKeyInputDialog(
                     text = "OPENSUBTITLES API KEY",
                     color = AppTheme.colors.textPrimary,
                     fontSize = 18.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp
                 )
@@ -606,7 +606,7 @@ fun ApiKeyInputDialog(
                     text = "Get your free API key at opensubtitles.com",
                     color = MutedTextColor,
                     fontSize = 12.sp,
-                    fontFamily = FontFamily.Serif
+                    fontFamily = AppTheme.fontFamily
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -615,7 +615,7 @@ fun ApiKeyInputDialog(
                     text = "API key",
                     color = MutedTextColor,
                     fontSize = 12.sp,
-                    fontFamily = FontFamily.Serif
+                    fontFamily = AppTheme.fontFamily
                 )
 
                 Spacer(modifier = Modifier.height(6.dp))
@@ -632,7 +632,7 @@ fun ApiKeyInputDialog(
                     textStyle = TextStyle(
                         color = InputTextColor,
                         fontSize = 14.sp,
-                        fontFamily = FontFamily.Serif
+                        fontFamily = AppTheme.fontFamily
                     ),
                     cursorBrush = SolidColor(FocusBorderColor),
                     modifier = Modifier
@@ -661,7 +661,7 @@ fun ApiKeyInputDialog(
                                     text = "Enter your API key...",
                                     color = MutedTextColor,
                                     fontSize = 14.sp,
-                                    fontFamily = FontFamily.Serif
+                                    fontFamily = AppTheme.fontFamily
                                 )
                             }
                             innerTextField()
@@ -675,7 +675,7 @@ fun ApiKeyInputDialog(
                     text = "User agent (app name)",
                     color = MutedTextColor,
                     fontSize = 12.sp,
-                    fontFamily = FontFamily.Serif
+                    fontFamily = AppTheme.fontFamily
                 )
 
                 Spacer(modifier = Modifier.height(6.dp))
@@ -692,7 +692,7 @@ fun ApiKeyInputDialog(
                     textStyle = TextStyle(
                         color = InputTextColor,
                         fontSize = 14.sp,
-                        fontFamily = FontFamily.Serif
+                        fontFamily = AppTheme.fontFamily
                     ),
                     cursorBrush = SolidColor(FocusBorderColor),
                     modifier = Modifier
@@ -725,7 +725,7 @@ fun ApiKeyInputDialog(
                                     text = "Example: XtreamPlayer",
                                     color = MutedTextColor,
                                     fontSize = 14.sp,
-                                    fontFamily = FontFamily.Serif
+                                    fontFamily = AppTheme.fontFamily
                                 )
                             }
                             innerTextField()
@@ -748,7 +748,7 @@ fun ApiKeyInputDialog(
                     ) {
                         Text(
                             text = "Cancel",
-                            fontFamily = FontFamily.Serif,
+                            fontFamily = AppTheme.fontFamily,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
@@ -765,7 +765,7 @@ fun ApiKeyInputDialog(
                     ) {
                         Text(
                             text = "Save",
-                            fontFamily = FontFamily.Serif,
+                            fontFamily = AppTheme.fontFamily,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
@@ -805,7 +805,7 @@ private fun SubtitleItem(
                 text = subtitle.release,
                 color = AppTheme.colors.textPrimary,
                 fontSize = 13.sp,
-                fontFamily = FontFamily.Serif,
+                fontFamily = AppTheme.fontFamily,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1
             )
@@ -814,14 +814,14 @@ private fun SubtitleItem(
                     text = subtitle.languageName.uppercase(),
                     color = PrimaryButtonColor,
                     fontSize = 11.sp,
-                    fontFamily = FontFamily.Serif
+                    fontFamily = AppTheme.fontFamily
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "${subtitle.downloadCount} downloads",
                     color = MutedTextColor,
                     fontSize = 11.sp,
-                    fontFamily = FontFamily.Serif
+                    fontFamily = AppTheme.fontFamily
                 )
                 if (subtitle.hearingImpaired) {
                     Spacer(modifier = Modifier.width(8.dp))
@@ -829,7 +829,7 @@ private fun SubtitleItem(
                         text = "HI",
                         color = AppTheme.colors.warning,
                         fontSize = 11.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -870,7 +870,7 @@ fun AudioTrackDialog(
                     text = "Audio Tracks",
                     color = Color.White,
                     fontSize = 20.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     fontWeight = FontWeight.Bold
                 )
 
@@ -881,7 +881,7 @@ fun AudioTrackDialog(
                         text = "No audio tracks available",
                         color = MutedTextColor,
                         fontSize = 14.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         modifier = Modifier.padding(vertical = 24.dp)
                     )
                 } else {
@@ -890,7 +890,7 @@ fun AudioTrackDialog(
                             text = "No supported audio tracks available",
                             color = MutedTextColor,
                             fontSize = 12.sp,
-                            fontFamily = FontFamily.Serif,
+                            fontFamily = AppTheme.fontFamily,
                             modifier = Modifier.padding(bottom = 12.dp)
                         )
                     }
@@ -910,7 +910,7 @@ fun AudioTrackDialog(
                                 text = "Only one audio track available",
                                 color = MutedTextColor,
                                 fontSize = 12.sp,
-                                fontFamily = FontFamily.Serif
+                                fontFamily = AppTheme.fontFamily
                             )
                         }
                     }
@@ -980,7 +980,7 @@ fun AudioTrackDialog(
                                         Color.White
                                     },
                                     fontSize = 14.sp,
-                                    fontFamily = FontFamily.Serif
+                                    fontFamily = AppTheme.fontFamily
                                 )
 
                                 if (track.language != track.label && track.language != "Unknown") {
@@ -989,7 +989,7 @@ fun AudioTrackDialog(
                                         text = "(${track.language})",
                                         color = MutedTextColor,
                                         fontSize = 12.sp,
-                                        fontFamily = FontFamily.Serif
+                                        fontFamily = AppTheme.fontFamily
                                     )
                                 }
 
@@ -999,7 +999,7 @@ fun AudioTrackDialog(
                                         text = "Unsupported",
                                         color = MutedTextColor,
                                         fontSize = 12.sp,
-                                        fontFamily = FontFamily.Serif
+                                        fontFamily = AppTheme.fontFamily
                                     )
                                 }
                             }
@@ -1023,7 +1023,7 @@ fun AudioTrackDialog(
                     Text(
                         text = "Close",
                         fontSize = 14.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -1067,7 +1067,7 @@ fun AudioBoostDialog(
                     text = "Audio Boost",
                     color = Color.White,
                     fontSize = 20.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     fontWeight = FontWeight.Bold
                 )
 
@@ -1075,7 +1075,7 @@ fun AudioBoostDialog(
                     text = "Increase source volume. High values can distort audio.",
                     color = MutedTextColor,
                     fontSize = 12.sp,
-                    fontFamily = FontFamily.Serif
+                    fontFamily = AppTheme.fontFamily
                 )
 
                 Row(
@@ -1098,7 +1098,7 @@ fun AudioBoostDialog(
                         text = "${localBoost.toInt()} dB",
                         color = Color.White,
                         fontSize = 18.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold
                     )
 
@@ -1186,7 +1186,7 @@ fun PlaybackSettingsDialog(
                     text = "Settings",
                     color = Color.White,
                     fontSize = 20.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     fontWeight = FontWeight.Bold
                 )
 
@@ -1225,7 +1225,7 @@ fun PlaybackSettingsDialog(
                     Text(
                         text = "Close",
                         fontSize = 14.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -1264,7 +1264,7 @@ fun PlaybackSpeedDialog(
                     text = "Playback Speed",
                     color = Color.White,
                     fontSize = 20.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     fontWeight = FontWeight.Bold
                 )
 
@@ -1312,7 +1312,7 @@ fun PlaybackSpeedDialog(
                                 text = "${speed}x",
                                 color = Color.White,
                                 fontSize = 14.sp,
-                                fontFamily = FontFamily.Serif
+                                fontFamily = AppTheme.fontFamily
                             )
                         }
                     }
@@ -1334,7 +1334,7 @@ fun PlaybackSpeedDialog(
                     Text(
                         text = "Close",
                         fontSize = 14.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -1374,7 +1374,7 @@ fun VideoResolutionDialog(
                     text = "Resolution",
                     color = Color.White,
                     fontSize = 20.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     fontWeight = FontWeight.Bold
                 )
 
@@ -1385,7 +1385,7 @@ fun VideoResolutionDialog(
                         text = "No video tracks available",
                         color = MutedTextColor,
                         fontSize = 14.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         modifier = Modifier.padding(vertical = 24.dp)
                     )
                 } else {
@@ -1394,7 +1394,7 @@ fun VideoResolutionDialog(
                             text = "No supported video tracks available",
                             color = MutedTextColor,
                             fontSize = 12.sp,
-                            fontFamily = FontFamily.Serif,
+                            fontFamily = AppTheme.fontFamily,
                             modifier = Modifier.padding(bottom = 12.dp)
                         )
                     }
@@ -1414,7 +1414,7 @@ fun VideoResolutionDialog(
                                 text = "Only one resolution available",
                                 color = MutedTextColor,
                                 fontSize = 12.sp,
-                                fontFamily = FontFamily.Serif
+                                fontFamily = AppTheme.fontFamily
                             )
                         }
                     }
@@ -1484,7 +1484,7 @@ fun VideoResolutionDialog(
                                         Color.White
                                     },
                                     fontSize = 14.sp,
-                                    fontFamily = FontFamily.Serif
+                                    fontFamily = AppTheme.fontFamily
                                 )
 
                                 if (!track.isSupported) {
@@ -1493,7 +1493,7 @@ fun VideoResolutionDialog(
                                         text = "Unsupported",
                                         color = MutedTextColor,
                                         fontSize = 12.sp,
-                                        fontFamily = FontFamily.Serif
+                                        fontFamily = AppTheme.fontFamily
                                     )
                                 }
                             }
@@ -1517,7 +1517,7 @@ fun VideoResolutionDialog(
                     Text(
                         text = "Close",
                         fontSize = 14.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -1559,7 +1559,7 @@ private fun SettingsOptionRow(
             text = label,
             color = Color.White,
             fontSize = 14.sp,
-            fontFamily = FontFamily.Serif,
+            fontFamily = AppTheme.fontFamily,
             fontWeight = FontWeight.Medium,
             modifier = Modifier.weight(1f)
         )
@@ -1567,7 +1567,7 @@ private fun SettingsOptionRow(
             text = value,
             color = MutedTextColor,
             fontSize = 12.sp,
-            fontFamily = FontFamily.Serif
+            fontFamily = AppTheme.fontFamily
         )
     }
 }

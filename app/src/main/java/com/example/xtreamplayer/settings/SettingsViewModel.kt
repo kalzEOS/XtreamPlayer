@@ -1,6 +1,7 @@
 package com.example.xtreamplayer.settings
 
 import androidx.lifecycle.ViewModel
+import com.example.xtreamplayer.ui.theme.AppFont
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
@@ -52,6 +53,12 @@ class SettingsViewModel @Inject constructor(
     fun setAppTheme(theme: AppThemeOption) {
         viewModelScope.launch {
             repository.setAppTheme(theme)
+        }
+    }
+
+    fun setAppFont(font: AppFont) {
+        viewModelScope.launch {
+            repository.setAppFont(font)
         }
     }
 

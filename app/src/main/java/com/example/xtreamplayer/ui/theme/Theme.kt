@@ -1,11 +1,14 @@
 package com.example.xtreamplayer.ui.theme
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import com.example.xtreamplayer.settings.AppThemeOption
 
 data class AppColors(
@@ -296,15 +299,19 @@ private val CopperLightAppColors =
     )
 
 private val LocalAppColors = staticCompositionLocalOf { DefaultAppColors }
+private val LocalAppFontFamily = staticCompositionLocalOf<FontFamily> { FontFamily.Serif }
 
 object AppTheme {
     val colors: AppColors
         @Composable get() = LocalAppColors.current
+    val fontFamily: FontFamily
+        @Composable get() = LocalAppFontFamily.current
 }
 
 @Composable
 fun XtreamPlayerTheme(
     appTheme: AppThemeOption = AppThemeOption.DEFAULT,
+    fontFamily: FontFamily = FontFamily.Serif,
     content: @Composable () -> Unit
 ) {
     val colors =
@@ -330,11 +337,17 @@ fun XtreamPlayerTheme(
             error = colors.error
         )
 
-    CompositionLocalProvider(LocalAppColors provides colors) {
+    CompositionLocalProvider(
+        LocalAppColors provides colors,
+        LocalAppFontFamily provides fontFamily
+    ) {
         MaterialTheme(
             colorScheme = colorScheme,
-            typography = Typography,
-            content = content
-        )
+            typography = Typography
+        ) {
+            ProvideTextStyle(value = TextStyle(fontFamily = fontFamily)) {
+                content()
+            }
+        }
     }
 }

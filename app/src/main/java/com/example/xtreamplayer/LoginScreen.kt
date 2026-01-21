@@ -82,7 +82,7 @@ fun LoginScreen(
     val verticalSpacing = if (isCompactHeight) 10.dp else 14.dp
     val panelPadding = if (isCompactHeight) 18.dp else 28.dp
     val titleSize = if (isCompactHeight) 20.sp else 24.sp
-    val fieldTextStyle = TextStyle(fontFamily = FontFamily.Serif, fontSize = 16.sp)
+    val fieldTextStyle = TextStyle(fontFamily = AppTheme.fontFamily, fontSize = 16.sp)
 
     val canSubmit = listName.isNotBlank() &&
         serviceUrl.isNotBlank() &&
@@ -120,7 +120,7 @@ fun LoginScreen(
                 text = "LOG IN",
                 color = colors.textPrimary,
                 fontSize = titleSize,
-                fontFamily = FontFamily.Serif,
+                fontFamily = AppTheme.fontFamily,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.sp
             )
@@ -165,7 +165,7 @@ fun LoginScreen(
                     text = authState.errorMessage,
                     color = colors.error,
                     fontSize = 14.sp,
-                    fontFamily = FontFamily.Serif
+                    fontFamily = AppTheme.fontFamily
                 )
             }
             FocusableButton(
@@ -191,7 +191,7 @@ fun LoginScreen(
                 Text(
                     text = if (authState.isLoading) "Logging in..." else "Log In",
                     fontSize = 16.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     fontWeight = FontWeight.SemiBold,
                     letterSpacing = 0.6.sp
                 )
@@ -200,7 +200,7 @@ fun LoginScreen(
                 text = "Use your Xtream list URL, username, and password.",
                 color = colors.textSecondary,
                 fontSize = 12.sp,
-                fontFamily = FontFamily.Serif
+                fontFamily = AppTheme.fontFamily
             )
         }
     }

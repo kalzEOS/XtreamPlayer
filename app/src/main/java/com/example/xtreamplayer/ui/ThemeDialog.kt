@@ -91,7 +91,7 @@ fun ThemeSelectionDialog(
                     text = "Theme",
                     color = colors.textPrimary,
                     fontSize = 20.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     fontWeight = FontWeight.Bold
                 )
 
@@ -102,7 +102,7 @@ fun ThemeSelectionDialog(
                         text = "No themes available",
                         color = colors.textSecondary,
                         fontSize = 14.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         modifier = Modifier.padding(vertical = 24.dp)
                     )
                 } else {
@@ -204,7 +204,7 @@ fun ThemeSelectionDialog(
                                     text = theme.label,
                                     color = colors.textPrimary,
                                     fontSize = 14.sp,
-                                    fontFamily = FontFamily.Serif,
+                                    fontFamily = AppTheme.fontFamily,
                                     fontWeight = FontWeight.Medium
                                 )
                             }
@@ -228,7 +228,7 @@ fun ThemeSelectionDialog(
                     Text(
                         text = "Close",
                         fontSize = 14.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
