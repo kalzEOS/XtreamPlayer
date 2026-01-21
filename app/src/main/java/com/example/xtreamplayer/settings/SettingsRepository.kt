@@ -1,6 +1,7 @@
 package com.example.xtreamplayer.settings
 
 import android.content.Context
+import com.example.xtreamplayer.ui.theme.AppFont
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -19,6 +20,7 @@ class SettingsRepository(private val context: Context) {
         val rememberLogin = prefs[Keys.REMEMBER_LOGIN] ?: true
         val autoSignIn = prefs[Keys.AUTO_SIGN_IN] ?: true
         val appTheme = parseAppTheme(prefs[Keys.APP_THEME])
+        val appFont = parseAppFont(prefs[Keys.APP_FONT])
         val openSubtitlesApiKey = prefs[Keys.OPENSUBTITLES_API_KEY] ?: ""
         val openSubtitlesUserAgent = prefs[Keys.OPENSUBTITLES_USER_AGENT] ?: ""
 
@@ -29,6 +31,7 @@ class SettingsRepository(private val context: Context) {
             rememberLogin = rememberLogin,
             autoSignIn = autoSignIn,
             appTheme = appTheme,
+            appFont = appFont,
             openSubtitlesApiKey = openSubtitlesApiKey,
             openSubtitlesUserAgent = openSubtitlesUserAgent
         )
@@ -70,6 +73,12 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun setAppFont(font: AppFont) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.APP_FONT] = font.name
+        }
+    }
+
     suspend fun setOpenSubtitlesApiKey(apiKey: String) {
         context.dataStore.edit { prefs ->
             prefs[Keys.OPENSUBTITLES_API_KEY] = apiKey
@@ -86,6 +95,11 @@ class SettingsRepository(private val context: Context) {
         return AppThemeOption.values().firstOrNull { it.name == value } ?: AppThemeOption.DEFAULT
     }
 
+    private fun parseAppFont(value: String?): AppFont {
+        if (value == null) return AppFont.DEFAULT
+        return AppFont.values().firstOrNull { it.name == value } ?: AppFont.DEFAULT
+    }
+
     private object Keys {
         val AUTO_PLAY_NEXT = booleanPreferencesKey("auto_play_next")
         val NEXT_EPISODE_THRESHOLD = intPreferencesKey("next_episode_threshold")
@@ -93,6 +107,7 @@ class SettingsRepository(private val context: Context) {
         val REMEMBER_LOGIN = booleanPreferencesKey("remember_login")
         val AUTO_SIGN_IN = booleanPreferencesKey("auto_sign_in")
         val APP_THEME = stringPreferencesKey("app_theme")
+        val APP_FONT = stringPreferencesKey("app_font")
         val OPENSUBTITLES_API_KEY = stringPreferencesKey("opensubtitles_api_key")
         val OPENSUBTITLES_USER_AGENT = stringPreferencesKey("opensubtitles_user_agent")
     }

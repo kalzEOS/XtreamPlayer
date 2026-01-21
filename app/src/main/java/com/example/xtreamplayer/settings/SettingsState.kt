@@ -1,5 +1,7 @@
 package com.example.xtreamplayer.settings
 
+import com.example.xtreamplayer.ui.theme.AppFont
+
 enum class AppThemeOption(val label: String) {
     DEFAULT("Default"),
     DEFAULT_LIGHT("Default Light"),
@@ -18,6 +20,7 @@ data class SettingsState(
     val rememberLogin: Boolean = true,
     val autoSignIn: Boolean = true,
     val appTheme: AppThemeOption = AppThemeOption.DEFAULT,
+    val appFont: AppFont = AppFont.DEFAULT,
     val openSubtitlesApiKey: String = "",
     val openSubtitlesUserAgent: String = ""
 )

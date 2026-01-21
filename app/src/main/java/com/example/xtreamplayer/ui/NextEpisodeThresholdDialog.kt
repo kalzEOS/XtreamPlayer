@@ -71,7 +71,7 @@ fun NextEpisodeThresholdDialog(
                     text = "Next Episode Prompt",
                     color = colors.textPrimary,
                     fontSize = 20.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     fontWeight = FontWeight.Bold
                 )
 
@@ -79,7 +79,7 @@ fun NextEpisodeThresholdDialog(
                     text = "Show the 'Up Next' overlay this many seconds before the episode ends.",
                     color = colors.textSecondary,
                     fontSize = 12.sp,
-                    fontFamily = FontFamily.Serif
+                    fontFamily = AppTheme.fontFamily
                 )
 
                 Row(
@@ -119,7 +119,7 @@ fun NextEpisodeThresholdDialog(
                         text = "${localSeconds}s",
                         color = colors.textPrimary,
                         fontSize = 24.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f),
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -157,7 +157,7 @@ fun NextEpisodeThresholdDialog(
                     text = "Quick presets:",
                     color = colors.textSecondary,
                     fontSize = 12.sp,
-                    fontFamily = FontFamily.Serif
+                    fontFamily = AppTheme.fontFamily
                 )
 
                 Row(
@@ -207,7 +207,7 @@ fun NextEpisodeThresholdDialog(
                     Text(
                         text = "Done",
                         fontSize = 14.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold
                     )
                 }

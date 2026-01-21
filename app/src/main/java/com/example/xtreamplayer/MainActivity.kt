@@ -79,6 +79,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -131,6 +132,7 @@ import com.example.xtreamplayer.ui.PlaybackSpeedDialog
 import com.example.xtreamplayer.ui.SubtitleDialogState
 import com.example.xtreamplayer.ui.SubtitleOptionsDialog
 import com.example.xtreamplayer.ui.SubtitleSearchDialog
+import com.example.xtreamplayer.ui.FontSelectionDialog
 import com.example.xtreamplayer.ui.ThemeSelectionDialog
 import com.example.xtreamplayer.ui.VideoResolutionDialog
 import com.example.xtreamplayer.ui.theme.AppTheme
@@ -230,8 +232,10 @@ fun RootScreen(
     var selectedSection by remember { mutableStateOf(Section.ALL) }
     var navExpanded by remember { mutableStateOf(true) }
     var showManageLists by remember { mutableStateOf(false) }
+    var showAppearance by remember { mutableStateOf(false) }
     var showApiKeyDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
+    var showFontDialog by remember { mutableStateOf(false) }
     var showNextEpisodeThresholdDialog by remember { mutableStateOf(false) }
     var activePlaybackQueue by remember { mutableStateOf<PlaybackQueue?>(null) }
     var activePlaybackTitle by remember { mutableStateOf<String?>(null) }
@@ -456,6 +460,12 @@ fun RootScreen(
         }
     }
 
+    LaunchedEffect(showAppearance) {
+        if (showAppearance) {
+            focusToContentTrigger++
+        }
+    }
+
     LaunchedEffect(activePlaybackQueue) {
         val queue = activePlaybackQueue
         playbackFallbackAttempts = queue?.fallbackUris?.mapValues { 0 } ?: emptyMap()
@@ -477,6 +487,7 @@ fun RootScreen(
     }
 
     BackHandler(enabled = showManageLists) { showManageLists = false }
+    BackHandler(enabled = showAppearance) { showAppearance = false }
 
     val handleItemFocused: (ContentItem) -> Unit = { item -> resumeFocusId = item.id }
 
@@ -698,7 +709,7 @@ fun RootScreen(
 
     LaunchedEffect(settings) { playbackSettingsController.apply(settings) }
 
-    XtreamPlayerTheme(appTheme = settings.appTheme) {
+    XtreamPlayerTheme(appTheme = settings.appTheme, fontFamily = settings.appFont.fontFamily) {
         AppBackground {
         val shouldAutoSignIn =
                 settings.autoSignIn && settings.rememberLogin && savedConfig != null
@@ -795,6 +806,7 @@ fun RootScreen(
                                 ManageListsScreen(
                                         savedConfig = savedConfig,
                                         activeConfig = authState.activeConfig,
+                                        settings = settings,
                                         contentItemFocusRequester = contentItemFocusRequester,
                                         onMoveLeft = handleMoveLeft,
                                         onBack = { showManageLists = false },
@@ -823,6 +835,15 @@ fun RootScreen(
                                             authViewModel.signOut(keepSaved = false)
                                         }
                                 )
+                            } else if (showAppearance) {
+                                AppearanceScreen(
+                                        settings = settings,
+                                        contentItemFocusRequester = contentItemFocusRequester,
+                                        onMoveLeft = handleMoveLeft,
+                                        onBack = { showAppearance = false },
+                                        onOpenThemeSelector = { showThemeDialog = true },
+                                        onOpenFontSelector = { showFontDialog = true }
+                                )
                             } else {
                                 val activeListName =
                                         authState.activeConfig?.listName
@@ -835,7 +856,7 @@ fun RootScreen(
                                         onToggleAutoPlay = settingsViewModel::toggleAutoPlayNext,
                                         onOpenNextEpisodeThreshold = { showNextEpisodeThresholdDialog = true },
                                         onToggleSubtitles = settingsViewModel::toggleSubtitles,
-                                        onOpenThemeSelector = { showThemeDialog = true },
+                                        onOpenAppearance = { showAppearance = true },
                                         onToggleRememberLogin =
                                                 settingsViewModel::toggleRememberLogin,
                                         onToggleAutoSignIn = settingsViewModel::toggleAutoSignIn,
@@ -1133,6 +1154,17 @@ fun RootScreen(
                 onDismiss = { showThemeDialog = false }
         )
     }
+    if (showFontDialog) {
+        FontSelectionDialog(
+                fonts = com.example.xtreamplayer.ui.theme.AppFont.values().toList(),
+                currentFont = settings.appFont,
+                onFontSelected = { font ->
+                    settingsViewModel.setAppFont(font)
+                    showFontDialog = false
+                },
+                onDismiss = { showFontDialog = false }
+        )
+    }
     if (showNextEpisodeThresholdDialog) {
         NextEpisodeThresholdDialog(
                 currentSeconds = settings.nextEpisodeThresholdSeconds,
@@ -1152,7 +1184,7 @@ private fun AuthLoadingScreen() {
                 text = "XTREAM PLAYER",
                 color = AppTheme.colors.textPrimary,
                 fontSize = 26.sp,
-                fontFamily = FontFamily.Serif,
+                fontFamily = AppTheme.fontFamily,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 2.sp
         )
@@ -1510,7 +1542,7 @@ private fun PlayerOverlay(
                         text = title,
                         color = Color.White,
                         fontSize = 18.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold,
                         letterSpacing = 0.6.sp
                 )
@@ -2227,9 +2259,12 @@ fun NavItem(
                 text = label,
                 color = textColor,
                 fontSize = 18.sp,
-                fontFamily = FontFamily.Serif,
+                fontFamily = AppTheme.fontFamily,
                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                letterSpacing = 0.5.sp
+                letterSpacing = 0.5.sp,
+                maxLines = 2,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
         )
     }
 }
@@ -2299,7 +2334,7 @@ fun MenuButton(expanded: Boolean, onToggle: () -> Unit) {
                     text = label,
                     color = if (isFocused) colors.textOnAccent else colors.textPrimary,
                     fontSize = 16.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     fontWeight = FontWeight.SemiBold,
                     letterSpacing = 1.sp
             )
@@ -2348,7 +2383,7 @@ private fun LibrarySyncBanner(progress: Float, itemsIndexed: Int, section: Secti
                 text = "Syncing $sectionLabel library · $itemsIndexed items",
                 color = AppTheme.colors.textPrimary,
                 fontSize = 13.sp,
-                fontFamily = FontFamily.Serif,
+                fontFamily = AppTheme.fontFamily,
                 letterSpacing = 0.3.sp
         )
         Spacer(modifier = Modifier.height(8.dp))
@@ -2377,7 +2412,7 @@ private fun TopBar(title: String, showBack: Boolean, onBack: () -> Unit, onSetti
                 text = title,
                 color = AppTheme.colors.textPrimary,
                 fontSize = 20.sp,
-                fontFamily = FontFamily.Serif,
+                fontFamily = AppTheme.fontFamily,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.2.sp,
                 modifier = Modifier.weight(1f)
@@ -2437,7 +2472,7 @@ private fun TopBarButton(
                 text = label,
                 color = if (isFocused) AppTheme.colors.textOnAccent else AppTheme.colors.textPrimary,
                 fontSize = 14.sp,
-                fontFamily = FontFamily.Serif,
+                fontFamily = AppTheme.fontFamily,
                 fontWeight = FontWeight.SemiBold,
                 letterSpacing = 0.8.sp
         )
@@ -2569,7 +2604,7 @@ private fun RowScope.HomeCard(
                             if (isFocused) AppTheme.colors.textOnAccent
                             else AppTheme.colors.textPrimary,
                     fontSize = 22.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.4.sp
             )
@@ -2577,7 +2612,7 @@ private fun RowScope.HomeCard(
                     text = description,
                     color = AppTheme.colors.textSecondary,
                     fontSize = 13.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     letterSpacing = 0.4.sp
             )
         }
@@ -2904,14 +2939,14 @@ private fun PrimarySidebar(
                     text = "Loading categories...",
                     color = AppTheme.colors.textSecondary,
                     fontSize = 12.sp,
-                    fontFamily = FontFamily.Serif
+                    fontFamily = AppTheme.fontFamily
             )
         } else if (categoriesError != null) {
             Text(
                     text = categoriesError,
                     color = AppTheme.colors.error,
                     fontSize = 12.sp,
-                    fontFamily = FontFamily.Serif
+                    fontFamily = AppTheme.fontFamily
             )
         } else {
             val scrollState = rememberScrollState()
@@ -2976,7 +3011,7 @@ private fun SecondarySidebar(
                 text = listTitle,
                 color = AppTheme.colors.textPrimary,
                 fontSize = 16.sp,
-                fontFamily = FontFamily.Serif,
+                fontFamily = AppTheme.fontFamily,
                 fontWeight = FontWeight.SemiBold
         )
         Spacer(modifier = Modifier.height(12.dp))
@@ -3070,7 +3105,7 @@ private fun SecondarySidebar(
                         text = "Select a category",
                         color = AppTheme.colors.textSecondary,
                         fontSize = 13.sp,
-                        fontFamily = FontFamily.Serif
+                        fontFamily = AppTheme.fontFamily
                 )
             }
             else -> {
@@ -3079,7 +3114,7 @@ private fun SecondarySidebar(
                             text = "Select a tab to browse",
                             color = AppTheme.colors.textSecondary,
                             fontSize = 13.sp,
-                            fontFamily = FontFamily.Serif
+                            fontFamily = AppTheme.fontFamily
                     )
                 } else {
                     PagedContentList(
@@ -3146,7 +3181,7 @@ private fun RowScope.PreviewPanel(
                     text = "Select a ${contentType.label.lowercase()} to preview",
                     color = AppTheme.colors.textSecondary,
                     fontSize = 14.sp,
-                    fontFamily = FontFamily.Serif
+                    fontFamily = AppTheme.fontFamily
             )
         } else {
             Column(
@@ -3189,14 +3224,14 @@ private fun RowScope.PreviewPanel(
                         text = previewItem.title,
                         color = AppTheme.colors.textPrimary,
                         fontSize = 20.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold
                 )
                 Text(
                         text = previewItem.subtitle,
                         color = AppTheme.colors.textSecondary,
                         fontSize = 13.sp,
-                        fontFamily = FontFamily.Serif
+                        fontFamily = AppTheme.fontFamily
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 val canPlay =
@@ -3225,7 +3260,7 @@ private fun SidebarLabel(text: String) {
             text = text,
             color = AppTheme.colors.textTertiary,
             fontSize = 11.sp,
-            fontFamily = FontFamily.Serif,
+            fontFamily = AppTheme.fontFamily,
             letterSpacing = 1.sp
     )
 }
@@ -3297,7 +3332,7 @@ private fun SidebarItem(
                 text = label,
                 color = textColor,
                 fontSize = 14.sp,
-                fontFamily = FontFamily.Serif,
+                fontFamily = AppTheme.fontFamily,
                 modifier = Modifier.padding(start = 12.dp)
         )
     }
@@ -3322,7 +3357,7 @@ private fun StaticContentList(
                 text = emptyLabel,
                 color = AppTheme.colors.textSecondary,
                 fontSize = 13.sp,
-                fontFamily = FontFamily.Serif
+                fontFamily = AppTheme.fontFamily
         )
         return
     }
@@ -3374,7 +3409,7 @@ private fun PagedContentList(
                 text = "Loading...",
                 color = AppTheme.colors.textSecondary,
                 fontSize = 13.sp,
-                fontFamily = FontFamily.Serif
+                fontFamily = AppTheme.fontFamily
         )
         return
     }
@@ -3383,7 +3418,7 @@ private fun PagedContentList(
                 text = "Content failed to load",
                 color = AppTheme.colors.error,
                 fontSize = 13.sp,
-                fontFamily = FontFamily.Serif
+                fontFamily = AppTheme.fontFamily
         )
         return
     }
@@ -3392,7 +3427,7 @@ private fun PagedContentList(
                 text = emptyLabel,
                 color = AppTheme.colors.textSecondary,
                 fontSize = 13.sp,
-                fontFamily = FontFamily.Serif
+                fontFamily = AppTheme.fontFamily
         )
         return
     }
@@ -3571,14 +3606,14 @@ private fun ContentListItem(
                         text = item.title,
                         color = AppTheme.colors.textPrimary,
                         fontSize = 14.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         maxLines = 1
                 )
                 Text(
                         text = item.subtitle,
                         color = AppTheme.colors.textSecondary,
                         fontSize = 11.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         maxLines = 1
                 )
             }
@@ -3762,7 +3797,7 @@ private fun ContentCard(
                         text = title,
                         color = titleColor,
                         fontSize = titleFontSize,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold,
                         letterSpacing = 0.3.sp
                 )
@@ -3770,7 +3805,7 @@ private fun ContentCard(
                         text = subtitle,
                         color = subtitleColor,
                         fontSize = subtitleFontSize,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         letterSpacing = 0.2.sp
                 )
             }
@@ -3929,7 +3964,7 @@ private fun ContinueWatchingCard(
                         text = title,
                         color = cardTitleColor(colors),
                         fontSize = 16.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold,
                         letterSpacing = 0.3.sp
                 )
@@ -3937,7 +3972,7 @@ private fun ContinueWatchingCard(
                         text = "$subtitle • $progressPercent% watched",
                         color = cardSubtitleColor(colors),
                         fontSize = 12.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         letterSpacing = 0.2.sp
                 )
             }
@@ -4156,7 +4191,7 @@ private fun CategoryCard(
             text = label,
             color = labelColor,
             fontSize = 16.sp,
-            fontFamily = FontFamily.Serif,
+            fontFamily = AppTheme.fontFamily,
             fontWeight = FontWeight.SemiBold,
             letterSpacing = 0.3.sp
     )
@@ -4253,7 +4288,7 @@ private fun CategoryTypeTab(
                 text = label,
                 color = textColor,
                 fontSize = 13.sp,
-                fontFamily = FontFamily.Serif,
+                fontFamily = AppTheme.fontFamily,
                 fontWeight = FontWeight.SemiBold,
                 letterSpacing = 0.6.sp
         )
@@ -4348,7 +4383,7 @@ private fun SearchInput(
                             TextStyle(
                                     color = colors.textPrimary,
                                     fontSize = 13.sp,
-                                    fontFamily = FontFamily.Serif,
+                                    fontFamily = AppTheme.fontFamily,
                                     fontWeight = FontWeight.Medium,
                                     letterSpacing = 0.3.sp
                             ),
@@ -4372,7 +4407,7 @@ private fun SearchInput(
                                         text = placeholder,
                                         color = colors.textSecondary,
                                         fontSize = 13.sp,
-                                        fontFamily = FontFamily.Serif,
+                                        fontFamily = AppTheme.fontFamily,
                                         letterSpacing = 0.3.sp
                                 )
                             }
@@ -4563,7 +4598,7 @@ fun SectionScreen(
                             text = title,
                             color = AppTheme.colors.textPrimary,
                             fontSize = 20.sp,
-                            fontFamily = FontFamily.Serif,
+                            fontFamily = AppTheme.fontFamily,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 1.sp
                     )
@@ -4587,7 +4622,7 @@ fun SectionScreen(
                                     else "Searching...",
                             color = AppTheme.colors.textSecondary,
                             fontSize = 14.sp,
-                            fontFamily = FontFamily.Serif,
+                            fontFamily = AppTheme.fontFamily,
                             letterSpacing = 0.6.sp,
                             modifier =
                                     Modifier.focusRequester(contentItemFocusRequester).focusable()
@@ -4599,7 +4634,7 @@ fun SectionScreen(
                                     else "Search failed to load",
                             color = AppTheme.colors.error,
                             fontSize = 14.sp,
-                            fontFamily = FontFamily.Serif,
+                            fontFamily = AppTheme.fontFamily,
                             letterSpacing = 0.6.sp,
                             modifier =
                                     Modifier.focusRequester(contentItemFocusRequester).focusable()
@@ -4611,7 +4646,7 @@ fun SectionScreen(
                                     else "No results found",
                             color = AppTheme.colors.textSecondary,
                             fontSize = 14.sp,
-                            fontFamily = FontFamily.Serif,
+                            fontFamily = AppTheme.fontFamily,
                             letterSpacing = 0.6.sp,
                             modifier =
                                     Modifier.focusRequester(contentItemFocusRequester).focusable()
@@ -4741,7 +4776,7 @@ private fun LocalFilesScreen(
                         text = title,
                         color = AppTheme.colors.textPrimary,
                         fontSize = 20.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.sp
                 )
@@ -4778,7 +4813,7 @@ private fun LocalFilesScreen(
                     Text(
                             text = "Scan for media",
                             fontSize = 14.sp,
-                            fontFamily = FontFamily.Serif,
+                            fontFamily = AppTheme.fontFamily,
                             fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -4811,7 +4846,7 @@ private fun LocalFilesScreen(
                     Text(
                             text = "Refresh",
                             fontSize = 14.sp,
-                            fontFamily = FontFamily.Serif,
+                            fontFamily = AppTheme.fontFamily,
                             fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -4824,7 +4859,7 @@ private fun LocalFilesScreen(
                         text = "No media files found. Press the button to scan your device.",
                         color = AppTheme.colors.textSecondary,
                         fontSize = 14.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         letterSpacing = 0.6.sp,
                         modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
                 )
@@ -4856,7 +4891,7 @@ private fun LocalFilesScreen(
                                         text = volumeName,
                                         color = AppTheme.colors.textTertiary,
                                         fontSize = 12.sp,
-                                        fontFamily = FontFamily.Serif,
+                                        fontFamily = AppTheme.fontFamily,
                                         fontWeight = FontWeight.Bold,
                                         letterSpacing = 1.sp,
                                         modifier = Modifier.padding(horizontal = 12.dp)
@@ -4992,7 +5027,7 @@ private fun LocalFilesScreen(
                                         text = item.displayName,
                                         color = AppTheme.colors.textPrimary,
                                         fontSize = 15.sp,
-                                        fontFamily = FontFamily.Serif,
+                                        fontFamily = AppTheme.fontFamily,
                                         fontWeight = FontWeight.Medium,
                                         maxLines = 1,
                                         modifier = Modifier.weight(1f)
@@ -5086,9 +5121,11 @@ fun FavoritesScreen(
     var selectedSeries by remember { mutableStateOf<ContentItem?>(null) }
     var pendingSeriesReturnFocus by remember { mutableStateOf(false) }
     var pendingViewFocus by remember { mutableStateOf(false) }
+    var pendingCategoryEnterFocus by remember { mutableStateOf(false) }
     var lastMenuSelection by remember { mutableStateOf(FavoritesView.ITEMS) }
     val menuFocusRequesters = remember { listOf(FocusRequester(), FocusRequester()) }
     val backFocusRequester = remember { FocusRequester() }
+    val categoryContentBackFocusRequester = remember { FocusRequester() }
     val itemsEmptyFocusRequester = remember { FocusRequester() }
     val categoriesEmptyFocusRequester = remember { FocusRequester() }
     val sortedContent =
@@ -5105,6 +5142,7 @@ fun FavoritesScreen(
             selectedCategory = null
             selectedSeries = null
             pendingSeriesReturnFocus = false
+            pendingCategoryEnterFocus = false
         }
     }
 
@@ -5127,10 +5165,12 @@ fun FavoritesScreen(
             runCatching { contentItemFocusRequester.requestFocus() }
             selectedCategory = null
             pendingViewFocus = true
+            pendingCategoryEnterFocus = false
         } else {
             lastMenuSelection = activeView
             activeView = FavoritesView.MENU
             pendingViewFocus = true
+            pendingCategoryEnterFocus = false
         }
     }
 
@@ -5230,7 +5270,7 @@ fun FavoritesScreen(
                         text = title,
                         color = AppTheme.colors.textPrimary,
                         fontSize = 20.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.sp
                 )
@@ -5414,6 +5454,29 @@ fun FavoritesScreen(
                                             .flow
                                 }
                         val lazyItems = pagerFlow.collectAsLazyPagingItems()
+                        LaunchedEffect(
+                                pendingCategoryEnterFocus,
+                                lazyItems.itemCount,
+                                lazyItems.loadState.refresh,
+                                selectedSeries
+                        ) {
+                            if (!pendingCategoryEnterFocus || selectedSeries != null) {
+                                return@LaunchedEffect
+                            }
+                            // Wait for items to be available before attempting focus
+                            if (lazyItems.itemCount == 0) return@LaunchedEffect
+                            withFrameNanos {}
+                            delay(32)
+                            withFrameNanos {}
+                            repeat(5) { attempt ->
+                                runCatching { contentItemFocusRequester.requestFocus() }
+                                if (attempt < 4) {
+                                    delay(32)
+                                    withFrameNanos {}
+                                }
+                            }
+                            pendingCategoryEnterFocus = false
+                        }
                         // Focus is managed by user navigation - no auto-focus on content load
                         Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -5423,10 +5486,10 @@ fun FavoritesScreen(
                                     text = "< BACK",
                                     color = AppTheme.colors.textPrimary,
                                     fontSize = 14.sp,
-                                    fontFamily = FontFamily.Serif,
+                                    fontFamily = AppTheme.fontFamily,
                                     fontWeight = FontWeight.SemiBold,
                                     modifier =
-                                            Modifier.focusRequester(backFocusRequester)
+                                            Modifier.focusRequester(categoryContentBackFocusRequester)
                                                     .focusable()
                                                     .clickable(
                                                             interactionSource =
@@ -5443,6 +5506,9 @@ fun FavoritesScreen(
                                                             false
                                                         } else if (it.key == Key.DirectionLeft) {
                                                             onMoveLeft()
+                                                            true
+                                                        } else if (it.key == Key.DirectionDown) {
+                                                            contentItemFocusRequester.requestFocus()
                                                             true
                                                         } else if (it.key == Key.Enter ||
                                                                         it.key == Key.NumPadEnter ||
@@ -5462,7 +5528,7 @@ fun FavoritesScreen(
                                     text = category.name,
                                     color = AppTheme.colors.textPrimary,
                                     fontSize = 16.sp,
-                                    fontFamily = FontFamily.Serif,
+                                    fontFamily = AppTheme.fontFamily,
                                     fontWeight = FontWeight.Medium
                             )
                         }
@@ -5474,24 +5540,33 @@ fun FavoritesScreen(
                                     text = "Loading content...",
                                     color = AppTheme.colors.textSecondary,
                                     fontSize = 14.sp,
-                                    fontFamily = FontFamily.Serif,
-                                    letterSpacing = 0.6.sp
+                                    fontFamily = AppTheme.fontFamily,
+                                    letterSpacing = 0.6.sp,
+                                    modifier =
+                                            Modifier.focusRequester(contentItemFocusRequester)
+                                                    .focusable()
                             )
                         } else if (lazyItems.loadState.refresh is LoadState.Error) {
                             Text(
                                     text = "Content failed to load",
                                     color = AppTheme.colors.error,
                                     fontSize = 14.sp,
-                                    fontFamily = FontFamily.Serif,
-                                    letterSpacing = 0.6.sp
+                                    fontFamily = AppTheme.fontFamily,
+                                    letterSpacing = 0.6.sp,
+                                    modifier =
+                                            Modifier.focusRequester(contentItemFocusRequester)
+                                                    .focusable()
                             )
                         } else if (lazyItems.itemCount == 0) {
                             Text(
                                     text = "No content yet",
                                     color = AppTheme.colors.textSecondary,
                                     fontSize = 14.sp,
-                                    fontFamily = FontFamily.Serif,
-                                    letterSpacing = 0.6.sp
+                                    fontFamily = AppTheme.fontFamily,
+                                    letterSpacing = 0.6.sp,
+                                    modifier =
+                                            Modifier.focusRequester(contentItemFocusRequester)
+                                                    .focusable()
                             )
                         } else {
                             LazyVerticalGrid(
@@ -5553,7 +5628,7 @@ fun FavoritesScreen(
                                             onMoveLeft = onMoveLeft,
                                             onMoveUp =
                                                     if (isTopRow) {
-                                                        { backFocusRequester.requestFocus() }
+                                                        { categoryContentBackFocusRequester.requestFocus() }
                                                     } else {
                                                         null
                                                     },
@@ -5620,6 +5695,7 @@ fun FavoritesScreen(
                                         onActivate = {
                                             selectedSeries = null
                                             selectedCategory = category
+                                            pendingCategoryEnterFocus = true
                                         },
                                         onMoveLeft = onMoveLeft,
                                         onMoveUp =
@@ -5666,7 +5742,7 @@ private fun ColumnScope.EmptyFavoritesState(message: String, focusRequester: Foc
                 text = message,
                 color = AppTheme.colors.textSecondary,
                 fontSize = 14.sp,
-                fontFamily = FontFamily.Serif,
+                fontFamily = AppTheme.fontFamily,
                 letterSpacing = 0.6.sp
         )
     }
@@ -5802,7 +5878,7 @@ fun CategorySectionScreen(
                             text = title,
                             color = AppTheme.colors.textPrimary,
                             fontSize = 20.sp,
-                            fontFamily = FontFamily.Serif,
+                            fontFamily = AppTheme.fontFamily,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 1.sp
                     )
@@ -5942,7 +6018,7 @@ fun CategorySectionScreen(
                             text = if (activeQuery.isBlank()) category.name else "Search results",
                             color = AppTheme.colors.textPrimary,
                             fontSize = 16.sp,
-                            fontFamily = FontFamily.Serif,
+                            fontFamily = AppTheme.fontFamily,
                             fontWeight = FontWeight.Medium
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -5954,7 +6030,7 @@ fun CategorySectionScreen(
                                         else "Searching...",
                                 color = AppTheme.colors.textSecondary,
                                 fontSize = 14.sp,
-                                fontFamily = FontFamily.Serif,
+                                fontFamily = AppTheme.fontFamily,
                                 letterSpacing = 0.6.sp,
                                 modifier =
                                         Modifier.focusRequester(contentItemFocusRequester)
@@ -5967,7 +6043,7 @@ fun CategorySectionScreen(
                                         else "Search failed to load",
                                 color = AppTheme.colors.error,
                                 fontSize = 14.sp,
-                                fontFamily = FontFamily.Serif,
+                                fontFamily = AppTheme.fontFamily,
                                 letterSpacing = 0.6.sp,
                                 modifier =
                                         Modifier.focusRequester(contentItemFocusRequester)
@@ -5980,7 +6056,7 @@ fun CategorySectionScreen(
                                         else "No results found",
                                 color = AppTheme.colors.textSecondary,
                                 fontSize = 14.sp,
-                                fontFamily = FontFamily.Serif,
+                                fontFamily = AppTheme.fontFamily,
                                 letterSpacing = 0.6.sp,
                                 modifier =
                                         Modifier.focusRequester(contentItemFocusRequester)
@@ -6059,7 +6135,7 @@ fun CategorySectionScreen(
                         text = "Loading categories...",
                         color = AppTheme.colors.textSecondary,
                         fontSize = 14.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         letterSpacing = 0.6.sp,
                         modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
                 )
@@ -6068,7 +6144,7 @@ fun CategorySectionScreen(
                         text = errorMessage ?: "Failed to load categories",
                         color = AppTheme.colors.error,
                         fontSize = 14.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         letterSpacing = 0.6.sp,
                         modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
                 )
@@ -6094,7 +6170,7 @@ fun CategorySectionScreen(
                             text = "No categories found",
                             color = AppTheme.colors.textSecondary,
                             fontSize = 14.sp,
-                            fontFamily = FontFamily.Serif,
+                            fontFamily = AppTheme.fontFamily,
                             letterSpacing = 0.6.sp,
                             modifier =
                                     Modifier.focusRequester(contentItemFocusRequester).focusable()
@@ -6199,7 +6275,7 @@ fun ContinueWatchingScreen(
                     text = title,
                     color = AppTheme.colors.textPrimary,
                     fontSize = 20.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp
             )
@@ -6211,7 +6287,7 @@ fun ContinueWatchingScreen(
                         text = "No items in progress",
                         color = AppTheme.colors.textSecondary,
                         fontSize = 14.sp,
-                        fontFamily = FontFamily.Serif,
+                        fontFamily = AppTheme.fontFamily,
                         letterSpacing = 0.6.sp,
                         modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
                 )
@@ -6382,7 +6458,7 @@ fun SeriesSeasonsScreen(
                     text = seriesItem.title,
                     color = AppTheme.colors.textPrimary,
                     fontSize = 16.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     fontWeight = FontWeight.Medium
             )
         }
@@ -6392,7 +6468,7 @@ fun SeriesSeasonsScreen(
                     text = "Loading seasons...",
                     color = AppTheme.colors.textSecondary,
                     fontSize = 14.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     letterSpacing = 0.6.sp,
                     modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
             )
@@ -6401,7 +6477,7 @@ fun SeriesSeasonsScreen(
                     text = errorMessage ?: "Failed to load seasons",
                     color = AppTheme.colors.error,
                     fontSize = 14.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     letterSpacing = 0.6.sp,
                     modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
             )
@@ -6410,7 +6486,7 @@ fun SeriesSeasonsScreen(
                     text = "No seasons yet",
                     color = AppTheme.colors.textSecondary,
                     fontSize = 14.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     letterSpacing = 0.6.sp,
                     modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
             )
@@ -6432,7 +6508,7 @@ fun SeriesSeasonsScreen(
                             text = "SEASONS",
                             color = AppTheme.colors.textTertiary,
                             fontSize = 11.sp,
-                            fontFamily = FontFamily.Serif,
+                            fontFamily = AppTheme.fontFamily,
                             letterSpacing = 1.sp
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -6467,7 +6543,7 @@ fun SeriesSeasonsScreen(
                             text = selectedSeason?.displayLabel ?: "Select a season",
                             color = AppTheme.colors.textPrimary,
                             fontSize = 16.sp,
-                            fontFamily = FontFamily.Serif,
+                            fontFamily = AppTheme.fontFamily,
                             fontWeight = FontWeight.Medium
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -6476,7 +6552,7 @@ fun SeriesSeasonsScreen(
                                 text = "No episodes yet",
                                 color = AppTheme.colors.textSecondary,
                                 fontSize = 14.sp,
-                                fontFamily = FontFamily.Serif,
+                                fontFamily = AppTheme.fontFamily,
                                 letterSpacing = 0.6.sp
                         )
                     } else {
@@ -6599,7 +6675,7 @@ fun SeriesEpisodesScreen(
                     text = seriesItem.title,
                     color = AppTheme.colors.textPrimary,
                     fontSize = 16.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     fontWeight = FontWeight.Medium
             )
         }
@@ -6609,7 +6685,7 @@ fun SeriesEpisodesScreen(
                     text = "Loading episodes...",
                     color = AppTheme.colors.textSecondary,
                     fontSize = 14.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     letterSpacing = 0.6.sp,
                     modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
             )
@@ -6618,7 +6694,7 @@ fun SeriesEpisodesScreen(
                     text = "Episodes failed to load",
                     color = AppTheme.colors.error,
                     fontSize = 14.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     letterSpacing = 0.6.sp,
                     modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
             )
@@ -6627,7 +6703,7 @@ fun SeriesEpisodesScreen(
                     text = "No episodes yet",
                     color = AppTheme.colors.textSecondary,
                     fontSize = 14.sp,
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = AppTheme.fontFamily,
                     letterSpacing = 0.6.sp,
                     modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
             )
