@@ -265,7 +265,7 @@ private fun CloseButton(
             text = "Close",
             color = if (isFocused) colors.textOnAccent else colors.textPrimary,
             fontSize = 16.sp,
-            fontFamily = AppTheme.colors.textPrimary.let { AppFont.DEFAULT.fontFamily },
+            fontFamily = AppTheme.fontFamily,
             fontWeight = FontWeight.SemiBold
         )
     }
