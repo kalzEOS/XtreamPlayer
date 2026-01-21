@@ -53,8 +53,8 @@ fun FocusableButton(
         }
     }
 
-    Box(
-        modifier = modifier
+    val baseModifier =
+        modifier
             .clip(shape)
             .drawWithContent {
                 drawContent()
@@ -74,22 +74,22 @@ fun FocusableButton(
                     drawRect(brush = gradientBrush)
                 }
             }
-    ) {
-        Button(
-            onClick = onClick,
-            enabled = enabled,
-            colors = colors,
-            interactionSource = interactionSource,
-            shape = shape,
-            modifier = Modifier.then(
+            .then(
                 if (isFocused) {
                     Modifier.border(2.dp, FocusBorderColor, shape)
                 } else {
                     Modifier
                 }
             )
-        ) {
-            content()
-        }
+
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        colors = colors,
+        interactionSource = interactionSource,
+        shape = shape,
+        modifier = baseModifier
+    ) {
+        content()
     }
 }

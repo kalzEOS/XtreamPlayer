@@ -4032,6 +4032,7 @@ private fun CategoryCard(
         onActivate: () -> Unit,
         onMoveLeft: () -> Unit,
         onMoveUp: (() -> Unit)? = null,
+        onMoveDown: (() -> Unit)? = null,
         onLongClick: (() -> Unit)? = null,
         forceDarkText: Boolean = false,
         useContrastText: Boolean = false
@@ -4098,6 +4099,10 @@ private fun CategoryCard(
                                             }
                                             onMoveUp != null && it.key == Key.DirectionUp -> {
                                                 onMoveUp()
+                                                true
+                                            }
+                                            onMoveDown != null && it.key == Key.DirectionDown -> {
+                                                onMoveDown()
                                                 true
                                             }
                                             isSelectKey -> {
@@ -4876,8 +4881,7 @@ private fun LocalFilesScreen(
                         color = AppTheme.colors.textSecondary,
                         fontSize = 14.sp,
                         fontFamily = AppTheme.fontFamily,
-                        letterSpacing = 0.6.sp,
-                        modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
+                        letterSpacing = 0.6.sp
                 )
             } else {
                 // Group files by volume name
@@ -5141,8 +5145,6 @@ fun FavoritesScreen(
     var lastMenuSelection by remember { mutableStateOf(FavoritesView.ITEMS) }
     val menuFocusRequesters = remember { listOf(FocusRequester(), FocusRequester()) }
     val backFocusRequester = remember { FocusRequester() }
-    val itemsEmptyFocusRequester = remember { FocusRequester() }
-    val categoriesEmptyFocusRequester = remember { FocusRequester() }
     val sortedContent =
             remember(favoriteContentItems) {
                 favoriteContentItems.sortedBy { it.title.lowercase() }
@@ -5241,7 +5243,7 @@ fun FavoritesScreen(
                         resumeFocusId != null && sortedContent.any { it.id == resumeFocusId }
                 val requester =
                         if (sortedContent.isEmpty()) {
-                            itemsEmptyFocusRequester
+                            contentItemFocusRequester
                         } else if (shouldResume) {
                             resumeFocusRequester
                         } else {
@@ -5251,11 +5253,7 @@ fun FavoritesScreen(
             }
             FavoritesView.CATEGORIES -> {
                 val requester =
-                        if (sortedCategories.isEmpty()) {
-                            categoriesEmptyFocusRequester
-                        } else {
-                            contentItemFocusRequester
-                        }
+                        contentItemFocusRequester
                 requester.requestFocus()
             }
         }
@@ -5291,19 +5289,34 @@ fun FavoritesScreen(
                 )
                 Spacer(modifier = Modifier.weight(1f))
                 if (activeView != FavoritesView.MENU) {
+                    val backMoveDown: () -> Unit = { contentItemFocusRequester.requestFocus() }
                     CategoryTypeTab(
                             label = "Back",
                             selected = false,
                             focusRequester = backFocusRequester,
                             onActivate = {
-                                lastMenuSelection = activeView
-                                selectedSeries = null
-                                selectedCategory = null
-                                activeView = FavoritesView.MENU
-                                pendingViewFocus = true
+                                when {
+                                    selectedSeries != null -> {
+                                        onItemFocused(selectedSeries!!)
+                                        runCatching { contentItemFocusRequester.requestFocus() }
+                                        pendingSeriesReturnFocus = true
+                                        selectedSeries = null
+                                    }
+                                    selectedCategory != null -> {
+                                        selectedCategory = null
+                                        pendingCategoryEnterFocus = false
+                                        pendingViewFocus = true
+                                    }
+                                    else -> {
+                                        lastMenuSelection = activeView
+                                        activeView = FavoritesView.MENU
+                                        pendingCategoryEnterFocus = false
+                                        pendingViewFocus = true
+                                    }
+                                }
                             },
                             onMoveLeft = onMoveLeft,
-                            onMoveDown = { contentItemFocusRequester.requestFocus() }
+                            onMoveDown = backMoveDown
                     )
                 }
             }
@@ -5351,6 +5364,13 @@ fun FavoritesScreen(
                                     pendingViewFocus = true
                                 },
                                 onMoveLeft = onMoveLeft,
+                                onMoveDown = {
+                                    lastMenuSelection = FavoritesView.ITEMS
+                                    selectedSeries = null
+                                    selectedCategory = null
+                                    activeView = FavoritesView.ITEMS
+                                    pendingViewFocus = true
+                                },
                                 forceDarkText = isLightTheme(AppTheme.colors)
                         )
                     }
@@ -5370,6 +5390,13 @@ fun FavoritesScreen(
                                     pendingViewFocus = true
                                 },
                                 onMoveLeft = onMoveLeft,
+                                onMoveDown = {
+                                    lastMenuSelection = FavoritesView.CATEGORIES
+                                    selectedSeries = null
+                                    selectedCategory = null
+                                    activeView = FavoritesView.CATEGORIES
+                                    pendingViewFocus = true
+                                },
                                 forceDarkText = isLightTheme(AppTheme.colors)
                         )
                     }
@@ -5384,7 +5411,9 @@ fun FavoritesScreen(
                             }
                     EmptyFavoritesState(
                             message = message,
-                            focusRequester = itemsEmptyFocusRequester
+                            focusRequester = contentItemFocusRequester,
+                            onMoveUp = { backFocusRequester.requestFocus() },
+                            onMoveLeft = onMoveLeft
                     )
                 } else {
                     LazyVerticalGrid(
@@ -5626,7 +5655,9 @@ fun FavoritesScreen(
                                 }
                         EmptyFavoritesState(
                                 message = message,
-                                focusRequester = categoriesEmptyFocusRequester
+                                focusRequester = contentItemFocusRequester,
+                                onMoveUp = { backFocusRequester.requestFocus() },
+                                onMoveLeft = onMoveLeft
                         )
                     } else {
                         LazyVerticalGrid(
@@ -5689,7 +5720,12 @@ fun FavoritesScreen(
 }
 
 @Composable
-private fun ColumnScope.EmptyFavoritesState(message: String, focusRequester: FocusRequester) {
+private fun ColumnScope.EmptyFavoritesState(
+        message: String,
+        focusRequester: FocusRequester,
+        onMoveUp: (() -> Unit)? = null,
+        onMoveLeft: (() -> Unit)? = null
+) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val shape = RoundedCornerShape(14.dp)
@@ -5701,6 +5737,19 @@ private fun ColumnScope.EmptyFavoritesState(message: String, focusRequester: Foc
                             .weight(1f)
                             .focusRequester(focusRequester)
                             .focusable(interactionSource = interactionSource)
+                            .onKeyEvent {
+                                if (it.type != KeyEventType.KeyDown) {
+                                    false
+                                } else if (it.key == Key.DirectionUp && onMoveUp != null) {
+                                    onMoveUp()
+                                    true
+                                } else if (it.key == Key.DirectionLeft && onMoveLeft != null) {
+                                    onMoveLeft()
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
                             .clip(shape)
                             .background(backgroundColor)
                             .border(1.dp, borderColor, shape)
@@ -6369,18 +6418,23 @@ fun SeriesSeasonsScreen(
 
     val seasonFocusRequesters =
             remember(seasonGroups.size) { List(seasonGroups.size) { FocusRequester() } }
+    val episodesPrimaryFocusRequester = remember { FocusRequester() }
+    val seasonPrimaryFocusRequester = remember { FocusRequester() }
+    fun seasonRequesterFor(index: Int): FocusRequester? {
+        return if (index == 0) {
+            seasonPrimaryFocusRequester
+        } else {
+            seasonFocusRequesters.getOrNull(index)
+        }
+    }
 
     // Keep focus inside the series view when the details screen opens.
 
     val selectedSeason = seasonGroups.getOrNull(selectedSeasonIndex)
     val selectedEpisodes = selectedSeason?.episodes.orEmpty()
     val columns = 1
-    val episodesFocusRequester =
-            if (resumeFocusId != null && selectedEpisodes.any { it.id == resumeFocusId }) {
-                resumeFocusRequester
-            } else {
-                contentItemFocusRequester
-            }
+    val handleEpisodeFocused: (ContentItem) -> Unit = {}
+    val episodesFocusRequester = episodesPrimaryFocusRequester
 
     LaunchedEffect(pendingEpisodeFocus, selectedSeasonIndex, selectedEpisodes.size) {
         if (pendingEpisodeFocus && selectedEpisodes.isNotEmpty()) {
@@ -6409,7 +6463,7 @@ fun SeriesSeasonsScreen(
         }
         if (!initialFocusSet && seasonGroups.isNotEmpty()) {
             withFrameNanos {}
-            seasonFocusRequesters.firstOrNull()?.requestFocus()
+            contentItemFocusRequester.requestFocus()
             initialFocusSet = true
         }
     }
@@ -6472,6 +6526,14 @@ fun SeriesSeasonsScreen(
                                         .background(AppTheme.colors.panelBackground)
                                         .border(1.dp, AppTheme.colors.panelBorder, RoundedCornerShape(14.dp))
                                         .padding(12.dp)
+                                        .focusRequester(contentItemFocusRequester)
+                                        .focusable()
+                                        .onFocusChanged { state ->
+                                            if (state.isFocused) {
+                                                seasonRequesterFor(selectedSeasonIndex)
+                                                        ?.requestFocus()
+                                            }
+                                        }
                 ) {
                     Text(
                             text = "SEASONS",
@@ -6494,7 +6556,7 @@ fun SeriesSeasonsScreen(
                             CategoryTypeTab(
                                     label = label,
                                     selected = index == selectedSeasonIndex,
-                                    focusRequester = seasonFocusRequesters.getOrNull(index),
+                                    focusRequester = seasonRequesterFor(index),
                                     onActivate = {
                                         selectedSeasonIndex = index
                                         // Don't auto-focus episodes - user must press Right to
@@ -6538,8 +6600,7 @@ fun SeriesSeasonsScreen(
                                 val item = selectedEpisodes[index]
                                 val requester =
                                         when {
-                                            item.id == resumeFocusId -> resumeFocusRequester
-                                            index == 0 -> contentItemFocusRequester
+                                            index == 0 -> episodesPrimaryFocusRequester
                                             else -> null
                                         }
                                 val isLeftEdge = index % columns == 0
@@ -6550,10 +6611,9 @@ fun SeriesSeasonsScreen(
                                         isLeftEdge = isLeftEdge,
                                         isFavorite = isItemFavorite(item),
                                         onActivate = { onPlay(item, selectedEpisodes) },
-                                        onFocused = onItemFocused,
+                                        onFocused = handleEpisodeFocused,
                                         onMoveLeft = {
-                                            seasonFocusRequesters
-                                                    .getOrNull(selectedSeasonIndex)
+                                            seasonRequesterFor(selectedSeasonIndex)
                                                     ?.requestFocus()
                                                     ?: onMoveLeft()
                                         },
