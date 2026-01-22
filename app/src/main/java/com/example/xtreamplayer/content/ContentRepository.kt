@@ -5,7 +5,11 @@ import androidx.paging.PagingConfig
 import com.example.xtreamplayer.Section
 import com.example.xtreamplayer.api.XtreamApi
 import com.example.xtreamplayer.auth.AuthConfig
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -559,8 +563,8 @@ class ContentRepository(
     }
 
     suspend fun hasSearchIndex(authConfig: AuthConfig): Boolean {
-        return contentCache.hasSectionIndex(Section.SERIES, authConfig) ||
-            contentCache.hasSectionIndex(Section.MOVIES, authConfig) ||
+        return contentCache.hasSectionIndex(Section.SERIES, authConfig) &&
+            contentCache.hasSectionIndex(Section.MOVIES, authConfig) &&
             contentCache.hasSectionIndex(Section.LIVE, authConfig)
     }
 
@@ -571,91 +575,86 @@ class ContentRepository(
     ) {
         val sections = listOf(Section.SERIES, Section.MOVIES, Section.LIVE)
         val totalSections = sections.size
-        var completedSections = 0
-        val diskIndexState = mutableMapOf<Section, Boolean>()
-        var hasAnyIndex = false
-        sections.forEach { section ->
-            val key = indexKey(section, authConfig)
-            val hasDisk = contentCache.hasSectionIndex(section, authConfig)
-            diskIndexState[section] = hasDisk
-            if (sectionIndexCache.containsKey(key) || hasDisk) {
-                hasAnyIndex = true
-            }
-        }
-        val useBulk = force || !hasAnyIndex
-        sections.forEachIndexed { index, section ->
+
+        // Check which sections need syncing
+        data class SectionState(
+            val section: Section,
+            val index: Int,
+            val needsSync: Boolean,
+            val cachedItems: List<ContentItem>?
+        )
+
+        val sectionStates = sections.mapIndexed { index, section ->
             val key = indexKey(section, authConfig)
             val cached = sectionIndexCache[key]
-            val hasDisk = diskIndexState[section] == true
-            if (!force && (cached != null || hasDisk)) {
-                val existing = cached ?: loadSectionIndex(section, authConfig).orEmpty()
-                completedSections++
-                onProgress(
-                    LibrarySyncProgress(
-                        section = section,
-                        sectionIndex = index,
-                        totalSections = totalSections,
-                        itemsIndexed = existing.size,
-                        progress = completedSections.toFloat() / totalSections
-                    )
-                )
-                return@forEachIndexed
-            }
-            if (useBulk) {
-                val bulkResult = api.fetchSectionAll(section, authConfig)
-                if (bulkResult.isSuccess) {
-                    val items = bulkResult.getOrNull().orEmpty()
-                    if (items.isNotEmpty()) {
-                        sectionIndexCache[key] = items
-                        contentCache.writeSectionIndex(section, authConfig, items)
-                        withContext(Dispatchers.Default) {
-                            SearchNormalizer.preWarmCache(items.map { it.title })
-                        }
-                        completedSections++
-                        onProgress(
-                            LibrarySyncProgress(
-                                section = section,
-                                sectionIndex = index,
-                                totalSections = totalSections,
-                                itemsIndexed = items.size,
-                                progress = completedSections.toFloat() / totalSections
-                            )
-                        )
-                        return@forEachIndexed
-                    }
-                }
-            }
-            var pagesLoaded = 0
-            val items = buildSectionIndex(section, authConfig) { itemsIndexed ->
-                pagesLoaded += 1
-                val sectionProgress = sectionProgress(pagesLoaded)
-                val progress =
-                    (completedSections + sectionProgress) / totalSections.toFloat()
-                onProgress(
-                    LibrarySyncProgress(
-                        section = section,
-                        sectionIndex = index,
-                        totalSections = totalSections,
-                        itemsIndexed = itemsIndexed,
-                        progress = progress.coerceIn(0f, 1f)
-                    )
-                )
-            }
-            sectionIndexCache[key] = items
-            contentCache.writeSectionIndex(section, authConfig, items)
-            withContext(Dispatchers.Default) {
-                SearchNormalizer.preWarmCache(items.map { it.title })
-            }
+            val hasDisk = contentCache.hasSectionIndex(section, authConfig)
+            val needsSync = force || (cached == null && !hasDisk)
+            val cachedItems = if (!needsSync) {
+                cached ?: loadSectionIndex(section, authConfig).orEmpty()
+            } else null
+            SectionState(section, index, needsSync, cachedItems)
+        }
+
+        // Report progress for already-cached sections
+        var completedSections = 0
+        sectionStates.filter { !it.needsSync }.forEach { state ->
             completedSections++
             onProgress(
                 LibrarySyncProgress(
-                    section = section,
-                    sectionIndex = index,
+                    section = state.section,
+                    sectionIndex = state.index,
                     totalSections = totalSections,
-                    itemsIndexed = items.size,
+                    itemsIndexed = state.cachedItems?.size ?: 0,
                     progress = completedSections.toFloat() / totalSections
                 )
             )
+        }
+
+        // Fetch sections that need syncing in parallel
+        val sectionsToSync = sectionStates.filter { it.needsSync }
+        if (sectionsToSync.isEmpty()) return
+
+        val useBulk = force || sectionStates.all { it.needsSync }
+        val completedCounter = AtomicInteger(completedSections)
+        val totalItemsCounter = AtomicInteger(0)
+
+        coroutineScope {
+            sectionsToSync.map { state ->
+                async {
+                    val section = state.section
+                    val key = indexKey(section, authConfig)
+
+                    val items = if (useBulk) {
+                        val bulkResult = api.fetchSectionAll(section, authConfig)
+                        if (bulkResult.isSuccess) {
+                            bulkResult.getOrNull().orEmpty().ifEmpty { null }
+                        } else null
+                    } else null
+
+                    // Fall back to page-by-page if bulk didn't work
+                    val finalItems = items ?: buildSectionIndex(section, authConfig)
+
+                    // Cache results
+                    sectionIndexCache[key] = finalItems
+                    contentCache.writeSectionIndex(section, authConfig, finalItems)
+                    withContext(Dispatchers.Default) {
+                        SearchNormalizer.preWarmCache(finalItems.map { it.title })
+                    }
+
+                    // Report progress as this section completes
+                    val completed = completedCounter.incrementAndGet()
+                    val totalItems = totalItemsCounter.addAndGet(finalItems.size)
+                    onProgress(
+                        LibrarySyncProgress(
+                            section = section,
+                            sectionIndex = state.index,
+                            totalSections = totalSections,
+                            itemsIndexed = totalItems,
+                            progress = completed.toFloat() / totalSections
+                        )
+                    )
+                }
+            }.awaitAll()
         }
     }
 

@@ -41,10 +41,9 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -398,22 +397,19 @@ private fun SearchField(
     val wrapperInteractionSource = remember { MutableInteractionSource() }
     val isWrapperFocused by wrapperInteractionSource.collectIsFocusedAsState()
     val textFieldFocusRequester = remember { FocusRequester() }
-    var isTextFieldActive by remember { mutableStateOf(false) }
+    var isTextFieldFocused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(8.dp)
     val borderColor =
-        if (isWrapperFocused || isTextFieldActive) FocusBorderColor else SecondaryBorderColor
+        if (isWrapperFocused || isTextFieldFocused) FocusBorderColor else SecondaryBorderColor
     val context = LocalContext.current
-    val keyboardController = LocalSoftwareKeyboardController.current
     val inputMethodManager = remember(context) {
         context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
     }
     val showKeyboard = {
-        keyboardController?.show()
         @Suppress("DEPRECATION")
         inputMethodManager.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0)
     }
     val activateTextField = {
-        isTextFieldActive = true
         textFieldFocusRequester.requestFocus()
         showKeyboard()
     }
@@ -426,10 +422,7 @@ private fun SearchField(
             .padding(horizontal = 12.dp, vertical = 10.dp)
             .focusRequester(focusRequester)
             .focusable(interactionSource = wrapperInteractionSource)
-            .clickable(interactionSource = wrapperInteractionSource, indication = null) {
-                activateTextField()
-            }
-            .onPreviewKeyEvent { event ->
+            .onKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) {
                     false
                 } else when (event.key) {
@@ -438,16 +431,13 @@ private fun SearchField(
                         true
                     }
                     Key.DirectionRight -> {
-                        if (!isTextFieldActive) {
-                            onMoveRight()
-                            true
-                        } else {
-                            false
-                        }
+                        onMoveRight()
+                        true
                     }
                     else -> false
                 }
-            }
+            },
+        contentAlignment = Alignment.CenterStart
     ) {
         BasicTextField(
             value = value,
@@ -462,23 +452,8 @@ private fun SearchField(
             modifier = Modifier
                 .fillMaxWidth()
                 .focusRequester(textFieldFocusRequester)
-                .onPreviewKeyEvent { event ->
-                    if (!isTextFieldActive || event.type != KeyEventType.KeyDown) {
-                        false
-                    } else when (event.key) {
-                        Key.DirectionRight -> {
-                            isTextFieldActive = false
-                            focusRequester.requestFocus()
-                            onMoveRight()
-                            true
-                        }
-                        Key.Escape, Key.Back -> {
-                            isTextFieldActive = false
-                            focusRequester.requestFocus()
-                            true
-                        }
-                        else -> false
-                    }
+                .onFocusChanged { state ->
+                    isTextFieldFocused = state.isFocused
                 },
             decorationBox = { innerTextField ->
                 Box {
