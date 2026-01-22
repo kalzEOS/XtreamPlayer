@@ -35,5 +35,21 @@ Signed release APKs are published on GitHub Releases.
 The release keystore is private and not stored in this repo.
 
 ## screenshots
-![Home](docs/images/home.png)
-![Player](docs/images/player.png)
+![Categories – Dark Green](docs/images/categoriesdarkgreen.png)
+
+![Home – Light Green](docs/images/homelightgreen.png)
+
+![Home – Settings](docs/images/homesettings.png)
+
+![Live TV – Light Copper](docs/images/livelightcopper.png)
+
+![Local Files](docs/images/localfiles.png)
+
+![Series](docs/images/series.png)
+
+![Series – Pink Dark](docs/images/seriespinkdark.png)
+
+![Settings – Fonts](docs/images/settingsfonts.png)
+
+![Settings – Options](docs/images/settingsoptions.png)
+
