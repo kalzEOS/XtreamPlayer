@@ -6633,7 +6633,7 @@ fun SeriesSeasonsScreen(
     val selectedSeason = seasonGroups.getOrNull(selectedSeasonIndex)
     val selectedEpisodes = selectedSeason?.episodes.orEmpty()
     val columns = 1
-    val handleEpisodeFocused: (ContentItem) -> Unit = {}
+    val handleEpisodeFocused: (ContentItem) -> Unit = { item -> onItemFocused(item) }
     val episodesFocusRequester = episodesPrimaryFocusRequester
 
     LaunchedEffect(pendingEpisodeFocus, selectedSeasonIndex, selectedEpisodes.size) {
@@ -6800,6 +6800,7 @@ fun SeriesSeasonsScreen(
                                 val item = selectedEpisodes[index]
                                 val requester =
                                         when {
+                                            item.id == resumeFocusId -> resumeFocusRequester
                                             index == 0 -> episodesPrimaryFocusRequester
                                             else -> null
                                         }
