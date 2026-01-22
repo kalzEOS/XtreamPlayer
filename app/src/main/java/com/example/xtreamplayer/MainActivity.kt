@@ -136,6 +136,7 @@ import com.example.xtreamplayer.ui.SubtitleSearchDialog
 import com.example.xtreamplayer.ui.FontSelectionDialog
 import com.example.xtreamplayer.ui.ThemeSelectionDialog
 import com.example.xtreamplayer.ui.VideoResolutionDialog
+import com.example.xtreamplayer.ui.rememberDebouncedSearchState
 import com.example.xtreamplayer.ui.theme.AppTheme
 import com.example.xtreamplayer.ui.theme.AppColors
 import com.example.xtreamplayer.ui.theme.XtreamPlayerTheme
@@ -2483,13 +2484,6 @@ private fun FavoriteIndicator(modifier: Modifier = Modifier) {
 
 @Composable
 private fun LibrarySyncBanner(progress: Float, itemsIndexed: Int, section: Section) {
-    val sectionLabel =
-            when (section) {
-                Section.LIVE -> "Live"
-                Section.MOVIES -> "Movies"
-                Section.SERIES -> "Series"
-                else -> "Library"
-            }
     Column(
             modifier =
                     Modifier.fillMaxWidth()
@@ -2500,7 +2494,7 @@ private fun LibrarySyncBanner(progress: Float, itemsIndexed: Int, section: Secti
                             .padding(horizontal = 16.dp, vertical = 10.dp)
     ) {
         Text(
-                text = "Syncing $sectionLabel library · $itemsIndexed items",
+                text = if (itemsIndexed > 0) "Syncing library · $itemsIndexed items" else "Syncing library...",
                 color = AppTheme.colors.textPrimary,
                 fontSize = 13.sp,
                 fontFamily = AppTheme.fontFamily,
@@ -2764,8 +2758,7 @@ private fun ContentBrowserScreen(
     var primaryTab by remember { mutableStateOf(BrowserPrimaryTab.ALL) }
     var selectedCategory by remember { mutableStateOf<CategoryItem?>(null) }
     var selectedSeries by remember { mutableStateOf<ContentItem?>(null) }
-    var searchQuery by remember { mutableStateOf("") }
-    var debouncedQuery by remember { mutableStateOf("") }
+    val searchState = rememberDebouncedSearchState(key = contentType to authConfig)
     var categories by remember { mutableStateOf<List<CategoryItem>>(emptyList()) }
     var isLoadingCategories by remember { mutableStateOf(true) }
     var categoriesError by remember { mutableStateOf<String?>(null) }
@@ -2778,11 +2771,7 @@ private fun ContentBrowserScreen(
         primaryTab = BrowserPrimaryTab.ALL
         selectedCategory = null
         selectedSeries = null
-        searchQuery = ""
-        debouncedQuery = ""
     }
-
-    val performSearch = { debouncedQuery = SearchNormalizer.normalizeQuery(searchQuery) }
 
     LaunchedEffect(contentType, authConfig) {
         isLoadingCategories = true
@@ -2828,7 +2817,7 @@ private fun ContentBrowserScreen(
                         .filter { it.contentType == contentType }
             }
 
-    val normalizedQuery = debouncedQuery
+    val normalizedQuery = searchState.debouncedQuery
     val showSearch = normalizedQuery.isNotBlank()
 
     val allPagerFlow =
@@ -2932,9 +2921,9 @@ private fun ContentBrowserScreen(
     ) {
         PrimarySidebar(
                 contentType = contentType,
-                searchQuery = searchQuery,
-                onSearchChange = { searchQuery = it },
-                onSearch = performSearch,
+                searchQuery = searchState.query,
+                onSearchChange = { searchState.query = it },
+                onSearch = { searchState.performSearch() },
                 searchFocusRequester = searchFocusRequester,
                 primaryFocusRequester = primaryFocusRequester,
                 onMoveDownFromSearch = { primaryFocusRequester.requestFocus() },
@@ -4630,21 +4619,16 @@ fun SectionScreen(
 ) {
     val shape = RoundedCornerShape(18.dp)
     val columns = 3
-    var searchQuery by remember { mutableStateOf("") }
-    var debouncedQuery by remember { mutableStateOf("") }
+    val searchState = rememberDebouncedSearchState(key = section)
     var selectedSeries by remember { mutableStateOf<ContentItem?>(null) }
     var pendingSeriesReturnFocus by remember { mutableStateOf(false) }
     val searchFocusRequester = remember { FocusRequester() }
     LaunchedEffect(section) {
-        searchQuery = ""
-        debouncedQuery = ""
         selectedSeries = null
         pendingSeriesReturnFocus = false
     }
 
-    val performSearch = { debouncedQuery = SearchNormalizer.normalizeQuery(searchQuery) }
-
-    val activeQuery = debouncedQuery
+    val activeQuery = searchState.debouncedQuery
     val pagerFlow =
             remember(section, authConfig, activeQuery) {
                 if (activeQuery.isBlank()) {
@@ -4744,14 +4728,14 @@ fun SectionScreen(
                     )
                     Spacer(modifier = Modifier.weight(1f))
                     SearchInput(
-                            query = searchQuery,
-                            onQueryChange = { searchQuery = it },
+                            query = searchState.query,
+                            onQueryChange = { searchState.query = it },
                             placeholder = "Search...",
                             focusRequester = searchFocusRequester,
                             modifier = Modifier.width(240.dp),
                             onMoveLeft = onMoveLeft,
                             onMoveDown = { contentItemFocusRequester.requestFocus() },
-                            onSearch = performSearch
+                            onSearch = { searchState.performSearch() }
                     )
                 }
                 Spacer(modifier = Modifier.height(8.dp))
@@ -5992,21 +5976,13 @@ fun CategorySectionScreen(
     var categories by remember { mutableStateOf<List<CategoryItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    var searchQuery by remember { mutableStateOf("") }
-    var debouncedQuery by remember { mutableStateOf("") }
+    val searchState = rememberDebouncedSearchState(key = activeType)
     val columns = 3
     val tabFocusRequesters = remember { ContentType.values().map { FocusRequester() } }
     val backTabFocusRequester = remember { FocusRequester() }
     val searchFocusRequester = remember { FocusRequester() }
 
-    LaunchedEffect(activeType) {
-        searchQuery = ""
-        debouncedQuery = ""
-    }
-
-    val performSearch = { debouncedQuery = SearchNormalizer.normalizeQuery(searchQuery) }
-
-    val activeQuery = debouncedQuery
+    val activeQuery = searchState.debouncedQuery
 
     BackHandler(enabled = selectedCategory != null && selectedSeries == null) {
         // Request focus immediately before state change to avoid focus flashing to MenuButton
@@ -6143,8 +6119,8 @@ fun CategorySectionScreen(
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     SearchInput(
-                            query = searchQuery,
-                            onQueryChange = { searchQuery = it },
+                            query = searchState.query,
+                            onQueryChange = { searchState.query = it },
                             placeholder = "Search...",
                             focusRequester = searchFocusRequester,
                             modifier = Modifier.width(240.dp),
@@ -6157,7 +6133,7 @@ fun CategorySectionScreen(
                                 }
                             },
                             onMoveDown = { contentItemFocusRequester.requestFocus() },
-                            onSearch = performSearch
+                            onSearch = { searchState.performSearch() }
                     )
                 }
             }

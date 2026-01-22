@@ -41,7 +41,9 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -49,6 +51,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import android.content.Context
+import android.view.inputmethod.InputMethodManager
 import com.example.xtreamplayer.api.SubtitleSearchResult
 import com.example.xtreamplayer.player.VideoTrackInfo
 import com.example.xtreamplayer.ui.theme.AppTheme
@@ -390,57 +394,82 @@ private fun SearchField(
     onMoveRight: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isFocused by interactionSource.collectIsFocusedAsState()
+    val wrapperInteractionSource = remember { MutableInteractionSource() }
+    val isWrapperFocused by wrapperInteractionSource.collectIsFocusedAsState()
+    val textFieldFocusRequester = remember { FocusRequester() }
+    var isTextFieldFocused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(8.dp)
-    val borderColor = if (isFocused) FocusBorderColor else SecondaryBorderColor
+    val borderColor =
+        if (isWrapperFocused || isTextFieldFocused) FocusBorderColor else SecondaryBorderColor
+    val context = LocalContext.current
+    val inputMethodManager = remember(context) {
+        context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+    }
+    val showKeyboard = {
+        @Suppress("DEPRECATION")
+        inputMethodManager.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0)
+    }
+    val activateTextField = {
+        textFieldFocusRequester.requestFocus()
+        showKeyboard()
+    }
 
-    BasicTextField(
-        value = value,
-        onValueChange = onValueChange,
-        singleLine = true,
-        textStyle = TextStyle(
-            color = InputTextColor,
-            fontSize = 14.sp,
-            fontFamily = AppTheme.fontFamily
-        ),
-        cursorBrush = SolidColor(FocusBorderColor),
+    Box(
         modifier = modifier
             .clip(shape)
             .background(InputBackground)
             .border(1.dp, borderColor, shape)
             .padding(horizontal = 12.dp, vertical = 10.dp)
             .focusRequester(focusRequester)
-            .focusable(interactionSource = interactionSource)
+            .focusable(interactionSource = wrapperInteractionSource)
             .onKeyEvent { event ->
-                if (event.type == KeyEventType.KeyDown) {
-                    when (event.key) {
-                        Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> {
-                            onSearch()
-                            true
-                        }
-                        Key.DirectionRight -> {
-                            onMoveRight()
-                            true
-                        }
-                        else -> false
+                if (event.type != KeyEventType.KeyDown) {
+                    false
+                } else when (event.key) {
+                    Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> {
+                        activateTextField()
+                        true
                     }
-                } else false
-            },
-        decorationBox = { innerTextField ->
-            Box {
-                if (value.isEmpty()) {
-                    Text(
-                        text = "Search for subtitles...",
-                        color = MutedTextColor,
-                        fontSize = 14.sp,
-                        fontFamily = AppTheme.fontFamily
-                    )
+                    Key.DirectionRight -> {
+                        onMoveRight()
+                        true
+                    }
+                    else -> false
                 }
-                innerTextField()
+            },
+        contentAlignment = Alignment.CenterStart
+    ) {
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            textStyle = TextStyle(
+                color = InputTextColor,
+                fontSize = 14.sp,
+                fontFamily = AppTheme.fontFamily
+            ),
+            cursorBrush = SolidColor(FocusBorderColor),
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(textFieldFocusRequester)
+                .onFocusChanged { state ->
+                    isTextFieldFocused = state.isFocused
+                },
+            decorationBox = { innerTextField ->
+                Box {
+                    if (value.isEmpty()) {
+                        Text(
+                            text = "Search for subtitles...",
+                            color = MutedTextColor,
+                            fontSize = 14.sp,
+                            fontFamily = AppTheme.fontFamily
+                        )
+                    }
+                    innerTextField()
+                }
             }
-        }
-    )
+        )
+    }
 }
 
 @Composable
