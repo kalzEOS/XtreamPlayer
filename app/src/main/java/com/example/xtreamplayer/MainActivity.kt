@@ -440,8 +440,8 @@ fun RootScreen(
     }
 
     fun triggerSectionSync(section: Section, config: AuthConfig) {
-        // Skip if already syncing or already synced
-        if (isLibrarySyncing || syncedSections.contains(section)) return
+        // Skip if already synced or currently syncing this specific section
+        if (syncedSections.contains(section) || sectionSyncStates[section]?.isActive == true) return
 
         // Check if section already has index on disk
         coroutineScope.launch {
