@@ -39,8 +39,6 @@ The release keystore is private and not stored in this repo.
 
 ![Home – Light Green](docs/images/homelightgreen.png)
 
-![Home – Settings](docs/images/homesettings.png)
-
 ![Live TV – Light Copper](docs/images/livelightcopper.png)
 
 ![Local Files](docs/images/localfiles.png)
@@ -52,4 +50,6 @@ The release keystore is private and not stored in this repo.
 ![Settings – Fonts](docs/images/settingsfonts.png)
 
 ![Settings – Options](docs/images/settingsoptions.png)
+
+![Home – Settings](docs/images/homesettings.png)
 
