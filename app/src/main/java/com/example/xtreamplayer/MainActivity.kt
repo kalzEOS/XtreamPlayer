@@ -369,44 +369,96 @@ fun RootScreen(
     var refreshJob by remember { mutableStateOf<Job?>(null) }
     var refreshToken by remember { mutableStateOf(0) }
     var hasCacheForAccount by remember { mutableStateOf<Boolean?>(null) }
-    var isLibrarySyncing by remember { mutableStateOf(false) }
+    var hasSearchIndex by remember { mutableStateOf<Boolean?>(null) }
+
+    // Per-section sync state
+    data class SectionSyncState(
+        val progress: Float = 0f,
+        val itemsIndexed: Int = 0,
+        val isActive: Boolean = false
+    )
+    var sectionSyncStates by remember {
+        mutableStateOf(mapOf<Section, SectionSyncState>())
+    }
     var librarySyncJob by remember { mutableStateOf<Job?>(null) }
     var librarySyncToken by remember { mutableStateOf(0) }
-    var hasSearchIndex by remember { mutableStateOf<Boolean?>(null) }
-    var librarySyncProgress by remember { mutableStateOf(0f) }
-    var librarySyncItems by remember { mutableStateOf(0) }
-    var librarySyncSection by remember { mutableStateOf(Section.SERIES) }
-    fun triggerLibrarySync(config: AuthConfig, reason: String, force: Boolean) {
+
+    // Track which sections have been synced
+    var syncedSections by remember { mutableStateOf(setOf<Section>()) }
+
+    val isLibrarySyncing = sectionSyncStates.values.any { it.isActive }
+
+    fun triggerLibrarySync(config: AuthConfig, reason: String, force: Boolean, sectionsToSync: List<Section>? = null) {
         if (isLibrarySyncing) return
-        isLibrarySyncing = true
-        librarySyncProgress = 0f
-        librarySyncItems = 0
-        librarySyncSection = Section.SERIES
+
+        val sections = sectionsToSync ?: listOf(Section.SERIES, Section.MOVIES, Section.LIVE)
+        // Mark sections as syncing
+        sections.forEach { section ->
+            sectionSyncStates = sectionSyncStates + (section to SectionSyncState(isActive = true))
+        }
+
         Toast.makeText(context, reason, Toast.LENGTH_SHORT).show()
         val token = librarySyncToken
         val configKey = "${config.baseUrl}|${config.username}|${config.listName}"
         librarySyncJob = coroutineScope.launch {
             val result = runCatching {
-                contentRepository.syncSearchIndex(config, force) { progress ->
-                    librarySyncProgress = progress.progress
-                    librarySyncItems = progress.itemsIndexed
-                    librarySyncSection = progress.section
+                contentRepository.syncSearchIndex(config, force, sectionsToSync) { progress ->
+                    // Update progress for specific section
+                    sectionSyncStates = sectionSyncStates + (progress.section to SectionSyncState(
+                        progress = progress.progress,
+                        itemsIndexed = progress.itemsIndexed,
+                        isActive = true
+                    ))
                 }
             }
             if (token != librarySyncToken || accountKey != configKey) {
-                isLibrarySyncing = false
+                // Clear syncing state
+                sections.forEach { section ->
+                    sectionSyncStates = sectionSyncStates - section
+                }
                 return@launch
             }
             val message =
                     if (result.isSuccess) {
-                        hasSearchIndex = true
+                        // Mark sections as synced and clear syncing state
+                        sections.forEach { section ->
+                            sectionSyncStates = sectionSyncStates - section
+                        }
+                        syncedSections = syncedSections + sections
+                        hasSearchIndex = contentRepository.hasSearchIndex(config)
                         "Search library ready"
                     } else {
+                        // Clear syncing state on error
+                        sections.forEach { section ->
+                            sectionSyncStates = sectionSyncStates - section
+                        }
                         val detail = result.exceptionOrNull()?.message ?: "Unknown error"
                         "Search library failed: $detail"
                     }
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-            isLibrarySyncing = false
+        }
+    }
+
+    fun triggerSectionSync(section: Section, config: AuthConfig) {
+        // Skip if already syncing or already synced
+        if (isLibrarySyncing || syncedSections.contains(section)) return
+
+        // Check if section already has index on disk
+        coroutineScope.launch {
+            val hasIndex = contentRepository.hasSectionIndex(section, config)
+            if (hasIndex) {
+                syncedSections = syncedSections + section
+                return@launch
+            }
+
+            // Trigger sync for this section only
+            val sectionName = when(section) {
+                Section.MOVIES -> "Movies"
+                Section.SERIES -> "Series"
+                Section.LIVE -> "Live"
+                else -> "Content"
+            }
+            triggerLibrarySync(config, "Building $sectionName search index...", force = false, sectionsToSync = listOf(section))
         }
     }
     fun triggerRefresh(config: AuthConfig, reason: String) {
@@ -457,7 +509,8 @@ fun RootScreen(
     }
     LaunchedEffect(authState.isSignedIn, accountKey, hasSearchIndex) {
         if (authState.isSignedIn && activeConfig != null && hasSearchIndex == false) {
-            triggerLibrarySync(activeConfig, "Building library for fast search...", force = false)
+            // Only sync MOVIES on initial login (biggest, most used)
+            triggerLibrarySync(activeConfig, "Building Movies search index...", force = false, sectionsToSync = listOf(Section.MOVIES))
         }
     }
 
@@ -475,7 +528,8 @@ fun RootScreen(
             refreshJob = null
             librarySyncJob = null
             isRefreshing = false
-            isLibrarySyncing = false
+            sectionSyncStates = emptyMap()
+            syncedSections = emptySet()
             lastRefreshedAccountKey = null
             hasCacheForAccount = null
             hasSearchIndex = null
@@ -776,12 +830,22 @@ fun RootScreen(
                     )
                 }
 
-                if (isLibrarySyncing) {
-                    LibrarySyncBanner(
-                            progress = librarySyncProgress,
-                            itemsIndexed = librarySyncItems,
-                            section = librarySyncSection
-                    )
+                // Show sync banner for currently selected section if syncing
+                // Or show for MOVIES on initial login (when selectedSection is ALL)
+                val sectionToShow = if (selectedSection == Section.ALL || selectedSection == Section.CONTINUE_WATCHING || selectedSection == Section.FAVORITES) {
+                    Section.MOVIES // Show MOVIES sync on home screen
+                } else {
+                    selectedSection
+                }
+
+                sectionSyncStates[sectionToShow]?.let { syncState ->
+                    if (syncState.isActive) {
+                        LibrarySyncBanner(
+                                progress = syncState.progress,
+                                itemsIndexed = syncState.itemsIndexed,
+                                section = sectionToShow
+                        )
+                    }
                 }
 
                 Row(modifier = Modifier.fillMaxSize()) {
@@ -789,6 +853,12 @@ fun RootScreen(
                             selectedSection = selectedSection,
                             onSectionSelected = {
                                 selectedSection = it
+                                // Trigger lazy sync for SERIES/LIVE when first accessed
+                                if (it == Section.SERIES || it == Section.LIVE) {
+                                    activeConfig?.let { config ->
+                                        triggerSectionSync(it, config)
+                                    }
+                                }
                                 // Don't auto-focus content - user must press Right to navigate
                                 // there
                             },
@@ -2484,6 +2554,13 @@ private fun FavoriteIndicator(modifier: Modifier = Modifier) {
 
 @Composable
 private fun LibrarySyncBanner(progress: Float, itemsIndexed: Int, section: Section) {
+    val sectionName = when (section) {
+        Section.MOVIES -> "Movies"
+        Section.SERIES -> "Series"
+        Section.LIVE -> "Live"
+        else -> "Content"
+    }
+
     Column(
             modifier =
                     Modifier.fillMaxWidth()
@@ -2494,7 +2571,7 @@ private fun LibrarySyncBanner(progress: Float, itemsIndexed: Int, section: Secti
                             .padding(horizontal = 16.dp, vertical = 10.dp)
     ) {
         Text(
-                text = if (itemsIndexed > 0) "Syncing library · $itemsIndexed items" else "Syncing library...",
+                text = if (itemsIndexed > 0) "Syncing $sectionName library · $itemsIndexed items" else "Syncing $sectionName library...",
                 color = AppTheme.colors.textPrimary,
                 fontSize = 13.sp,
                 fontFamily = AppTheme.fontFamily,

@@ -111,9 +111,16 @@ class XtreamApi(
                     ?: return@withContext Result.failure(
                         IllegalArgumentException("Invalid service URL")
                     )
+                Timber.d("Bulk fetch starting for $section")
+                val startTime = System.currentTimeMillis()
+                // Use extended timeout for bulk fetches (5 minutes)
+                val bulkClient = client.newBuilder()
+                    .readTimeout(5, java.util.concurrent.TimeUnit.MINUTES)
+                    .build()
                 val request = Request.Builder().url(url).get().build()
-                client.newCall(request).execute().use { response ->
+                bulkClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
+                        Timber.e("Bulk fetch failed for $section: ${response.code}")
                         return@withContext Result.failure(
                             IllegalStateException("Request failed: ${response.code}")
                         )
@@ -124,6 +131,8 @@ class XtreamApi(
                     body.charStream().use { stream ->
                         val reader = JsonReader(stream)
                         val items = parsePageAll(reader, section)
+                        val elapsed = System.currentTimeMillis() - startTime
+                        Timber.d("Bulk fetch completed for $section: ${items.size} items in ${elapsed}ms")
                         Result.success(items)
                     }
                 }
@@ -723,14 +732,30 @@ class XtreamApi(
             return emptyList()
         }
         reader.beginArray()
-        val items = ArrayList<ContentItem>()
+
+        // Pre-allocate with estimated capacity to avoid ArrayList resizing
+        // Resize doubles capacity each time = memory spikes
+        val items = ArrayList<ContentItem>(150000) // Estimate for large libraries
+        var count = 0
+
         while (reader.hasNext()) {
             val item = mapper(reader)
             if (item != null) {
                 items.add(item)
+                count++
+
+                // Log progress every 10k items
+                if (count % 10000 == 0) {
+                    Timber.d("Parsed $count items...")
+                }
             }
         }
         reader.endArray()
+
+        Timber.d("Parsing complete: $count total items")
+
+        // Trim to actual size to free unused capacity
+        items.trimToSize()
         return items
     }
 
