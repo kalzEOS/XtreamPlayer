@@ -568,12 +568,28 @@ class ContentRepository(
             contentCache.hasSectionIndex(Section.LIVE, authConfig)
     }
 
-    suspend fun syncSearchIndex(
+    /**
+     * Sync a single section's search index
+     */
+    suspend fun syncSectionIndex(
+        section: Section,
         authConfig: AuthConfig,
         force: Boolean = false,
         onProgress: (LibrarySyncProgress) -> Unit = {}
     ) {
-        val sections = listOf(Section.SERIES, Section.MOVIES, Section.LIVE)
+        syncSearchIndex(authConfig, force, listOf(section), onProgress)
+    }
+
+    /**
+     * Sync search index for specified sections (or all if not specified)
+     */
+    suspend fun syncSearchIndex(
+        authConfig: AuthConfig,
+        force: Boolean = false,
+        sectionsToSync: List<Section>? = null,
+        onProgress: (LibrarySyncProgress) -> Unit = {}
+    ) {
+        val sections = sectionsToSync ?: listOf(Section.SERIES, Section.MOVIES, Section.LIVE)
         val totalSections = sections.size
 
         // Check which sections need syncing
@@ -627,15 +643,32 @@ class ContentRepository(
                     val items = if (useBulk) {
                         val bulkResult = api.fetchSectionAll(section, authConfig)
                         if (bulkResult.isSuccess) {
-                            bulkResult.getOrNull().orEmpty().ifEmpty { null }
-                        } else null
+                            val fetched = bulkResult.getOrNull().orEmpty()
+                            if (fetched.isEmpty()) {
+                                timber.log.Timber.w("Bulk fetch returned empty for $section, falling back to page-by-page")
+                                null
+                            } else {
+                                fetched
+                            }
+                        } else {
+                            timber.log.Timber.w("Bulk fetch failed for $section: ${bulkResult.exceptionOrNull()?.message}, falling back to page-by-page")
+                            null
+                        }
                     } else null
 
                     // Fall back to page-by-page if bulk didn't work
-                    val finalItems = items ?: buildSectionIndex(section, authConfig)
+                    val finalItems = items ?: run {
+                        timber.log.Timber.d("Starting page-by-page fetch for $section")
+                        buildSectionIndex(section, authConfig)
+                    }
 
                     // Cache results
-                    sectionIndexCache[key] = finalItems
+                    // Skip in-memory cache for huge indexes (>50k items) to avoid OOM
+                    if (finalItems.size < 50000) {
+                        sectionIndexCache[key] = finalItems
+                    } else {
+                        timber.log.Timber.d("Skipping memory cache for large section $section (${finalItems.size} items)")
+                    }
                     contentCache.writeSectionIndex(section, authConfig, finalItems)
                     withContext(Dispatchers.Default) {
                         SearchNormalizer.preWarmCache(finalItems.map { it.title })
