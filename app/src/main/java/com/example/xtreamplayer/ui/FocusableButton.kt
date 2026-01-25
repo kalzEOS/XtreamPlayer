@@ -7,6 +7,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonColors
@@ -20,6 +21,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.xtreamplayer.ui.theme.AppTheme
 
@@ -34,12 +36,13 @@ fun FocusableButton(
     enabled: Boolean = true,
     colors: ButtonColors = ButtonDefaults.buttonColors(),
     showFocusBorder: Boolean = true,
+    focusBorderWidth: Dp = 2.dp,
+    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(50),
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
     content: @Composable () -> Unit
 ) {
     val isFocused by interactionSource.collectIsFocusedAsState()
     val isPressed by interactionSource.collectIsPressedAsState()
-    val shape = RoundedCornerShape(50)
 
     // Sweep animation progress (-1 = not visible, 0 = left edge, 1 = right edge, 2 = finished)
     val sweepProgress = remember { Animatable(-1f) }
@@ -56,6 +59,14 @@ fun FocusableButton(
 
     val baseModifier =
         modifier
+            .padding(focusBorderWidth)
+            .then(
+                if (isFocused && showFocusBorder) {
+                    Modifier.border(focusBorderWidth, FocusBorderColor, shape)
+                } else {
+                    Modifier
+                }
+            )
             .clip(shape)
             .drawWithContent {
                 drawContent()
@@ -75,13 +86,6 @@ fun FocusableButton(
                     drawRect(brush = gradientBrush)
                 }
             }
-            .then(
-                if (isFocused && showFocusBorder) {
-                    Modifier.border(2.dp, FocusBorderColor, shape)
-                } else {
-                    Modifier
-                }
-            )
 
     Button(
         onClick = onClick,

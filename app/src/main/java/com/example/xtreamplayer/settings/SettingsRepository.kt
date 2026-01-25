@@ -4,6 +4,7 @@ import android.content.Context
 import com.example.xtreamplayer.ui.theme.AppFont
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -21,6 +22,8 @@ class SettingsRepository(private val context: Context) {
         val autoSignIn = prefs[Keys.AUTO_SIGN_IN] ?: true
         val appTheme = parseAppTheme(prefs[Keys.APP_THEME])
         val appFont = parseAppFont(prefs[Keys.APP_FONT])
+        val uiScale = (prefs[Keys.UI_SCALE] ?: 1.0f).coerceIn(0.7f, 1.3f)
+        val fontScale = (prefs[Keys.FONT_SCALE] ?: 1.0f).coerceIn(0.7f, 1.4f)
         val openSubtitlesApiKey = prefs[Keys.OPENSUBTITLES_API_KEY] ?: ""
         val openSubtitlesUserAgent = prefs[Keys.OPENSUBTITLES_USER_AGENT] ?: ""
 
@@ -32,6 +35,8 @@ class SettingsRepository(private val context: Context) {
             autoSignIn = autoSignIn,
             appTheme = appTheme,
             appFont = appFont,
+            uiScale = uiScale,
+            fontScale = fontScale,
             openSubtitlesApiKey = openSubtitlesApiKey,
             openSubtitlesUserAgent = openSubtitlesUserAgent
         )
@@ -79,6 +84,18 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun setUiScale(scale: Float) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.UI_SCALE] = scale.coerceIn(0.7f, 1.3f)
+        }
+    }
+
+    suspend fun setFontScale(scale: Float) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.FONT_SCALE] = scale.coerceIn(0.7f, 1.4f)
+        }
+    }
+
     suspend fun setOpenSubtitlesApiKey(apiKey: String) {
         context.dataStore.edit { prefs ->
             prefs[Keys.OPENSUBTITLES_API_KEY] = apiKey
@@ -108,6 +125,8 @@ class SettingsRepository(private val context: Context) {
         val AUTO_SIGN_IN = booleanPreferencesKey("auto_sign_in")
         val APP_THEME = stringPreferencesKey("app_theme")
         val APP_FONT = stringPreferencesKey("app_font")
+        val UI_SCALE = floatPreferencesKey("ui_scale")
+        val FONT_SCALE = floatPreferencesKey("font_scale")
         val OPENSUBTITLES_API_KEY = stringPreferencesKey("opensubtitles_api_key")
         val OPENSUBTITLES_USER_AGENT = stringPreferencesKey("opensubtitles_user_agent")
     }

@@ -21,6 +21,8 @@ data class SettingsState(
     val autoSignIn: Boolean = true,
     val appTheme: AppThemeOption = AppThemeOption.DEFAULT,
     val appFont: AppFont = AppFont.DEFAULT,
+    val uiScale: Float = 1.0f,
+    val fontScale: Float = 1.0f,
     val openSubtitlesApiKey: String = "",
     val openSubtitlesUserAgent: String = ""
 )

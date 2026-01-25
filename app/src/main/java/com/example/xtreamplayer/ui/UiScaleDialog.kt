@@ -16,52 +16,67 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ButtonColors
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.xtreamplayer.ui.theme.AppTheme
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 @Composable
-fun NextEpisodeThresholdDialog(
-    currentSeconds: Int,
-    onSecondsChange: (Int) -> Unit,
+fun UiScaleDialog(
+    currentScale: Float,
+    onScaleChange: (Float) -> Unit,
     onDismiss: () -> Unit
 ) {
     val colors = AppTheme.colors
-    val focusBorderWidth = 1.dp
-    val maxSeconds = 300  // 5 minutes max
-    val minSeconds = 0
-    var localSeconds by remember { mutableIntStateOf(currentSeconds.coerceIn(minSeconds, maxSeconds)) }
-    val closeFocusRequester = remember { FocusRequester() }
+    val minPercent = 70
+    val maxPercent = 130
+    var localPercent by remember {
+        mutableIntStateOf((currentScale * 100).roundToInt().coerceIn(minPercent, maxPercent))
+    }
     val minusFocusRequester = remember { FocusRequester() }
+    val plusFocusRequester = remember { FocusRequester() }
+    val closeFocusRequester = remember { FocusRequester() }
+    var pendingFocus by remember { mutableStateOf<UiScaleFocusTarget?>(UiScaleFocusTarget.MINUS) }
 
-    LaunchedEffect(currentSeconds) {
-        localSeconds = currentSeconds.coerceIn(minSeconds, maxSeconds)
+    LaunchedEffect(currentScale) {
+        localPercent = (currentScale * 100).roundToInt().coerceIn(minPercent, maxPercent)
     }
 
-    LaunchedEffect(Unit) {
-        minusFocusRequester.requestFocus()
+    LaunchedEffect(pendingFocus) {
+        when (pendingFocus) {
+            UiScaleFocusTarget.MINUS -> minusFocusRequester.requestFocus()
+            UiScaleFocusTarget.PLUS -> plusFocusRequester.requestFocus()
+            null -> Unit
+        }
+        pendingFocus = null
     }
 
     Dialog(
@@ -78,7 +93,7 @@ fun NextEpisodeThresholdDialog(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    text = "Next Episode Prompt",
+                    text = "UI Scale",
                     color = colors.textPrimary,
                     fontSize = 20.sp,
                     fontFamily = AppTheme.fontFamily,
@@ -86,7 +101,7 @@ fun NextEpisodeThresholdDialog(
                 )
 
                 Text(
-                    text = "Show the 'Up Next' overlay this many seconds before the episode ends.",
+                    text = "Adjust overall interface size.",
                     color = colors.textSecondary,
                     fontSize = 12.sp,
                     fontFamily = AppTheme.fontFamily
@@ -97,117 +112,46 @@ fun NextEpisodeThresholdDialog(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    // Decrement by 10
-                    FocusableButton(
-                        onClick = {
-                            val newSeconds = (localSeconds - 10).coerceAtLeast(minSeconds)
-                            localSeconds = newSeconds
-                            onSecondsChange(newSeconds)
+                    RepeatableFocusableButton(
+                        onStep = {
+                            val newPercent = (localPercent - 1).coerceAtLeast(minPercent)
+                            if (newPercent == localPercent) return@RepeatableFocusableButton false
+                            localPercent = newPercent
+                            onScaleChange(newPercent / 100f)
+                            pendingFocus = UiScaleFocusTarget.MINUS
+                            true
                         },
-                        enabled = localSeconds > minSeconds,
+                        enabled = true,
                         colors = ButtonDefaults.buttonColors(containerColor = colors.accentMutedAlt),
-                        focusBorderWidth = focusBorderWidth,
-                        shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.focusRequester(minusFocusRequester)
                     ) {
-                        Text("-10", color = colors.textPrimary, fontSize = 14.sp)
+                        Text("-", color = colors.textPrimary, fontSize = 18.sp)
                     }
 
-                    // Decrement by 1
-                    FocusableButton(
-                        onClick = {
-                            val newSeconds = (localSeconds - 1).coerceAtLeast(minSeconds)
-                            localSeconds = newSeconds
-                            onSecondsChange(newSeconds)
-                        },
-                        enabled = localSeconds > minSeconds,
-                        colors = ButtonDefaults.buttonColors(containerColor = colors.accentMutedAlt),
-                        focusBorderWidth = focusBorderWidth,
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("-1", color = colors.textPrimary, fontSize = 14.sp)
-                    }
-
-                    // Display current value
                     Text(
-                        text = "${localSeconds}s",
+                        text = "${localPercent}%",
                         color = colors.textPrimary,
-                        fontSize = 24.sp,
+                        fontSize = 20.sp,
                         fontFamily = AppTheme.fontFamily,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.weight(1f),
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
 
-                    // Increment by 1
-                    FocusableButton(
-                        onClick = {
-                            val newSeconds = (localSeconds + 1).coerceAtMost(maxSeconds)
-                            localSeconds = newSeconds
-                            onSecondsChange(newSeconds)
+                    RepeatableFocusableButton(
+                        onStep = {
+                            val newPercent = (localPercent + 1).coerceAtMost(maxPercent)
+                            if (newPercent == localPercent) return@RepeatableFocusableButton false
+                            localPercent = newPercent
+                            onScaleChange(newPercent / 100f)
+                            pendingFocus = UiScaleFocusTarget.PLUS
+                            true
                         },
-                        enabled = localSeconds < maxSeconds,
+                        enabled = true,
                         colors = ButtonDefaults.buttonColors(containerColor = colors.accentMutedAlt),
-                        focusBorderWidth = focusBorderWidth,
-                        shape = RoundedCornerShape(8.dp)
+                        modifier = Modifier.focusRequester(plusFocusRequester)
                     ) {
-                        Text("+1", color = colors.textPrimary, fontSize = 14.sp)
-                    }
-
-                    // Increment by 10
-                    FocusableButton(
-                        onClick = {
-                            val newSeconds = (localSeconds + 10).coerceAtMost(maxSeconds)
-                            localSeconds = newSeconds
-                            onSecondsChange(newSeconds)
-                        },
-                        enabled = localSeconds < maxSeconds,
-                        colors = ButtonDefaults.buttonColors(containerColor = colors.accentMutedAlt),
-                        focusBorderWidth = focusBorderWidth,
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("+10", color = colors.textPrimary, fontSize = 14.sp)
-                    }
-                }
-
-                // Quick presets row
-                Text(
-                    text = "Quick presets:",
-                    color = colors.textSecondary,
-                    fontSize = 12.sp,
-                    fontFamily = AppTheme.fontFamily
-                )
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    // Pair of (seconds, label) - this lets you define custom labels
-                    listOf(
-                        30 to "30s",
-                        60 to "1m",
-                        90 to "1.5m",
-                        120 to "2m"
-                    ).forEach { (seconds, label) ->
-                        FocusableButton(
-                            onClick = {
-                                localSeconds = seconds
-                                onSecondsChange(seconds)
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (localSeconds == seconds) colors.accent else colors.accentMutedAlt
-                            ),
-                            focusBorderWidth = focusBorderWidth,
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(
-                                text = label,
-                                color = if (localSeconds == seconds) colors.background else colors.textPrimary,
-                                fontSize = 14.sp,
-                                fontWeight = if (localSeconds == seconds) FontWeight.Bold else FontWeight.Normal
-                            )
-                        }
+                        Text("+", color = colors.textPrimary, fontSize = 18.sp)
                     }
                 }
 
@@ -215,19 +159,22 @@ fun NextEpisodeThresholdDialog(
 
                 CloseButton(
                     focusRequester = closeFocusRequester,
-                    onDismiss = onDismiss,
-                    label = "Done"
+                    onDismiss = onDismiss
                 )
             }
         }
     }
 }
 
+private enum class UiScaleFocusTarget {
+    MINUS,
+    PLUS
+}
+
 @Composable
 private fun CloseButton(
     focusRequester: FocusRequester,
-    onDismiss: () -> Unit,
-    label: String = "Close"
+    onDismiss: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -265,11 +212,69 @@ private fun CloseButton(
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = label,
+            text = "Close",
             color = if (isFocused) colors.textOnAccent else colors.textPrimary,
             fontSize = 16.sp,
             fontFamily = AppTheme.fontFamily,
             fontWeight = FontWeight.SemiBold
         )
+    }
+}
+
+@Composable
+private fun RepeatableFocusableButton(
+    onStep: () -> Boolean,
+    enabled: Boolean,
+    colors: ButtonColors,
+    modifier: Modifier = Modifier,
+    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(8.dp),
+    content: @Composable () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var repeatJob by remember { mutableStateOf<Job?>(null) }
+
+    val repeatModifier =
+        modifier.onPreviewKeyEvent { event ->
+            if (!enabled) return@onPreviewKeyEvent false
+            val isOkKey =
+                event.key == Key.DirectionCenter ||
+                    event.key == Key.Enter ||
+                    event.key == Key.NumPadEnter
+            if (!isOkKey) return@onPreviewKeyEvent false
+
+            when (event.type) {
+                KeyEventType.KeyDown -> {
+                    if (repeatJob == null) {
+                        val didStep = onStep()
+                        repeatJob =
+                            scope.launch {
+                                delay(350)
+                                while (isActive) {
+                                    if (!onStep()) {
+                                        break
+                                    }
+                                    delay(80)
+                                }
+                            }
+                    }
+                    true
+                }
+                KeyEventType.KeyUp -> {
+                    repeatJob?.cancel()
+                    repeatJob = null
+                    true
+                }
+                else -> false
+            }
+        }
+
+    FocusableButton(
+        onClick = { if (enabled) onStep() },
+        enabled = enabled,
+        colors = colors,
+        shape = shape,
+        modifier = repeatModifier
+    ) {
+        content()
     }
 }

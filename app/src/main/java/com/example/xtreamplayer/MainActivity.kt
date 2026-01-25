@@ -38,6 +38,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
@@ -56,6 +57,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
@@ -74,7 +76,9 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -134,7 +138,9 @@ import com.example.xtreamplayer.ui.SubtitleDialogState
 import com.example.xtreamplayer.ui.SubtitleOptionsDialog
 import com.example.xtreamplayer.ui.SubtitleSearchDialog
 import com.example.xtreamplayer.ui.FontSelectionDialog
+import com.example.xtreamplayer.ui.FontScaleDialog
 import com.example.xtreamplayer.ui.ThemeSelectionDialog
+import com.example.xtreamplayer.ui.UiScaleDialog
 import com.example.xtreamplayer.ui.VideoResolutionDialog
 import com.example.xtreamplayer.ui.rememberDebouncedSearchState
 import com.example.xtreamplayer.ui.theme.AppTheme
@@ -239,6 +245,8 @@ fun RootScreen(
     var showApiKeyDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
     var showFontDialog by remember { mutableStateOf(false) }
+    var showUiScaleDialog by remember { mutableStateOf(false) }
+    var showFontScaleDialog by remember { mutableStateOf(false) }
     var showNextEpisodeThresholdDialog by remember { mutableStateOf(false) }
     var showLocalFilesGuest by remember { mutableStateOf(false) }
     var activePlaybackQueue by remember { mutableStateOf<PlaybackQueue?>(null) }
@@ -798,7 +806,16 @@ fun RootScreen(
     LaunchedEffect(settings) { playbackSettingsController.apply(settings) }
 
     XtreamPlayerTheme(appTheme = settings.appTheme, fontFamily = settings.appFont.fontFamily) {
-        AppBackground {
+        val baseDensity = LocalDensity.current
+        val uiScale = settings.uiScale.coerceIn(0.7f, 1.3f)
+        val fontScale = settings.fontScale.coerceIn(0.7f, 1.4f)
+        val scaledDensity = Density(
+            density = baseDensity.density * uiScale,
+            fontScale = baseDensity.fontScale * uiScale * fontScale
+        )
+
+        CompositionLocalProvider(LocalDensity provides scaledDensity) {
+            AppBackground {
         val shouldAutoSignIn =
                 settings.autoSignIn && settings.rememberLogin && savedConfig != null
         val isWaitingForSavedConfig =
@@ -946,7 +963,9 @@ fun RootScreen(
                                         onMoveLeft = handleMoveLeft,
                                         onBack = { showAppearance = false },
                                         onOpenThemeSelector = { showThemeDialog = true },
-                                        onOpenFontSelector = { showFontDialog = true }
+                                        onOpenFontSelector = { showFontDialog = true },
+                                        onOpenUiScale = { showUiScaleDialog = true },
+                                        onOpenFontScale = { showFontScaleDialog = true }
                                 )
                             } else {
                                 val activeListName =
@@ -1319,6 +1338,7 @@ fun RootScreen(
             )
         }
     }
+    }
 
     if (showApiKeyDialog) {
         ApiKeyInputDialog(
@@ -1354,6 +1374,20 @@ fun RootScreen(
                     showFontDialog = false
                 },
                 onDismiss = { showFontDialog = false }
+        )
+    }
+    if (showUiScaleDialog) {
+        UiScaleDialog(
+                currentScale = settings.uiScale,
+                onScaleChange = { scale -> settingsViewModel.setUiScale(scale) },
+                onDismiss = { showUiScaleDialog = false }
+        )
+    }
+    if (showFontScaleDialog) {
+        FontScaleDialog(
+                currentScale = settings.fontScale,
+                onScaleChange = { scale -> settingsViewModel.setFontScale(scale) },
+                onDismiss = { showFontScaleDialog = false }
         )
     }
     if (showNextEpisodeThresholdDialog) {
@@ -4700,6 +4734,7 @@ fun SectionScreen(
     var selectedSeries by remember { mutableStateOf<ContentItem?>(null) }
     var pendingSeriesReturnFocus by remember { mutableStateOf(false) }
     val searchFocusRequester = remember { FocusRequester() }
+    val gridState = rememberLazyGridState()
     LaunchedEffect(section) {
         selectedSeries = null
         pendingSeriesReturnFocus = false
@@ -4857,7 +4892,8 @@ fun SectionScreen(
                             columns = GridCells.Fixed(columns),
                             verticalArrangement = Arrangement.spacedBy(16.dp),
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
-                            modifier = Modifier.fillMaxWidth().weight(1f)
+                            modifier = Modifier.fillMaxWidth().weight(1f),
+                            state = gridState
                     ) {
                         items(
                                 count = lazyItems.itemCount,
@@ -5406,6 +5442,8 @@ fun FavoritesScreen(
     var lastMenuSelection by remember { mutableStateOf(FavoritesView.ITEMS) }
     val menuFocusRequesters = remember { listOf(FocusRequester(), FocusRequester()) }
     val backFocusRequester = remember { FocusRequester() }
+    val gridState = rememberLazyGridState()
+    val categoryContentGridState = rememberLazyGridState()
     val sortedContent =
             remember(favoriteContentItems) {
                 favoriteContentItems.sortedBy { it.title.lowercase() }
@@ -5681,7 +5719,8 @@ fun FavoritesScreen(
                             columns = GridCells.Fixed(columns),
                             verticalArrangement = Arrangement.spacedBy(16.dp),
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
-                            modifier = Modifier.fillMaxWidth().weight(1f)
+                            modifier = Modifier.fillMaxWidth().weight(1f),
+                            state = gridState
                     ) {
                         items(
                                 count = sortedContent.size,
@@ -5729,6 +5768,72 @@ fun FavoritesScreen(
             } else {
                 if (selectedCategory != null) {
                     val category = selectedCategory!!
+
+                    // Create pagerFlow and lazyItems OUTSIDE the selectedSeries conditional
+                    // so they persist when entering/exiting SeriesSeasonsScreen
+                    val pagerFlow =
+                            remember(category.id, authConfig) {
+                                contentRepository.categoryPager(
+                                                category.type,
+                                                category.id,
+                                                authConfig
+                                        )
+                                        .flow
+                            }
+                    val lazyItems = pagerFlow.collectAsLazyPagingItems()
+
+                    LaunchedEffect(
+                            pendingCategoryEnterFocus,
+                            lazyItems.itemCount,
+                            lazyItems.loadState.refresh,
+                            selectedSeries
+                    ) {
+                        if (!pendingCategoryEnterFocus || selectedSeries != null) {
+                            return@LaunchedEffect
+                        }
+                        // Wait for items to be available before attempting focus
+                        if (lazyItems.itemCount == 0) return@LaunchedEffect
+                        withFrameNanos {}
+                        delay(32)
+                        withFrameNanos {}
+                        repeat(5) { attempt ->
+                            runCatching { contentItemFocusRequester.requestFocus() }
+                            if (attempt < 4) {
+                                delay(32)
+                                withFrameNanos {}
+                            }
+                        }
+                        pendingCategoryEnterFocus = false
+                    }
+                    LaunchedEffect(pendingSeriesReturnFocus, selectedSeries, lazyItems.itemCount, resumeFocusId) {
+                        if (pendingSeriesReturnFocus && selectedSeries == null && selectedCategory != null) {
+                            // Wait for items to be available
+                            if (lazyItems.itemCount == 0) return@LaunchedEffect
+                            // Wait for composition to complete
+                            withFrameNanos {}
+                            delay(32)
+                            withFrameNanos {}
+                            val shouldResume =
+                                    resumeFocusId != null &&
+                                            lazyItems.itemSnapshotList.items.any { it?.id == resumeFocusId }
+                            val requester =
+                                    if (shouldResume) {
+                                        resumeFocusRequester
+                                    } else {
+                                        contentItemFocusRequester
+                                    }
+                            // Retry focus request multiple times
+                            repeat(5) { attempt ->
+                                runCatching { requester.requestFocus() }
+                                if (attempt < 4) {
+                                    delay(32)
+                                    withFrameNanos {}
+                                }
+                            }
+                            pendingSeriesReturnFocus = false
+                        }
+                    }
+
                     if (selectedSeries != null) {
                         SeriesSeasonsScreen(
                                 seriesItem = selectedSeries!!,
@@ -5750,39 +5855,6 @@ fun FavoritesScreen(
                                 isItemFavorite = isItemFavorite
                         )
                     } else {
-                        val pagerFlow =
-                                remember(category.id, authConfig) {
-                                    contentRepository.categoryPager(
-                                                    category.type,
-                                                    category.id,
-                                                    authConfig
-                                            )
-                                            .flow
-                                }
-                        val lazyItems = pagerFlow.collectAsLazyPagingItems()
-                        LaunchedEffect(
-                                pendingCategoryEnterFocus,
-                                lazyItems.itemCount,
-                                lazyItems.loadState.refresh,
-                                selectedSeries
-                        ) {
-                            if (!pendingCategoryEnterFocus || selectedSeries != null) {
-                                return@LaunchedEffect
-                            }
-                            // Wait for items to be available before attempting focus
-                            if (lazyItems.itemCount == 0) return@LaunchedEffect
-                            withFrameNanos {}
-                            delay(32)
-                            withFrameNanos {}
-                            repeat(5) { attempt ->
-                                runCatching { contentItemFocusRequester.requestFocus() }
-                                if (attempt < 4) {
-                                    delay(32)
-                                    withFrameNanos {}
-                                }
-                            }
-                            pendingCategoryEnterFocus = false
-                        }
                         // Focus is managed by user navigation - no auto-focus on content load
                         Text(
                                 text = category.name,
@@ -5832,7 +5904,8 @@ fun FavoritesScreen(
                                     columns = GridCells.Fixed(columns),
                                     verticalArrangement = Arrangement.spacedBy(16.dp),
                                     horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                    modifier = Modifier.fillMaxWidth().weight(1f)
+                                    modifier = Modifier.fillMaxWidth().weight(1f),
+                                    state = categoryContentGridState
                             ) {
                                 items(
                                         count = lazyItems.itemCount,
@@ -5925,7 +5998,8 @@ fun FavoritesScreen(
                                 columns = GridCells.Fixed(columns),
                                 verticalArrangement = Arrangement.spacedBy(16.dp),
                                 horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                modifier = Modifier.fillMaxWidth().weight(1f)
+                                modifier = Modifier.fillMaxWidth().weight(1f),
+                                state = gridState
                         ) {
                             items(sortedCategories.size) { index ->
                                 val category = sortedCategories[index]
@@ -6050,11 +6124,14 @@ fun CategorySectionScreen(
     var pendingSeriesReturnFocus by remember { mutableStateOf(false) }
     var pendingCategoryReturnFocus by remember { mutableStateOf(false) }
     var pendingCategoryEnterFocus by remember { mutableStateOf(false) }
+    var lastCategoryContentIndex by remember { mutableIntStateOf(0) }
     var categories by remember { mutableStateOf<List<CategoryItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val searchState = rememberDebouncedSearchState(key = activeType)
     val columns = 3
+    val categoryGridState = rememberLazyGridState()
+    val contentGridState = rememberLazyGridState()
     val tabFocusRequesters = remember { ContentType.values().map { FocusRequester() } }
     val backTabFocusRequester = remember { FocusRequester() }
     val searchFocusRequester = remember { FocusRequester() }
@@ -6082,19 +6159,7 @@ fun CategorySectionScreen(
         isLoading = false
     }
 
-    LaunchedEffect(pendingSeriesReturnFocus, selectedSeries) {
-        if (pendingSeriesReturnFocus && selectedSeries == null) {
-            withFrameNanos {}
-            val requester =
-                    if (resumeFocusId != null) {
-                        resumeFocusRequester
-                    } else {
-                        contentItemFocusRequester
-                    }
-            requester.requestFocus()
-            pendingSeriesReturnFocus = false
-        }
-    }
+    // Focus restore logic moved inside content grid block to access lazyItems
 
     LaunchedEffect(
             pendingCategoryReturnFocus,
@@ -6219,186 +6284,261 @@ fun CategorySectionScreen(
                 val category = selectedCategory!!
                 val useContrastText = activeType == ContentType.MOVIES || activeType == ContentType.SERIES
                 val forceDarkText = activeType == ContentType.LIVE
-                if (selectedSeries != null) {
-                    SeriesSeasonsScreen(
-                            seriesItem = selectedSeries!!,
-                            contentRepository = contentRepository,
-                            authConfig = authConfig,
-                            contentItemFocusRequester = contentItemFocusRequester,
-                            resumeFocusId = resumeFocusId,
-                            resumeFocusRequester = resumeFocusRequester,
-                            onItemFocused = onItemFocused,
-                            onPlay = onPlay,
-                            onMoveLeft = onMoveLeft,
-                            onBack = {
-                                onItemFocused(selectedSeries!!)
-                                runCatching { contentItemFocusRequester.requestFocus() }
-                                pendingSeriesReturnFocus = true
-                                selectedSeries = null
-                            },
-                            onToggleFavorite = onToggleFavorite,
-                            isItemFavorite = isItemFavorite,
-                            forceDarkText = forceDarkText
-                    )
-                } else {
-                    val pagerFlow =
-                            remember(category.id, activeType, authConfig, activeQuery) {
-                                if (activeQuery.isBlank()) {
-                                    contentRepository.categoryPager(
-                                                    activeType,
-                                                    category.id,
-                                                    authConfig
-                                            )
-                                            .flow
-                                } else {
-                                    contentRepository.categorySearchPager(
-                                                    activeType,
-                                                    category.id,
-                                                    activeQuery,
-                                                    authConfig
-                                            )
-                                            .flow
-                                }
+
+                // Create pagerFlow and lazyItems OUTSIDE the selectedSeries conditional
+                // so they persist when entering/exiting SeriesSeasonsScreen
+                val pagerFlow =
+                        remember(category.id, activeType, authConfig, activeQuery) {
+                            if (activeQuery.isBlank()) {
+                                contentRepository.categoryPager(
+                                                activeType,
+                                                category.id,
+                                                authConfig
+                                        )
+                                        .flow
+                            } else {
+                                contentRepository.categorySearchPager(
+                                                activeType,
+                                                category.id,
+                                                activeQuery,
+                                                authConfig
+                                        )
+                                        .flow
                             }
-                    val lazyItems = pagerFlow.collectAsLazyPagingItems()
-                    LaunchedEffect(
-                            pendingCategoryEnterFocus,
-                            lazyItems.itemCount,
-                            lazyItems.loadState.refresh
-                    ) {
-                        if (!pendingCategoryEnterFocus || selectedSeries != null)
-                                return@LaunchedEffect
-                        // Wait for items to be available before attempting focus
+                        }
+                val lazyItems = pagerFlow.collectAsLazyPagingItems()
+
+                LaunchedEffect(
+                        pendingCategoryEnterFocus,
+                        lazyItems.itemCount,
+                        lazyItems.loadState.refresh
+                ) {
+                    if (!pendingCategoryEnterFocus || selectedSeries != null)
+                            return@LaunchedEffect
+                    // Wait for items to be available before attempting focus
+                    if (lazyItems.itemCount == 0) return@LaunchedEffect
+                    // Wait for composition to complete with multiple frame delays
+                    withFrameNanos {}
+                    delay(32)
+                    withFrameNanos {}
+                    // Retry focus request multiple times to handle composition timing
+                    repeat(5) { attempt ->
+                        runCatching { contentItemFocusRequester.requestFocus() }
+                        if (attempt < 4) {
+                            delay(32)
+                            withFrameNanos {}
+                        }
+                    }
+                    pendingCategoryEnterFocus = false
+                }
+                LaunchedEffect(
+                        pendingSeriesReturnFocus,
+                        selectedSeries,
+                        lazyItems.itemCount,
+                        resumeFocusId
+                ) {
+                    if (pendingSeriesReturnFocus && selectedSeries == null) {
+                        // Wait for items to be available
                         if (lazyItems.itemCount == 0) return@LaunchedEffect
-                        // Wait for composition to complete with multiple frame delays
+                        val targetIndex =
+                                lastCategoryContentIndex.coerceAtMost(
+                                        (lazyItems.itemCount - 1).coerceAtLeast(0)
+                                )
+                        if (targetIndex > 0) {
+                            contentGridState.scrollToItem(targetIndex)
+                        }
+                        // Wait for composition to complete
                         withFrameNanos {}
                         delay(32)
                         withFrameNanos {}
-                        // Retry focus request multiple times to handle composition timing
+                        val shouldResume =
+                                resumeFocusId != null &&
+                                        lazyItems.itemSnapshotList.items.any { it?.id == resumeFocusId }
+                        val requester =
+                                if (shouldResume) {
+                                    resumeFocusRequester
+                                } else {
+                                    contentItemFocusRequester
+                                }
+                        // Retry focus request multiple times
                         repeat(5) { attempt ->
-                            runCatching { contentItemFocusRequester.requestFocus() }
+                            runCatching { requester.requestFocus() }
                             if (attempt < 4) {
                                 delay(32)
                                 withFrameNanos {}
                             }
                         }
-                        pendingCategoryEnterFocus = false
+                        pendingSeriesReturnFocus = false
                     }
-                    // Don't auto-focus content - user must press Right to navigate there
-                    Text(
-                            text = if (activeQuery.isBlank()) category.name else "Search results",
-                            color = AppTheme.colors.textPrimary,
-                            fontSize = 16.sp,
-                            fontFamily = AppTheme.fontFamily,
-                            fontWeight = FontWeight.Medium
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    if (lazyItems.loadState.refresh is LoadState.Loading && lazyItems.itemCount == 0
+                }
+
+                // Use Box to overlay SeriesSeasonsScreen while keeping content grid in composition
+                // This preserves scroll position when navigating back from series detail
+                Box(modifier = Modifier.weight(1f)) {
+                    // Content grid column - always in composition
+                    Column(
+                            modifier = Modifier
+                                    .fillMaxSize()
+                                    .alpha(if (selectedSeries != null) 0f else 1f)
                     ) {
+                        // Don't auto-focus content - user must press Right to navigate there
                         Text(
-                                text =
-                                        if (activeQuery.isBlank()) "Loading content..."
-                                        else "Searching...",
-                                color = AppTheme.colors.textSecondary,
-                                fontSize = 14.sp,
+                                text = if (activeQuery.isBlank()) category.name else "Search results",
+                                color = AppTheme.colors.textPrimary,
+                                fontSize = 16.sp,
                                 fontFamily = AppTheme.fontFamily,
-                                letterSpacing = 0.6.sp,
-                                modifier =
-                                        Modifier.focusRequester(contentItemFocusRequester)
-                                                .focusable()
+                                fontWeight = FontWeight.Medium
                         )
-                    } else if (lazyItems.loadState.refresh is LoadState.Error) {
-                        Text(
-                                text =
-                                        if (activeQuery.isBlank()) "Content failed to load"
-                                        else "Search failed to load",
-                                color = AppTheme.colors.error,
-                                fontSize = 14.sp,
-                                fontFamily = AppTheme.fontFamily,
-                                letterSpacing = 0.6.sp,
-                                modifier =
-                                        Modifier.focusRequester(contentItemFocusRequester)
-                                                .focusable()
-                        )
-                    } else if (lazyItems.itemCount == 0) {
-                        Text(
-                                text =
-                                        if (activeQuery.isBlank()) "No content yet"
-                                        else "No results found",
-                                color = AppTheme.colors.textSecondary,
-                                fontSize = 14.sp,
-                                fontFamily = AppTheme.fontFamily,
-                                letterSpacing = 0.6.sp,
-                                modifier =
-                                        Modifier.focusRequester(contentItemFocusRequester)
-                                                .focusable()
-                        )
-                    } else {
-                        LazyVerticalGrid(
-                                columns = GridCells.Fixed(columns),
-                                verticalArrangement = Arrangement.spacedBy(16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                modifier = Modifier.fillMaxWidth().weight(1f)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        if (lazyItems.loadState.refresh is LoadState.Loading && lazyItems.itemCount == 0
                         ) {
-                            items(
-                                    count = lazyItems.itemCount,
-                                    key = { index -> lazyItems[index]?.id ?: "cat-item-$index" }
-                            ) { index ->
-                                val item = lazyItems[index]
-                                val isLeftEdge = index % columns == 0
-                                val isTopRow = index < columns
-                                val requester =
-                                        when {
-                                            item?.id != null && item.id == resumeFocusId ->
-                                                    resumeFocusRequester
-                                            index == 0 -> contentItemFocusRequester
-                                            else -> null
-                                        }
-                                val subtitleOverride =
-                                        rememberSeriesSubtitle(item, contentRepository, authConfig)
-                                ContentCard(
-                                        item = item,
-                                        subtitleOverride = subtitleOverride,
-                                        focusRequester = requester,
-                                        isLeftEdge = isLeftEdge,
-                                        isFavorite = item != null && isItemFavorite(item),
-                                        onActivate =
-                                                if (item != null) {
-                                                    {
-                                                        if (activeType == ContentType.SERIES &&
-                                                                        item.containerExtension
-                                                                                .isNullOrBlank()
-                                                        ) {
-                                                            selectedSeries = item
-                                                        } else {
-                                                            onPlay(
-                                                                    item,
-                                                                    lazyItems.itemSnapshotList.items
-                                                            )
+                            Text(
+                                    text =
+                                            if (activeQuery.isBlank()) "Loading content..."
+                                            else "Searching...",
+                                    color = AppTheme.colors.textSecondary,
+                                    fontSize = 14.sp,
+                                    fontFamily = AppTheme.fontFamily,
+                                    letterSpacing = 0.6.sp,
+                                    modifier =
+                                            if (selectedSeries == null)
+                                                Modifier.focusRequester(contentItemFocusRequester)
+                                                        .focusable()
+                                            else Modifier
+                            )
+                        } else if (lazyItems.loadState.refresh is LoadState.Error) {
+                            Text(
+                                    text =
+                                            if (activeQuery.isBlank()) "Content failed to load"
+                                            else "Search failed to load",
+                                    color = AppTheme.colors.error,
+                                    fontSize = 14.sp,
+                                    fontFamily = AppTheme.fontFamily,
+                                    letterSpacing = 0.6.sp,
+                                    modifier =
+                                            if (selectedSeries == null)
+                                                Modifier.focusRequester(contentItemFocusRequester)
+                                                        .focusable()
+                                            else Modifier
+                            )
+                        } else if (lazyItems.itemCount == 0) {
+                            Text(
+                                    text =
+                                            if (activeQuery.isBlank()) "No content yet"
+                                            else "No results found",
+                                    color = AppTheme.colors.textSecondary,
+                                    fontSize = 14.sp,
+                                    fontFamily = AppTheme.fontFamily,
+                                    letterSpacing = 0.6.sp,
+                                    modifier =
+                                            if (selectedSeries == null)
+                                                Modifier.focusRequester(contentItemFocusRequester)
+                                                        .focusable()
+                                            else Modifier
+                            )
+                        } else {
+                            LazyVerticalGrid(
+                                    columns = GridCells.Fixed(columns),
+                                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                    modifier = Modifier.fillMaxWidth().weight(1f),
+                                    state = contentGridState,
+                                    userScrollEnabled = selectedSeries == null
+                            ) {
+                                items(
+                                        count = lazyItems.itemCount,
+                                        key = { index -> lazyItems[index]?.id ?: "cat-item-$index" }
+                                ) { index ->
+                                    val item = lazyItems[index]
+                                    val isLeftEdge = index % columns == 0
+                                    val isTopRow = index < columns
+                                    val requester =
+                                            if (selectedSeries == null) {
+                                                when {
+                                                    item?.id != null && item.id == resumeFocusId ->
+                                                            resumeFocusRequester
+                                                    index == 0 -> contentItemFocusRequester
+                                                    else -> null
+                                                }
+                                            } else null
+                                    val subtitleOverride =
+                                            rememberSeriesSubtitle(item, contentRepository, authConfig)
+                                    ContentCard(
+                                            item = item,
+                                            subtitleOverride = subtitleOverride,
+                                            focusRequester = requester,
+                                            isLeftEdge = isLeftEdge,
+                                            isFavorite = item != null && isItemFavorite(item),
+                                            onActivate =
+                                                    if (item != null && selectedSeries == null) {
+                                                        {
+                                                            if (activeType == ContentType.SERIES &&
+                                                                            item.containerExtension
+                                                                                    .isNullOrBlank()
+                                                            ) {
+                                                                selectedSeries = item
+                                                            } else {
+                                                                onPlay(
+                                                                        item,
+                                                                        lazyItems.itemSnapshotList.items
+                                                                )
+                                                            }
                                                         }
-                                                    }
-                                                } else {
-                                                    null
-                                                },
-                                        onFocused = onItemFocused,
-                                        onMoveLeft = onMoveLeft,
-                                        onMoveUp =
-                                                if (isTopRow) {
-                                                    { searchFocusRequester.requestFocus() }
-                                                } else {
-                                                    null
-                                                },
-                                        onLongClick =
-                                                if (item != null) {
-                                                    { onToggleFavorite(item) }
-                                                } else {
-                                                    null
-                                                },
-                                        forceDarkText = forceDarkText,
-                                        useContrastText = useContrastText
-                                )
+                                                    } else {
+                                                        null
+                                                    },
+                                            onFocused =
+                                                    if (selectedSeries == null) {
+                                                        { focusedItem ->
+                                                            lastCategoryContentIndex = index
+                                                            onItemFocused(focusedItem)
+                                                        }
+                                                    } else {
+                                                        { _ -> }
+                                                    },
+                                            onMoveLeft = { if (selectedSeries == null) onMoveLeft() },
+                                            onMoveUp =
+                                                    if (isTopRow && selectedSeries == null) {
+                                                        { searchFocusRequester.requestFocus() }
+                                                    } else {
+                                                        null
+                                                    },
+                                            onLongClick =
+                                                    if (item != null && selectedSeries == null) {
+                                                        { onToggleFavorite(item) }
+                                                    } else {
+                                                        null
+                                                    },
+                                            forceDarkText = forceDarkText,
+                                            useContrastText = useContrastText
+                                    )
+                                }
                             }
                         }
+                    }
+
+                    // SeriesSeasonsScreen overlay - shown on top when selected
+                    if (selectedSeries != null) {
+                        SeriesSeasonsScreen(
+                                seriesItem = selectedSeries!!,
+                                contentRepository = contentRepository,
+                                authConfig = authConfig,
+                                contentItemFocusRequester = contentItemFocusRequester,
+                                resumeFocusId = resumeFocusId,
+                                resumeFocusRequester = resumeFocusRequester,
+                                onItemFocused = onItemFocused,
+                                onPlay = onPlay,
+                                onMoveLeft = onMoveLeft,
+                                onBack = {
+                                    onItemFocused(selectedSeries!!)
+                                    runCatching { contentItemFocusRequester.requestFocus() }
+                                    pendingSeriesReturnFocus = true
+                                    selectedSeries = null
+                                },
+                                onToggleFavorite = onToggleFavorite,
+                                isItemFavorite = isItemFavorite,
+                                forceDarkText = forceDarkText
+                        )
                     }
                 }
             } else if (isLoading) {
@@ -6451,7 +6591,8 @@ fun CategorySectionScreen(
                             columns = GridCells.Fixed(columns),
                             verticalArrangement = Arrangement.spacedBy(16.dp),
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
-                            modifier = Modifier.fillMaxWidth().weight(1f)
+                            modifier = Modifier.fillMaxWidth().weight(1f),
+                            state = categoryGridState
                     ) {
                         items(filteredCategories.size) { index ->
                             val category = filteredCategories[index]
@@ -6783,6 +6924,8 @@ fun SeriesSeasonsScreen(
                                         .focusable()
                                         .onFocusChanged { state ->
                                             if (state.isFocused) {
+                                                // Reset resume focus to series (not episode) when entering seasons
+                                                onItemFocused(seriesItem)
                                                 seasonRequesterFor(selectedSeasonIndex)
                                                         ?.requestFocus()
                                             }

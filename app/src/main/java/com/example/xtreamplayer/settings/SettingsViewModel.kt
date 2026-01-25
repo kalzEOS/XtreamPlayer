@@ -62,6 +62,18 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setUiScale(scale: Float) {
+        viewModelScope.launch {
+            repository.setUiScale(scale)
+        }
+    }
+
+    fun setFontScale(scale: Float) {
+        viewModelScope.launch {
+            repository.setFontScale(scale)
+        }
+    }
+
     fun setOpenSubtitlesApiKey(apiKey: String) {
         viewModelScope.launch {
             repository.setOpenSubtitlesApiKey(apiKey)
