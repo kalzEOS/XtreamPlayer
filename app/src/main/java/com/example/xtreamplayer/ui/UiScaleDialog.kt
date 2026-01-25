@@ -63,6 +63,7 @@ fun UiScaleDialog(
     }
     val minusFocusRequester = remember { FocusRequester() }
     val plusFocusRequester = remember { FocusRequester() }
+    val resetFocusRequester = remember { FocusRequester() }
     val closeFocusRequester = remember { FocusRequester() }
     var pendingFocus by remember { mutableStateOf<UiScaleFocusTarget?>(UiScaleFocusTarget.MINUS) }
 
@@ -74,6 +75,7 @@ fun UiScaleDialog(
         when (pendingFocus) {
             UiScaleFocusTarget.MINUS -> minusFocusRequester.requestFocus()
             UiScaleFocusTarget.PLUS -> plusFocusRequester.requestFocus()
+            UiScaleFocusTarget.RESET -> resetFocusRequester.requestFocus()
             null -> Unit
         }
         pendingFocus = null
@@ -157,10 +159,27 @@ fun UiScaleDialog(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                CloseButton(
-                    focusRequester = closeFocusRequester,
-                    onDismiss = onDismiss
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    DialogActionButton(
+                        label = "Reset",
+                        focusRequester = resetFocusRequester,
+                        onClick = {
+                            localPercent = 100
+                            onScaleChange(1f)
+                            pendingFocus = UiScaleFocusTarget.RESET
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                    DialogActionButton(
+                        label = "Close",
+                        focusRequester = closeFocusRequester,
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
         }
     }
@@ -168,21 +187,23 @@ fun UiScaleDialog(
 
 private enum class UiScaleFocusTarget {
     MINUS,
-    PLUS
+    PLUS,
+    RESET
 }
 
 @Composable
-private fun CloseButton(
+private fun DialogActionButton(
+    label: String,
     focusRequester: FocusRequester,
-    onDismiss: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val colors = AppTheme.colors
 
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .focusRequester(focusRequester)
             .focusable(interactionSource = interactionSource)
             .onKeyEvent {
@@ -190,7 +211,7 @@ private fun CloseButton(
                     false
                 } else when (it.key) {
                     Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> {
-                        onDismiss()
+                        onClick()
                         true
                     }
                     else -> false
@@ -199,7 +220,7 @@ private fun CloseButton(
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
-                onClick = onDismiss
+                onClick = onClick
             )
             .clip(RoundedCornerShape(8.dp))
             .background(if (isFocused) colors.accent else colors.accentMutedAlt)
@@ -212,7 +233,7 @@ private fun CloseButton(
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = "Close",
+            text = label,
             color = if (isFocused) colors.textOnAccent else colors.textPrimary,
             fontSize = 16.sp,
             fontFamily = AppTheme.fontFamily,

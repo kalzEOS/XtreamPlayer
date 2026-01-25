@@ -58,6 +58,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
@@ -125,6 +126,7 @@ import com.example.xtreamplayer.content.SubtitleRepository
 import com.example.xtreamplayer.player.Media3PlaybackEngine
 import com.example.xtreamplayer.player.XtreamPlayerView
 import com.example.xtreamplayer.settings.PlaybackSettingsController
+import com.example.xtreamplayer.settings.SettingsState
 import com.example.xtreamplayer.settings.SettingsViewModel
 import com.example.xtreamplayer.ui.ApiKeyInputDialog
 import com.example.xtreamplayer.ui.AudioBoostDialog
@@ -194,6 +196,12 @@ class MainActivity : ComponentActivity() {
                     subtitleRepository = subtitleRepository
             )
         }
+    }
+
+    override fun onDestroy() {
+        // Release player only when activity is destroyed, not on recomposition
+        playbackEngine.release()
+        super.onDestroy()
     }
 }
 
@@ -799,7 +807,7 @@ fun RootScreen(
         onDispose {
             playbackEngine.player.removeListener(listener)
             playbackSettingsController.unbind(playbackEngine)
-            playbackEngine.release()
+            // NOTE: Don't release player here - it's released in Activity.onDestroy()
         }
     }
 
@@ -1014,6 +1022,7 @@ fun RootScreen(
                                                 title = sectionTitle,
                                                 contentRepository = contentRepository,
                                                 authConfig = activeConfig,
+                                                settings = settings,
                                                 continueWatchingItems =
                                                         filteredContinueWatchingItems,
                                                 contentItemFocusRequester =
@@ -1046,6 +1055,7 @@ fun RootScreen(
                                                 title = sectionTitle,
                                                 contentRepository = contentRepository,
                                                 authConfig = activeConfig,
+                                                settings = settings,
                                                 contentItemFocusRequester =
                                                         contentItemFocusRequester,
                                                 resumeFocusId = resumeFocusId,
@@ -1065,6 +1075,7 @@ fun RootScreen(
                                                 title = sectionTitle,
                                                 contentRepository = contentRepository,
                                                 authConfig = activeConfig,
+                                                settings = settings,
                                                 favoriteContentItems = filteredFavoriteContentItems,
                                                 favoriteCategoryItems =
                                                         filteredFavoriteCategoryItems,
@@ -1087,6 +1098,7 @@ fun RootScreen(
                                     Section.LOCAL_FILES -> {
                                         LocalFilesScreen(
                                                 title = sectionTitle,
+                                                settings = settings,
                                                 files = localFiles,
                                                 contentItemFocusRequester =
                                                         contentItemFocusRequester,
@@ -1185,6 +1197,7 @@ fun RootScreen(
                                                 section = selectedSection,
                                                 contentRepository = contentRepository,
                                                 authConfig = activeConfig,
+                                                settings = settings,
                                                 contentItemFocusRequester =
                                                         contentItemFocusRequester,
                                                 resumeFocusId = resumeFocusId,
@@ -1207,6 +1220,7 @@ fun RootScreen(
                 BackHandler(enabled = true) { showLocalFilesGuest = false }
                 LocalFilesScreen(
                         title = "PLAY LOCAL FILES",
+                        settings = settings,
                         files = localFiles,
                         contentItemFocusRequester = contentItemFocusRequester,
                         resumeFocusId = resumeFocusId,
@@ -2375,6 +2389,14 @@ private fun cardTitleColor(colors: AppColors): Color {
 private fun cardSubtitleColor(colors: AppColors): Color {
     return if (isLightTheme(colors)) Color.White.copy(alpha = 0.72f) else colors.textSecondary
 }
+
+private fun scaleTextSize(size: TextUnit, scale: Float): TextUnit {
+    return if (scale == 1f) size else (size.value * scale).sp
+}
+
+private const val POSTER_ASPECT_RATIO = 2f / 3f
+private const val LANDSCAPE_ASPECT_RATIO = 16f / 9f
+
 
 @Composable
 fun NavItem(
@@ -3864,7 +3886,9 @@ private fun ContentCard(
         titleFontSize: TextUnit = 16.sp,
         subtitleFontSize: TextUnit = 12.sp,
         forceDarkText: Boolean = false,
-        useContrastText: Boolean = false
+        useContrastText: Boolean = false,
+        isPoster: Boolean = false,
+        fontScaleFactor: Float = 1f
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -3888,8 +3912,17 @@ private fun ContentCard(
             else cardSubtitleColor(colors)
     val title = item?.title ?: "Loading..."
     val subtitle = subtitleOverride ?: item?.subtitle ?: "Please wait"
+    val scaledTitleSize = scaleTextSize(titleFontSize, fontScaleFactor)
+    val scaledSubtitleSize = scaleTextSize(subtitleFontSize, fontScaleFactor)
     val imageUrl = item?.imageUrl
     val context = LocalContext.current
+    val isSeriesTitle = item?.contentType == ContentType.SERIES && item.containerExtension.isNullOrBlank()
+    val isNaturalPoster = item?.contentType == ContentType.MOVIES || isSeriesTitle
+    val posterStyle = isNaturalPoster || isPoster
+    val showBackdrop = posterStyle && item != null && !isNaturalPoster
+    val cardAspectRatio = if (posterStyle) POSTER_ASPECT_RATIO else LANDSCAPE_ASPECT_RATIO
+    val imageContentScale = if (posterStyle) ContentScale.Fit else ContentScale.Crop
+    val contentPadding = 2.dp
     val imageRequest =
             remember(imageUrl) {
                 if (imageUrl.isNullOrBlank()) {
@@ -3906,7 +3939,7 @@ private fun ContentCard(
     Box(
             modifier =
                     Modifier.fillMaxWidth()
-                            .aspectRatio(16f / 9f)
+                            .aspectRatio(cardAspectRatio)
                             .then(
                                     if (focusRequester != null) {
                                         Modifier.focusRequester(focusRequester)
@@ -4000,14 +4033,23 @@ private fun ContentCard(
                             .clip(shape)
                             .background(backgroundColor)
                             .border(1.dp, borderColor, shape)
-                            .padding(12.dp),
+                            .padding(2.dp),
             contentAlignment = Alignment.BottomStart
     ) {
         if (imageRequest != null) {
+            if (showBackdrop) {
+                AsyncImage(
+                        model = imageRequest,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        filterQuality = FilterQuality.Low,
+                        modifier = Modifier.fillMaxSize().blur(18.dp).alpha(0.65f)
+                )
+            }
             AsyncImage(
                     model = imageRequest,
                     contentDescription = null,
-                    contentScale = ContentScale.Crop,
+                    contentScale = imageContentScale,
                     filterQuality = FilterQuality.Low,
                     modifier = Modifier.fillMaxSize()
             )
@@ -4026,7 +4068,7 @@ private fun ContentCard(
                 Text(
                         text = title,
                         color = titleColor,
-                        fontSize = titleFontSize,
+                        fontSize = scaledTitleSize,
                         fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold,
                         letterSpacing = 0.3.sp
@@ -4034,7 +4076,7 @@ private fun ContentCard(
                 Text(
                         text = subtitle,
                         color = subtitleColor,
-                        fontSize = subtitleFontSize,
+                        fontSize = scaledSubtitleSize,
                         fontFamily = AppTheme.fontFamily,
                         letterSpacing = 0.2.sp
                 )
@@ -4050,6 +4092,7 @@ private fun ContinueWatchingCard(
         isLeftEdge: Boolean,
         isFavorite: Boolean,
         progressPercent: Int,
+        fontScaleFactor: Float = 1f,
         onActivate: () -> Unit,
         onFocused: () -> Unit,
         onMoveLeft: () -> Unit,
@@ -4068,6 +4111,15 @@ private fun ContinueWatchingCard(
     val subtitle = item.subtitle
     val imageUrl = item.imageUrl
     val context = LocalContext.current
+    val isSeriesTitle =
+            item.contentType == ContentType.SERIES && item.containerExtension.isNullOrBlank()
+    val isNaturalPoster = item.contentType == ContentType.MOVIES || isSeriesTitle
+    val showBackdrop = !isNaturalPoster
+    val cardAspectRatio = POSTER_ASPECT_RATIO
+    val imageContentScale = ContentScale.Fit
+    val titleSize = scaleTextSize(16.sp, fontScaleFactor)
+    val subtitleSize = scaleTextSize(12.sp, fontScaleFactor)
+    val contentPadding = 2.dp
     val imageRequest =
             remember(imageUrl) {
                 if (imageUrl.isNullOrBlank()) {
@@ -4086,7 +4138,7 @@ private fun ContinueWatchingCard(
     Box(
             modifier =
                     Modifier.fillMaxWidth()
-                            .aspectRatio(16f / 9f)
+                            .aspectRatio(cardAspectRatio)
                             .then(
                                     if (focusRequester != null) {
                                         Modifier.focusRequester(focusRequester)
@@ -4152,14 +4204,23 @@ private fun ContinueWatchingCard(
                             .clip(shape)
                             .background(backgroundColor)
                             .border(1.dp, borderColor, shape)
-                            .padding(12.dp),
+                            .padding(2.dp),
             contentAlignment = Alignment.BottomStart
     ) {
         if (imageRequest != null) {
+            if (showBackdrop) {
+                AsyncImage(
+                        model = imageRequest,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        filterQuality = FilterQuality.Low,
+                        modifier = Modifier.fillMaxSize().blur(18.dp).alpha(0.65f)
+                )
+            }
             AsyncImage(
                     model = imageRequest,
                     contentDescription = null,
-                    contentScale = ContentScale.Crop,
+                    contentScale = imageContentScale,
                     filterQuality = FilterQuality.Low,
                     modifier = Modifier.fillMaxSize()
             )
@@ -4193,7 +4254,7 @@ private fun ContinueWatchingCard(
                 Text(
                         text = title,
                         color = cardTitleColor(colors),
-                        fontSize = 16.sp,
+                        fontSize = titleSize,
                         fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold,
                         letterSpacing = 0.3.sp
@@ -4201,7 +4262,7 @@ private fun ContinueWatchingCard(
                 Text(
                         text = "$subtitle • $progressPercent% watched",
                         color = cardSubtitleColor(colors),
-                        fontSize = 12.sp,
+                        fontSize = subtitleSize,
                         fontFamily = AppTheme.fontFamily,
                         letterSpacing = 0.2.sp
                 )
@@ -4379,7 +4440,7 @@ private fun CategoryCard(
                             .clip(shape)
                             .background(backgroundColor)
                             .border(1.dp, borderColor, shape)
-                            .padding(12.dp),
+                            .padding(2.dp),
             contentAlignment = Alignment.BottomStart
     ) {
         if (imageRequest != null) {
@@ -4389,8 +4450,9 @@ private fun CategoryCard(
                     contentScale = ContentScale.Crop,
                     filterQuality = FilterQuality.Low,
                     modifier =
-                            Modifier.size(54.dp)
-                                    .align(Alignment.TopStart)
+                            Modifier.align(Alignment.TopStart)
+                                    .offset(x = 6.dp, y = 6.dp)
+                                    .size(54.dp)
                                     .clip(RoundedCornerShape(12.dp))
                                     .border(
                                             1.dp,
@@ -4401,8 +4463,9 @@ private fun CategoryCard(
         } else if (thumbnail != null) {
             Box(
                     modifier =
-                            Modifier.size(54.dp)
-                                    .align(Alignment.TopStart)
+                            Modifier.align(Alignment.TopStart)
+                                    .offset(x = 6.dp, y = 6.dp)
+                                    .size(54.dp)
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(thumbnail.brush)
                                     .border(
@@ -4545,6 +4608,7 @@ private fun SearchInput(
         onMoveLeft: (() -> Unit)? = null,
         onMoveRight: (() -> Unit)? = null,
         onMoveDown: (() -> Unit)? = null,
+        onMoveUp: (() -> Unit)? = null,
         onSearch: (() -> Unit)? = null
 ) {
     val shape = RoundedCornerShape(12.dp)
@@ -4606,6 +4670,9 @@ private fun SearchInput(
                                     } else if (it.key == Key.DirectionRight) {
                                         searchButtonFocusRequester.requestFocus()
                                         true
+                                    } else if (onMoveUp != null && it.key == Key.DirectionUp) {
+                                        onMoveUp()
+                                        true
                                     } else if (onMoveDown != null && it.key == Key.DirectionDown) {
                                         onMoveDown()
                                         true
@@ -4633,6 +4700,29 @@ private fun SearchInput(
                     modifier =
                             Modifier.fillMaxWidth()
                                     .focusRequester(textFieldFocusRequester)
+                                    .onKeyEvent {
+                                        if (it.type != KeyEventType.KeyDown) {
+                                            false
+                                        } else if (onMoveLeft != null &&
+                                                it.key == Key.DirectionLeft
+                                        ) {
+                                            onMoveLeft()
+                                            true
+                                        } else if (it.key == Key.DirectionRight) {
+                                            searchButtonFocusRequester.requestFocus()
+                                            true
+                                        } else if (onMoveUp != null && it.key == Key.DirectionUp) {
+                                            onMoveUp()
+                                            true
+                                        } else if (onMoveDown != null &&
+                                                it.key == Key.DirectionDown
+                                        ) {
+                                            onMoveDown()
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    }
                                     .onFocusChanged { state ->
                                         isTextFieldFocused = state.isFocused
                                         // Return to wrapper when text field loses focus
@@ -4685,6 +4775,9 @@ private fun SearchInput(
                                     ) {
                                         onMoveRight()
                                         true
+                                    } else if (onMoveUp != null && it.key == Key.DirectionUp) {
+                                        onMoveUp()
+                                        true
                                     } else if (onMoveDown != null && it.key == Key.DirectionDown) {
                                         onMoveDown()
                                         true
@@ -4719,6 +4812,7 @@ fun SectionScreen(
         section: Section,
         contentRepository: ContentRepository,
         authConfig: AuthConfig,
+        settings: SettingsState,
         contentItemFocusRequester: FocusRequester,
         resumeFocusId: String?,
         resumeFocusRequester: FocusRequester,
@@ -4729,15 +4823,28 @@ fun SectionScreen(
         isItemFavorite: (ContentItem) -> Boolean
 ) {
     val shape = RoundedCornerShape(18.dp)
-    val columns = 3
+    // Live uses landscape cards (3 cols at 100%), Movies/Series use poster cards (4 cols at 100%)
+    val columns = remember(settings.uiScale, section) {
+        if (section == Section.LIVE) {
+            kotlin.math.ceil(3.0 / settings.uiScale).toInt().coerceIn(3, 6)
+        } else {
+            kotlin.math.ceil(4.0 / settings.uiScale).toInt().coerceIn(4, 8)
+        }
+    }
+    val posterFontScale = remember(columns, section) {
+        if (section == Section.LIVE) 3f / columns.toFloat() else 4f / columns.toFloat()
+    }
     val searchState = rememberDebouncedSearchState(key = section)
     var selectedSeries by remember { mutableStateOf<ContentItem?>(null) }
     var pendingSeriesReturnFocus by remember { mutableStateOf(false) }
     val searchFocusRequester = remember { FocusRequester() }
+    val episodesFocusRequester = remember { FocusRequester() }
     val gridState = rememberLazyGridState()
+    var pendingEpisodeFocus by remember { mutableStateOf(false) }
     LaunchedEffect(section) {
         selectedSeries = null
         pendingSeriesReturnFocus = false
+        pendingEpisodeFocus = false
     }
 
     val activeQuery = searchState.debouncedQuery
@@ -4813,6 +4920,9 @@ fun SectionScreen(
                         contentItemFocusRequester = contentItemFocusRequester,
                         resumeFocusId = resumeFocusId,
                         resumeFocusRequester = resumeFocusRequester,
+                        episodesFocusRequester = episodesFocusRequester,
+                        pendingEpisodeFocus = pendingEpisodeFocus,
+                        onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                         onItemFocused = onItemFocused,
                         onPlay = onPlay,
                         onMoveLeft = onMoveLeft,
@@ -4821,6 +4931,7 @@ fun SectionScreen(
                             runCatching { contentItemFocusRequester.requestFocus() }
                             pendingSeriesReturnFocus = true
                             selectedSeries = null
+                            pendingEpisodeFocus = false
                         },
                         onToggleFavorite = onToggleFavorite,
                         isItemFavorite = isItemFavorite
@@ -4846,7 +4957,13 @@ fun SectionScreen(
                             focusRequester = searchFocusRequester,
                             modifier = Modifier.width(240.dp),
                             onMoveLeft = onMoveLeft,
-                            onMoveDown = { contentItemFocusRequester.requestFocus() },
+                            onMoveDown = {
+                                if (selectedSeries != null) {
+                                    pendingEpisodeFocus = true
+                                } else {
+                                    contentItemFocusRequester.requestFocus()
+                                }
+                            },
                             onSearch = { searchState.performSearch() }
                     )
                 }
@@ -4915,6 +5032,10 @@ fun SectionScreen(
                                     section == Section.ALL &&
                                             (item?.contentType == ContentType.MOVIES ||
                                                     item?.contentType == ContentType.SERIES)
+                            val posterHint =
+                                    section == Section.ALL ||
+                                            section == Section.MOVIES ||
+                                            section == Section.SERIES
                             val forceDarkText =
                                     if (section == Section.ALL) {
                                         item?.contentType == ContentType.LIVE
@@ -4960,7 +5081,9 @@ fun SectionScreen(
                                                 null
                                             },
                                     forceDarkText = forceDarkText,
-                                    useContrastText = useContrastText
+                                    useContrastText = useContrastText,
+                                    isPoster = posterHint,
+                                    fontScaleFactor = if (posterHint) posterFontScale else 1f
                             )
                         }
                     }
@@ -4973,6 +5096,7 @@ fun SectionScreen(
 @Composable
 private fun LocalFilesScreen(
         title: String,
+        settings: SettingsState,
         files: List<LocalFileItem>,
         contentItemFocusRequester: FocusRequester,
         resumeFocusId: String?,
@@ -4990,6 +5114,7 @@ private fun LocalFilesScreen(
     val refreshFocusRequester = remember { FocusRequester() }
     val emptyFocusRequester = remember { FocusRequester() }
     val coroutineScope = rememberCoroutineScope()
+    val useStackedHeader = settings.uiScale >= 1.2f
     val handleMoveLeft: () -> Unit =
             if (showBackButton) {
                 { backFocusRequester.requestFocus() }
@@ -5014,11 +5139,7 @@ private fun LocalFilesScreen(
                                 .border(1.dp, AppTheme.colors.border, shape)
                                 .padding(20.dp)
         ) {
-            Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
+            val backButton: @Composable () -> Unit = {
                 if (showBackButton) {
                     FocusableButton(
                             onClick = onBack,
@@ -5057,6 +5178,8 @@ private fun LocalFilesScreen(
                         )
                     }
                 }
+            }
+            val titleText: @Composable () -> Unit = {
                 Text(
                         text = title,
                         color = AppTheme.colors.textPrimary,
@@ -5065,7 +5188,8 @@ private fun LocalFilesScreen(
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.sp
                 )
-                Spacer(modifier = Modifier.weight(1f))
+            }
+            val scanButton: @Composable () -> Unit = {
                 FocusableButton(
                         onClick = onPickFiles,
                         colors =
@@ -5107,6 +5231,8 @@ private fun LocalFilesScreen(
                             fontWeight = FontWeight.SemiBold
                     )
                 }
+            }
+            val refreshButton: @Composable () -> Unit = {
                 FocusableButton(
                         onClick = onRefresh,
                         colors =
@@ -5141,6 +5267,44 @@ private fun LocalFilesScreen(
                             fontFamily = AppTheme.fontFamily,
                             fontWeight = FontWeight.SemiBold
                     )
+                }
+            }
+
+            if (useStackedHeader) {
+                Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        backButton()
+                        if (showBackButton) {
+                            Spacer(modifier = Modifier.width(12.dp))
+                        }
+                        titleText()
+                    }
+                    Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        scanButton()
+                        refreshButton()
+                    }
+                }
+            } else {
+                Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    backButton()
+                    titleText()
+                    Spacer(modifier = Modifier.weight(1f))
+                    scanButton()
+                    refreshButton()
                 }
             }
 
@@ -5416,6 +5580,7 @@ fun FavoritesScreen(
         title: String,
         contentRepository: ContentRepository,
         authConfig: AuthConfig,
+        settings: SettingsState,
         favoriteContentItems: List<ContentItem>,
         favoriteCategoryItems: List<CategoryItem>,
         hasFavoriteContentKeys: Boolean,
@@ -5432,7 +5597,12 @@ fun FavoritesScreen(
         isCategoryFavorite: (CategoryItem) -> Boolean
 ) {
     val shape = RoundedCornerShape(18.dp)
-    val columns = 3
+    // Poster content scales with UI, categories stay fixed
+    val posterColumns = remember(settings.uiScale) {
+        kotlin.math.ceil(4.0 / settings.uiScale).toInt().coerceIn(4, 8)
+    }
+    val posterFontScale = remember(posterColumns) { 4f / posterColumns.toFloat() }
+    val categoryColumns = 3
     var activeView by remember { mutableStateOf(FavoritesView.MENU) }
     var selectedCategory by remember { mutableStateOf<CategoryItem?>(null) }
     var selectedSeries by remember { mutableStateOf<ContentItem?>(null) }
@@ -5442,6 +5612,8 @@ fun FavoritesScreen(
     var lastMenuSelection by remember { mutableStateOf(FavoritesView.ITEMS) }
     val menuFocusRequesters = remember { listOf(FocusRequester(), FocusRequester()) }
     val backFocusRequester = remember { FocusRequester() }
+    val episodesFocusRequester = remember { FocusRequester() }
+    var pendingEpisodeFocus by remember { mutableStateOf(false) }
     val gridState = rememberLazyGridState()
     val categoryContentGridState = rememberLazyGridState()
     val sortedContent =
@@ -5459,6 +5631,7 @@ fun FavoritesScreen(
             selectedSeries = null
             pendingSeriesReturnFocus = false
             pendingCategoryEnterFocus = false
+            pendingEpisodeFocus = false
         }
     }
 
@@ -5476,6 +5649,7 @@ fun FavoritesScreen(
             runCatching { contentItemFocusRequester.requestFocus() }
             pendingSeriesReturnFocus = true
             selectedSeries = null
+            pendingEpisodeFocus = false
         } else if (selectedCategory != null) {
             // Request focus immediately before state change
             runCatching { contentItemFocusRequester.requestFocus() }
@@ -5628,6 +5802,9 @@ fun FavoritesScreen(
                         contentItemFocusRequester = contentItemFocusRequester,
                         resumeFocusId = resumeFocusId,
                         resumeFocusRequester = resumeFocusRequester,
+                        episodesFocusRequester = episodesFocusRequester,
+                        pendingEpisodeFocus = pendingEpisodeFocus,
+                        onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                         onItemFocused = onItemFocused,
                         onPlay = onPlay,
                         onMoveLeft = onMoveLeft,
@@ -5636,6 +5813,7 @@ fun FavoritesScreen(
                             runCatching { contentItemFocusRequester.requestFocus() }
                             pendingSeriesReturnFocus = true
                             selectedSeries = null
+                            pendingEpisodeFocus = false
                         },
                         onToggleFavorite = onToggleFavorite,
                         isItemFavorite = isItemFavorite
@@ -5716,7 +5894,7 @@ fun FavoritesScreen(
                     )
                 } else {
                     LazyVerticalGrid(
-                            columns = GridCells.Fixed(columns),
+                            columns = GridCells.Fixed(posterColumns),
                             verticalArrangement = Arrangement.spacedBy(16.dp),
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
                             modifier = Modifier.fillMaxWidth().weight(1f),
@@ -5733,10 +5911,14 @@ fun FavoritesScreen(
                                         index == 0 -> contentItemFocusRequester
                                         else -> null
                                     }
-                            val isLeftEdge = index % columns == 0
-                            val isTopRow = index < columns
+                            val isLeftEdge = index % posterColumns == 0
+                            val isTopRow = index < posterColumns
                             val subtitleOverride =
                                     rememberSeriesSubtitle(item, contentRepository, authConfig)
+                            val posterHint =
+                                    item.contentType == ContentType.MOVIES ||
+                                            (item.contentType == ContentType.SERIES &&
+                                                    item.containerExtension.isNullOrBlank())
                             ContentCard(
                                     item = item,
                                     subtitleOverride = subtitleOverride,
@@ -5760,7 +5942,9 @@ fun FavoritesScreen(
                                             } else {
                                                 null
                                             },
-                                    onLongClick = { onToggleFavorite(item) }
+                                    onLongClick = { onToggleFavorite(item) },
+                                    isPoster = posterHint,
+                                    fontScaleFactor = if (posterHint) posterFontScale else 1f
                             )
                         }
                     }
@@ -5835,25 +6019,29 @@ fun FavoritesScreen(
                     }
 
                     if (selectedSeries != null) {
-                        SeriesSeasonsScreen(
-                                seriesItem = selectedSeries!!,
-                                contentRepository = contentRepository,
-                                authConfig = authConfig,
-                                contentItemFocusRequester = contentItemFocusRequester,
-                                resumeFocusId = resumeFocusId,
-                                resumeFocusRequester = resumeFocusRequester,
-                                onItemFocused = onItemFocused,
-                                onPlay = onPlay,
-                                onMoveLeft = onMoveLeft,
-                                onBack = {
-                                    onItemFocused(selectedSeries!!)
-                                    runCatching { contentItemFocusRequester.requestFocus() }
-                                    pendingSeriesReturnFocus = true
-                                    selectedSeries = null
-                                },
-                                onToggleFavorite = onToggleFavorite,
-                                isItemFavorite = isItemFavorite
-                        )
+                SeriesSeasonsScreen(
+                        seriesItem = selectedSeries!!,
+                        contentRepository = contentRepository,
+                        authConfig = authConfig,
+                        contentItemFocusRequester = contentItemFocusRequester,
+                        resumeFocusId = resumeFocusId,
+                        resumeFocusRequester = resumeFocusRequester,
+                        episodesFocusRequester = episodesFocusRequester,
+                        pendingEpisodeFocus = pendingEpisodeFocus,
+                        onEpisodeFocusHandled = { pendingEpisodeFocus = false },
+                        onItemFocused = onItemFocused,
+                        onPlay = onPlay,
+                        onMoveLeft = onMoveLeft,
+                        onBack = {
+                            onItemFocused(selectedSeries!!)
+                            runCatching { contentItemFocusRequester.requestFocus() }
+                            pendingSeriesReturnFocus = true
+                            selectedSeries = null
+                            pendingEpisodeFocus = false
+                        },
+                        onToggleFavorite = onToggleFavorite,
+                        isItemFavorite = isItemFavorite
+                )
                     } else {
                         // Focus is managed by user navigation - no auto-focus on content load
                         Text(
@@ -5901,7 +6089,7 @@ fun FavoritesScreen(
                             )
                         } else {
                             LazyVerticalGrid(
-                                    columns = GridCells.Fixed(columns),
+                                    columns = GridCells.Fixed(posterColumns),
                                     verticalArrangement = Arrangement.spacedBy(16.dp),
                                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                                     modifier = Modifier.fillMaxWidth().weight(1f),
@@ -5921,14 +6109,17 @@ fun FavoritesScreen(
                                                 index == 0 -> contentItemFocusRequester
                                                 else -> null
                                             }
-                                    val isLeftEdge = index % columns == 0
-                                    val isTopRow = index < columns
+                                    val isLeftEdge = index % posterColumns == 0
+                                    val isTopRow = index < posterColumns
                                     val subtitleOverride =
                                             rememberSeriesSubtitle(
                                                     item,
                                                     contentRepository,
                                                     authConfig
                                             )
+                                    val posterHint =
+                                            category.type == ContentType.MOVIES ||
+                                                    category.type == ContentType.SERIES
                                     ContentCard(
                                             item = item,
                                             subtitleOverride = subtitleOverride,
@@ -5973,7 +6164,9 @@ fun FavoritesScreen(
                                             forceDarkText = category.type == ContentType.LIVE,
                                             useContrastText =
                                                     category.type == ContentType.MOVIES ||
-                                                            category.type == ContentType.SERIES
+                                                            category.type == ContentType.SERIES,
+                                            isPoster = posterHint,
+                                            fontScaleFactor = if (posterHint) posterFontScale else 1f
                                     )
                                 }
                             }
@@ -5995,7 +6188,7 @@ fun FavoritesScreen(
                         )
                     } else {
                         LazyVerticalGrid(
-                                columns = GridCells.Fixed(columns),
+                                columns = GridCells.Fixed(categoryColumns),
                                 verticalArrangement = Arrangement.spacedBy(16.dp),
                                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                                 modifier = Modifier.fillMaxWidth().weight(1f),
@@ -6004,8 +6197,8 @@ fun FavoritesScreen(
                             items(sortedCategories.size) { index ->
                                 val category = sortedCategories[index]
                                 val requester = if (index == 0) contentItemFocusRequester else null
-                                val isLeftEdge = index % columns == 0
-                                val isTopRow = index < columns
+                                val isLeftEdge = index % categoryColumns == 0
+                                val isTopRow = index < categoryColumns
                                 val categoryThumbnailUrl by
                                         produceState<String?>(
                                                 initialValue = null,
@@ -6106,6 +6299,7 @@ fun CategorySectionScreen(
         title: String,
         contentRepository: ContentRepository,
         authConfig: AuthConfig,
+        settings: SettingsState,
         contentItemFocusRequester: FocusRequester,
         resumeFocusId: String?,
         resumeFocusRequester: FocusRequester,
@@ -6125,16 +6319,31 @@ fun CategorySectionScreen(
     var pendingCategoryReturnFocus by remember { mutableStateOf(false) }
     var pendingCategoryEnterFocus by remember { mutableStateOf(false) }
     var lastCategoryContentIndex by remember { mutableIntStateOf(0) }
+    var lastCategoryContentId by remember { mutableStateOf<String?>(null) }
     var categories by remember { mutableStateOf<List<CategoryItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val searchState = rememberDebouncedSearchState(key = activeType)
-    val columns = 3
+    // Live uses landscape cards (3 cols at 100%), Movies/Series use poster cards (4 cols at 100%)
+    val posterColumns = remember(settings.uiScale, activeType) {
+        if (activeType == ContentType.LIVE) {
+            kotlin.math.ceil(3.0 / settings.uiScale).toInt().coerceIn(3, 6)
+        } else {
+            kotlin.math.ceil(4.0 / settings.uiScale).toInt().coerceIn(4, 8)
+        }
+    }
+    val posterFontScale = remember(posterColumns, activeType) {
+        if (activeType == ContentType.LIVE) 3f / posterColumns.toFloat() else 4f / posterColumns.toFloat()
+    }
+    val categoryColumns = 3  // Fixed for category cards
     val categoryGridState = rememberLazyGridState()
     val contentGridState = rememberLazyGridState()
     val tabFocusRequesters = remember { ContentType.values().map { FocusRequester() } }
     val backTabFocusRequester = remember { FocusRequester() }
     val searchFocusRequester = remember { FocusRequester() }
+    val episodesFocusRequester = remember { FocusRequester() }
+    var pendingEpisodeFocus by remember { mutableStateOf(false) }
+    val useStackedHeader = settings.uiScale >= 1.2f
 
     val activeQuery = searchState.debouncedQuery
 
@@ -6153,6 +6362,9 @@ fun CategorySectionScreen(
         pendingSeriesReturnFocus = false
         pendingCategoryReturnFocus = false
         pendingCategoryEnterFocus = false
+        pendingEpisodeFocus = false
+        lastCategoryContentIndex = 0
+        lastCategoryContentId = null
         runCatching { contentRepository.loadCategories(activeType, authConfig) }
                 .onSuccess { categories = it }
                 .onFailure { errorMessage = it.message ?: "Failed to load categories" }
@@ -6206,10 +6418,54 @@ fun CategorySectionScreen(
                                 .padding(20.dp)
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                ) {
+                val tabsContent: @Composable () -> Unit = {
+                    if (selectedCategory != null) {
+                        CategoryTypeTab(
+                                label = "Back",
+                                selected = false,
+                                focusRequester = backTabFocusRequester,
+                                onActivate = {
+                                    if (selectedSeries != null) {
+                                        val seriesItem = selectedSeries!!
+                                        onItemFocused(seriesItem)
+                                        runCatching { contentItemFocusRequester.requestFocus() }
+                                        pendingSeriesReturnFocus = true
+                                        selectedSeries = null
+                                    } else {
+                                        selectedCategory = null
+                                        pendingCategoryReturnFocus = true
+                                    }
+                                },
+                                onMoveLeft = { searchFocusRequester.requestFocus() },
+                                onMoveRight = { tabFocusRequesters.first().requestFocus() }
+                        )
+                    }
+                    ContentType.values().forEachIndexed { index, type ->
+                        val requester = tabFocusRequesters[index]
+                        CategoryTypeTab(
+                                label = type.label,
+                                selected = activeType == type,
+                                focusRequester = requester,
+                                onActivate = { activeType = type },
+                                onMoveLeft =
+                                        if (index > 0) {
+                                            { tabFocusRequesters[index - 1].requestFocus() }
+                                        } else if (selectedCategory != null) {
+                                            { backTabFocusRequester.requestFocus() }
+                                        } else {
+                                            { searchFocusRequester.requestFocus() }
+                                        },
+                                onMoveRight =
+                                        if (index < tabFocusRequesters.lastIndex) {
+                                            { tabFocusRequesters[index + 1].requestFocus() }
+                                        } else {
+                                            null
+                                        }
+                        )
+                    }
+                }
+
+                if (useStackedHeader) {
                     Text(
                             text = title,
                             color = AppTheme.colors.textPrimary,
@@ -6218,43 +6474,31 @@ fun CategorySectionScreen(
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 1.sp
                     )
-                    Spacer(modifier = Modifier.weight(1f))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (selectedCategory != null) {
-                            CategoryTypeTab(
-                                    label = "Back",
-                                    selected = false,
-                                    focusRequester = backTabFocusRequester,
-                                    onActivate = {
-                                        selectedCategory = null
-                                        pendingCategoryReturnFocus = true
-                                    },
-                                    onMoveLeft = { searchFocusRequester.requestFocus() },
-                                    onMoveRight = { tabFocusRequesters.first().requestFocus() }
-                            )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+                        Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            tabsContent()
                         }
-                        ContentType.values().forEachIndexed { index, type ->
-                            val requester = tabFocusRequesters[index]
-                            CategoryTypeTab(
-                                    label = type.label,
-                                    selected = activeType == type,
-                                    focusRequester = requester,
-                                    onActivate = { activeType = type },
-                                    onMoveLeft =
-                                            if (index > 0) {
-                                                { tabFocusRequesters[index - 1].requestFocus() }
-                                            } else if (selectedCategory != null) {
-                                                { backTabFocusRequester.requestFocus() }
-                                            } else {
-                                                { searchFocusRequester.requestFocus() }
-                                            },
-                                    onMoveRight =
-                                            if (index < tabFocusRequesters.lastIndex) {
-                                                { tabFocusRequesters[index + 1].requestFocus() }
-                                            } else {
-                                                null
-                                            }
-                            )
+                    }
+                } else {
+                    Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                                text = title,
+                                color = AppTheme.colors.textPrimary,
+                                fontSize = 20.sp,
+                                fontFamily = AppTheme.fontFamily,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            tabsContent()
                         }
                     }
                 }
@@ -6274,7 +6518,20 @@ fun CategorySectionScreen(
                                     tabFocusRequesters.firstOrNull()?.requestFocus()
                                 }
                             },
-                            onMoveDown = { contentItemFocusRequester.requestFocus() },
+                            onMoveUp = {
+                                if (selectedCategory != null) {
+                                    backTabFocusRequester.requestFocus()
+                                } else {
+                                    tabFocusRequesters.firstOrNull()?.requestFocus()
+                                }
+                            },
+                            onMoveDown = {
+                                if (selectedSeries != null) {
+                                    pendingEpisodeFocus = true
+                                } else {
+                                    contentItemFocusRequester.requestFocus()
+                                }
+                            },
                             onSearch = { searchState.performSearch() }
                     )
                 }
@@ -6340,10 +6597,23 @@ fun CategorySectionScreen(
                     if (pendingSeriesReturnFocus && selectedSeries == null) {
                         // Wait for items to be available
                         if (lazyItems.itemCount == 0) return@LaunchedEffect
+                        val itemsSnapshot = lazyItems.itemSnapshotList.items
+                        val lastId = lastCategoryContentId
+                        val lastIdIndex =
+                                if (lastId != null) {
+                                    itemsSnapshot.indexOfFirst { it?.id == lastId }
+                                } else {
+                                    -1
+                                }
                         val targetIndex =
-                                lastCategoryContentIndex.coerceAtMost(
-                                        (lazyItems.itemCount - 1).coerceAtLeast(0)
-                                )
+                                when {
+                                    lastIdIndex >= 0 -> lastIdIndex
+                                    lastCategoryContentIndex > 0 ->
+                                            lastCategoryContentIndex.coerceAtMost(
+                                                    (lazyItems.itemCount - 1).coerceAtLeast(0)
+                                            )
+                                    else -> 0
+                                }
                         if (targetIndex > 0) {
                             contentGridState.scrollToItem(targetIndex)
                         }
@@ -6351,9 +6621,9 @@ fun CategorySectionScreen(
                         withFrameNanos {}
                         delay(32)
                         withFrameNanos {}
+                        val resumeId = lastId ?: resumeFocusId
                         val shouldResume =
-                                resumeFocusId != null &&
-                                        lazyItems.itemSnapshotList.items.any { it?.id == resumeFocusId }
+                                resumeId != null && itemsSnapshot.any { it?.id == resumeId }
                         val requester =
                                 if (shouldResume) {
                                     resumeFocusRequester
@@ -6438,7 +6708,7 @@ fun CategorySectionScreen(
                             )
                         } else {
                             LazyVerticalGrid(
-                                    columns = GridCells.Fixed(columns),
+                                    columns = GridCells.Fixed(posterColumns),
                                     verticalArrangement = Arrangement.spacedBy(16.dp),
                                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                                     modifier = Modifier.fillMaxWidth().weight(1f),
@@ -6450,19 +6720,28 @@ fun CategorySectionScreen(
                                         key = { index -> lazyItems[index]?.id ?: "cat-item-$index" }
                                 ) { index ->
                                     val item = lazyItems[index]
-                                    val isLeftEdge = index % columns == 0
-                                    val isTopRow = index < columns
+                                    val isLeftEdge = index % posterColumns == 0
+                                    val isTopRow = index < posterColumns
                                     val requester =
                                             if (selectedSeries == null) {
                                                 when {
-                                                    item?.id != null && item.id == resumeFocusId ->
+                                                    item?.id != null &&
+                                                            (item.id == lastCategoryContentId ||
+                                                                    item.id == resumeFocusId) ->
                                                             resumeFocusRequester
                                                     index == 0 -> contentItemFocusRequester
                                                     else -> null
                                                 }
                                             } else null
                                     val subtitleOverride =
-                                            rememberSeriesSubtitle(item, contentRepository, authConfig)
+                                            rememberSeriesSubtitle(
+                                                    item,
+                                                    contentRepository,
+                                                    authConfig
+                                            )
+                                    val posterHint =
+                                            activeType == ContentType.MOVIES ||
+                                                    activeType == ContentType.SERIES
                                     ContentCard(
                                             item = item,
                                             subtitleOverride = subtitleOverride,
@@ -6491,12 +6770,14 @@ fun CategorySectionScreen(
                                                     if (selectedSeries == null) {
                                                         { focusedItem ->
                                                             lastCategoryContentIndex = index
+                                                            lastCategoryContentId = focusedItem.id
                                                             onItemFocused(focusedItem)
                                                         }
                                                     } else {
                                                         { _ -> }
                                                     },
-                                            onMoveLeft = { if (selectedSeries == null) onMoveLeft() },
+                                            onMoveLeft =
+                                                    { if (selectedSeries == null) onMoveLeft() },
                                             onMoveUp =
                                                     if (isTopRow && selectedSeries == null) {
                                                         { searchFocusRequester.requestFocus() }
@@ -6508,9 +6789,11 @@ fun CategorySectionScreen(
                                                         { onToggleFavorite(item) }
                                                     } else {
                                                         null
-                                                    },
+                                            },
                                             forceDarkText = forceDarkText,
-                                            useContrastText = useContrastText
+                                            useContrastText = useContrastText,
+                                            isPoster = posterHint,
+                                            fontScaleFactor = if (posterHint) posterFontScale else 1f
                                     )
                                 }
                             }
@@ -6526,6 +6809,9 @@ fun CategorySectionScreen(
                                 contentItemFocusRequester = contentItemFocusRequester,
                                 resumeFocusId = resumeFocusId,
                                 resumeFocusRequester = resumeFocusRequester,
+                                episodesFocusRequester = episodesFocusRequester,
+                                pendingEpisodeFocus = pendingEpisodeFocus,
+                                onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                                 onItemFocused = onItemFocused,
                                 onPlay = onPlay,
                                 onMoveLeft = onMoveLeft,
@@ -6534,10 +6820,12 @@ fun CategorySectionScreen(
                                     runCatching { contentItemFocusRequester.requestFocus() }
                                     pendingSeriesReturnFocus = true
                                     selectedSeries = null
+                                    pendingEpisodeFocus = false
                                 },
                                 onToggleFavorite = onToggleFavorite,
                                 isItemFavorite = isItemFavorite,
-                                forceDarkText = forceDarkText
+                                forceDarkText = forceDarkText,
+                                onMoveUpFromTop = { searchFocusRequester.requestFocus() }
                         )
                     }
                 }
@@ -6588,7 +6876,7 @@ fun CategorySectionScreen(
                     )
                 } else {
                     LazyVerticalGrid(
-                            columns = GridCells.Fixed(columns),
+                            columns = GridCells.Fixed(categoryColumns),
                             verticalArrangement = Arrangement.spacedBy(16.dp),
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
                             modifier = Modifier.fillMaxWidth().weight(1f),
@@ -6597,8 +6885,8 @@ fun CategorySectionScreen(
                         items(filteredCategories.size) { index ->
                             val category = filteredCategories[index]
                             val requester = if (index == 0) contentItemFocusRequester else null
-                            val isLeftEdge = index % columns == 0
-                            val isTopRow = index < columns
+                            val isLeftEdge = index % categoryColumns == 0
+                            val isTopRow = index < categoryColumns
                             val categoryThumbnailUrl by
                                     produceState<String?>(
                                             initialValue = null,
@@ -6624,6 +6912,8 @@ fun CategorySectionScreen(
                                         selectedSeries = null
                                         selectedCategory = category
                                         pendingCategoryEnterFocus = true
+                                        lastCategoryContentIndex = 0
+                                        lastCategoryContentId = null
                                     },
                                     onMoveLeft = onMoveLeft,
                                     onMoveUp =
@@ -6651,6 +6941,7 @@ fun ContinueWatchingScreen(
         title: String,
         contentRepository: ContentRepository,
         authConfig: AuthConfig,
+        settings: SettingsState,
         continueWatchingItems: List<ContinueWatchingEntry>,
         contentItemFocusRequester: FocusRequester,
         resumeFocusId: String?,
@@ -6663,7 +6954,11 @@ fun ContinueWatchingScreen(
         isItemFavorite: (ContentItem) -> Boolean
 ) {
     val shape = RoundedCornerShape(18.dp)
-    val columns = 3
+    // Use 4 columns at 100% (poster sizing, since continue watching includes mixed content)
+    val columns = remember(settings.uiScale) {
+        kotlin.math.ceil(4.0 / settings.uiScale).toInt().coerceIn(4, 8)
+    }
+    val posterFontScale = remember(columns) { 4f / columns.toFloat() }
     val hasItems = continueWatchingItems.isNotEmpty()
 
     // Focus is managed by user navigation - no auto-focus on screen load
@@ -6737,6 +7032,7 @@ fun ContinueWatchingScreen(
                                 isLeftEdge = isLeftEdge,
                                 isFavorite = isItemFavorite(item),
                                 progressPercent = progressPercent,
+                                fontScaleFactor = posterFontScale,
                                 onActivate = { onPlay(item, entry.positionMs) },
                                 onFocused = { onItemFocused(item) },
                                 onMoveLeft = onMoveLeft,
@@ -6758,13 +7054,17 @@ fun SeriesSeasonsScreen(
         contentItemFocusRequester: FocusRequester,
         resumeFocusId: String?,
         resumeFocusRequester: FocusRequester,
+        episodesFocusRequester: FocusRequester,
+        pendingEpisodeFocus: Boolean,
+        onEpisodeFocusHandled: () -> Unit,
         onItemFocused: (ContentItem) -> Unit,
         onPlay: (ContentItem, List<ContentItem>) -> Unit,
         onMoveLeft: () -> Unit,
         onBack: () -> Unit,
         onToggleFavorite: (ContentItem) -> Unit,
         isItemFavorite: (ContentItem) -> Boolean,
-        forceDarkText: Boolean = false
+        forceDarkText: Boolean = false,
+        onMoveUpFromTop: (() -> Unit)? = null
 ) {
     BackHandler(enabled = true) { onBack() }
     var seasonGroups by remember { mutableStateOf<List<SeasonGroup>>(emptyList()) }
@@ -6773,8 +7073,6 @@ fun SeriesSeasonsScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var initialFocusSet by remember { mutableStateOf(false) }
     var placeholderFocused by remember { mutableStateOf(false) }
-    var pendingEpisodeFocus by remember { mutableStateOf(false) }
-    val backFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(seriesItem.streamId, authConfig) {
         isLoading = true
@@ -6812,7 +7110,6 @@ fun SeriesSeasonsScreen(
 
     val seasonFocusRequesters =
             remember(seasonGroups.size) { List(seasonGroups.size) { FocusRequester() } }
-    val episodesPrimaryFocusRequester = remember { FocusRequester() }
     val seasonPrimaryFocusRequester = remember { FocusRequester() }
     fun seasonRequesterFor(index: Int): FocusRequester? {
         return if (index == 0) {
@@ -6828,16 +7125,6 @@ fun SeriesSeasonsScreen(
     val selectedEpisodes = selectedSeason?.episodes.orEmpty()
     val columns = 1
     val handleEpisodeFocused: (ContentItem) -> Unit = { item -> onItemFocused(item) }
-    val episodesFocusRequester = episodesPrimaryFocusRequester
-
-    LaunchedEffect(pendingEpisodeFocus, selectedSeasonIndex, selectedEpisodes.size) {
-        if (pendingEpisodeFocus && selectedEpisodes.isNotEmpty()) {
-            withFrameNanos {}
-            episodesFocusRequester.requestFocus()
-            pendingEpisodeFocus = false
-        }
-    }
-
     LaunchedEffect(
             isLoading,
             errorMessage,
@@ -6863,22 +7150,13 @@ fun SeriesSeasonsScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            TopBarButton(
-                    label = "BACK",
-                    onActivate = onBack,
-                    modifier = Modifier.focusRequester(backFocusRequester),
-                    onMoveLeft = onMoveLeft
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                    text = seriesItem.title,
-                    color = AppTheme.colors.textPrimary,
-                    fontSize = 16.sp,
-                    fontFamily = AppTheme.fontFamily,
-                    fontWeight = FontWeight.Medium
-            )
-        }
+        Text(
+                text = seriesItem.title,
+                color = AppTheme.colors.textPrimary,
+                fontSize = 16.sp,
+                fontFamily = AppTheme.fontFamily,
+                fontWeight = FontWeight.Medium
+        )
         Spacer(modifier = Modifier.height(8.dp))
         if (isLoading) {
             Text(
@@ -6997,9 +7275,16 @@ fun SeriesSeasonsScreen(
                                 val requester =
                                         when {
                                             item.id == resumeFocusId -> resumeFocusRequester
-                                            index == 0 -> episodesPrimaryFocusRequester
+                                            index == 0 -> episodesFocusRequester
                                             else -> null
                                         }
+                                if (index == 0 && pendingEpisodeFocus && requester != null) {
+                                    LaunchedEffect(pendingEpisodeFocus, requester) {
+                                        withFrameNanos {}
+                                        requester.requestFocus()
+                                        onEpisodeFocusHandled()
+                                    }
+                                }
                                 val isLeftEdge = index % columns == 0
                                 val isTopRow = index < columns
                                 ContentCard(
@@ -7016,7 +7301,13 @@ fun SeriesSeasonsScreen(
                                         },
                                         onMoveUp =
                                                 if (isTopRow) {
-                                                    { backFocusRequester.requestFocus() }
+                                                    {
+                                                        if (onMoveUpFromTop != null) {
+                                                            onMoveUpFromTop()
+                                                        } else {
+                                                            contentItemFocusRequester.requestFocus()
+                                                        }
+                                                    }
                                                 } else {
                                                     null
                                         },
