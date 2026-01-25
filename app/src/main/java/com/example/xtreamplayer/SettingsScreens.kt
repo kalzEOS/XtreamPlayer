@@ -45,6 +45,7 @@ import com.example.xtreamplayer.auth.AuthConfig
 import com.example.xtreamplayer.settings.SettingsState
 import com.example.xtreamplayer.ui.theme.AppFont
 import com.example.xtreamplayer.ui.theme.AppTheme
+import kotlin.math.roundToInt
 
 @Composable
 fun SettingsScreen(
@@ -231,14 +232,20 @@ fun AppearanceScreen(
     onMoveLeft: () -> Unit,
     onBack: () -> Unit,
     onOpenThemeSelector: () -> Unit,
-    onOpenFontSelector: () -> Unit
+    onOpenFontSelector: () -> Unit,
+    onOpenUiScale: () -> Unit,
+    onOpenFontScale: () -> Unit
 ) {
     val shape = RoundedCornerShape(18.dp)
     val scrollState = rememberScrollState()
     val colors = AppTheme.colors
+    val uiScaleLabel = "${(settings.uiScale * 100).roundToInt()}%"
+    val fontScaleLabel = "${(settings.fontScale * 100).roundToInt()}%"
     val actions = listOf(
         SettingsAction("Theme", settings.appTheme.label, onOpenThemeSelector),
         SettingsAction("Font", settings.appFont.label, onOpenFontSelector),
+        SettingsAction("UI Scale", uiScaleLabel, onOpenUiScale),
+        SettingsAction("Font Scale", fontScaleLabel, onOpenFontScale),
         SettingsAction("Back", null, onBack)
     )
 
