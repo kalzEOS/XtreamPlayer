@@ -129,6 +129,19 @@ class ContentCache(context: Context) {
         }
     }
 
+    suspend fun readSectionIndexStaging(
+        section: Section,
+        config: AuthConfig
+    ): List<ContentItem>? {
+        val file = sectionIndexStagingFile(section, config)
+        return withContext(Dispatchers.IO) {
+            if (!file.exists()) return@withContext null
+            val text = runCatching { file.readText() }.getOrNull() ?: return@withContext null
+            if (text.isBlank()) return@withContext null
+            parseIndexItems(text)
+        }
+    }
+
     suspend fun writeSectionIndex(
         section: Section,
         config: AuthConfig,
@@ -142,8 +155,26 @@ class ContentCache(context: Context) {
         }
     }
 
+    suspend fun writeSectionIndexStaging(
+        section: Section,
+        config: AuthConfig,
+        items: List<ContentItem>
+    ) {
+        val file = sectionIndexStagingFile(section, config)
+        withContext(Dispatchers.IO) {
+            val payload = JSONObject()
+            payload.put("items", serializeItems(items))
+            runCatching { file.writeText(payload.toString()) }
+        }
+    }
+
     suspend fun hasSectionIndex(section: Section, config: AuthConfig): Boolean {
         val file = sectionIndexFile(section, config)
+        return withContext(Dispatchers.IO) { file.exists() }
+    }
+
+    suspend fun hasSectionIndexStaging(section: Section, config: AuthConfig): Boolean {
+        val file = sectionIndexStagingFile(section, config)
         return withContext(Dispatchers.IO) { file.exists() }
     }
 
@@ -241,6 +272,12 @@ class ContentCache(context: Context) {
         return File(cacheDir, name)
     }
 
+    private fun sectionIndexStagingFile(section: Section, config: AuthConfig): File {
+        val key = accountHash(config)
+        val name = "index_staging_${section.name.lowercase()}_$key.json"
+        return File(cacheDir, name)
+    }
+
     private fun categoryThumbnailFile(
         type: ContentType,
         categoryId: String,
@@ -307,6 +344,14 @@ class ContentCache(context: Context) {
         }
     }
 
+    suspend fun clearSectionSyncCheckpoint(
+        section: Section,
+        config: AuthConfig
+    ) {
+        val file = sectionCheckpointFile(section, config)
+        withContext(Dispatchers.IO) { runCatching { file.delete() } }
+    }
+
     /**
      * Write a partial section index with checkpoint metadata
      */
@@ -330,6 +375,37 @@ class ContentCache(context: Context) {
         items: List<ContentItem>
     ) {
         writeSectionIndex(section, config, items)
+    }
+
+    suspend fun updateSectionIndexIncrementalStaging(
+        section: Section,
+        config: AuthConfig,
+        items: List<ContentItem>
+    ) {
+        writeSectionIndexStaging(section, config, items)
+    }
+
+    suspend fun commitSectionIndexStaging(
+        section: Section,
+        config: AuthConfig
+    ) {
+        val staging = sectionIndexStagingFile(section, config)
+        val target = sectionIndexFile(section, config)
+        withContext(Dispatchers.IO) {
+            if (!staging.exists()) return@withContext
+            runCatching {
+                staging.copyTo(target, overwrite = true)
+                staging.delete()
+            }
+        }
+    }
+
+    suspend fun clearSectionIndexStaging(
+        section: Section,
+        config: AuthConfig
+    ) {
+        val staging = sectionIndexStagingFile(section, config)
+        withContext(Dispatchers.IO) { runCatching { staging.delete() } }
     }
 
     private fun serializePage(data: ContentPage): String {

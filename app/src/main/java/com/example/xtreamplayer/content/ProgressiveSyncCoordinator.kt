@@ -98,19 +98,20 @@ class ProgressiveSyncCoordinator(
      * Start background full sync: complete library index with throttling
      */
     suspend fun startBackgroundFullSync() {
-        startBackgroundFullSync(force = false, throttleMs = null)
+        startBackgroundFullSync(force = false, throttleMs = null, fullReindex = false)
     }
 
     suspend fun startBackgroundFullSync(
         force: Boolean,
-        throttleMs: Long?
+        throttleMs: Long?,
+        fullReindex: Boolean
     ) {
         syncMutex.withLock {
             // Cancel existing background sync if any
             backgroundSyncJob?.cancel()
 
             // Check if already complete
-            if (_syncState.value.fullIndexComplete && !force) {
+            if (_syncState.value.fullIndexComplete && !force && !fullReindex) {
                 Timber.d("Background sync already complete, skipping")
                 return
             }
@@ -124,7 +125,7 @@ class ProgressiveSyncCoordinator(
             // Update state
             _syncState.value = _syncState.value.copy(
                 phase = SyncPhase.BACKGROUND_FULL,
-                fullIndexComplete = if (force) false else _syncState.value.fullIndexComplete,
+                fullIndexComplete = if (force || fullReindex) false else _syncState.value.fullIndexComplete,
                 lastSyncTimestamp = System.currentTimeMillis()
             )
 
@@ -155,10 +156,12 @@ class ProgressiveSyncCoordinator(
                                 checkPause = {
                                     _syncState.value.isPaused
                                 },
-                                skipCompleted = !force,
+                                skipCompleted = if (fullReindex) false else !force,
                                 throttleMs = throttleMs ?: 200L,
                                 useBulkFirst = true,
-                                fallbackPageSize = 1000
+                                fallbackPageSize = 1000,
+                                fullReindex = fullReindex,
+                                useStaging = fullReindex
                             )
                         }.getOrElse { error ->
                             Result.failure(error)
@@ -277,6 +280,7 @@ class ProgressiveSyncCoordinator(
      * Resume background sync
      */
     suspend fun resumeBackgroundSync() {
+        var shouldResume = false
         syncMutex.withLock {
             if (!_syncState.value.isPaused) {
                 Timber.d("Background sync not paused, cannot resume")
@@ -292,9 +296,11 @@ class ProgressiveSyncCoordinator(
             )
 
             settingsRepository.saveSyncState(_syncState.value, accountKey())
+            shouldResume = true
+        }
 
-            // Restart background sync
-            startBackgroundFullSync(force = false, throttleMs = null)
+        if (shouldResume) {
+            startBackgroundFullSync(force = false, throttleMs = null, fullReindex = false)
         }
     }
 
@@ -305,7 +311,7 @@ class ProgressiveSyncCoordinator(
             }
         }
         // Faster, incremental sync that skips already indexed pages
-        startBackgroundFullSync(force = true, throttleMs = 100L)
+        startBackgroundFullSync(force = true, throttleMs = 100L, fullReindex = true)
     }
 
     /**

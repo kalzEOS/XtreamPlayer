@@ -296,6 +296,8 @@ fun RootScreen(
             val syncAccountKey = "${config.baseUrl}|${config.username}|${config.listName}"
             val savedState = settingsRepository.loadSyncState(syncAccountKey)
             val hasFullIndex = contentRepository.hasFullIndex(config)
+            val hasSearchIndex = contentRepository.hasSearchIndex(config)
+            val hasAnySearchIndex = contentRepository.hasAnySearchIndex(config)
 
             val effectiveState =
                     savedState
@@ -314,7 +316,7 @@ fun RootScreen(
                 progressiveSyncCoordinator.restoreState(effectiveState)
             }
 
-            if (!hasFullIndex && (savedState == null || !savedState.fastStartReady)) {
+            if (!hasFullIndex && (!hasAnySearchIndex || savedState == null || !savedState.fastStartReady)) {
                 progressiveSyncCoordinator.startFastStartSync()
             } else if (savedState?.phase == com.example.xtreamplayer.content.SyncPhase.BACKGROUND_FULL &&
                             savedState.isPaused.not() &&

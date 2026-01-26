@@ -170,7 +170,8 @@ class ContentRepository(
         authConfig: AuthConfig
     ): ContentPage {
         val normalizedQuery = SearchNormalizer.normalizeQuery(query)
-        if (normalizedQuery.length >= MIN_LOCAL_SEARCH_QUERY_LENGTH) {
+        val canUseLocalIndex = isSearchIndexComplete(section, authConfig)
+        if (canUseLocalIndex && normalizedQuery.length >= MIN_LOCAL_SEARCH_QUERY_LENGTH) {
             val localResult = localSearchPage(section, normalizedQuery, page, limit, authConfig)
             if (localResult != null) {
                 return localResult
@@ -356,14 +357,15 @@ class ContentRepository(
             return ContentPage(items = emptyList(), endReached = true)
         }
         val normalizedQuery = SearchNormalizer.normalizeQuery(query)
-        if (normalizedQuery.isBlank()) {
+        val rawQuery = query.trim()
+        if (rawQuery.isBlank()) {
             return loadSectionPage(section, page, limit, authConfig)
         }
         val key = cacheKey("search-${section.name}-$normalizedQuery", page, limit)
         memoryCacheMutex.withLock {
             memoryCache[key]?.let { return it }
         }
-        val apiResult = api.fetchSearchPage(section, authConfig, normalizedQuery, page, limit)
+        val apiResult = api.fetchSearchPage(section, authConfig, rawQuery, page, limit)
         val pageData = apiResult.getOrElse {
             return searchFilterPages(
                 limit = limit,
@@ -382,7 +384,7 @@ class ContentRepository(
                 SearchNormalizer.matchesTitle(item.title, normalizedQuery)
             }
         }
-        if (filtered.isNotEmpty() || page > 0 || pageData.endReached) {
+        if (filtered.isNotEmpty() || pageData.endReached) {
             return ContentPage(items = filtered, endReached = pageData.endReached).also { finalPage ->
                 memoryCacheMutex.withLock { memoryCache[key] = finalPage }
             }
@@ -571,6 +573,14 @@ class ContentRepository(
     }
 
     suspend fun hasSearchIndex(authConfig: AuthConfig): Boolean {
+        val sections = listOf(Section.MOVIES, Section.SERIES, Section.LIVE)
+        return sections.all { section ->
+            contentCache.readSectionSyncCheckpoint(section, authConfig)?.isComplete == true &&
+                contentCache.hasSectionIndex(section, authConfig)
+        }
+    }
+
+    suspend fun hasAnySearchIndex(authConfig: AuthConfig): Boolean {
         return contentCache.hasSectionIndex(Section.SERIES, authConfig) &&
             contentCache.hasSectionIndex(Section.MOVIES, authConfig) &&
             contentCache.hasSectionIndex(Section.LIVE, authConfig)
@@ -799,33 +809,83 @@ class ContentRepository(
         pageSize: Int = BACKGROUND_PAGE_SIZE,
         throttleMs: Long = BACKGROUND_THROTTLE_MS,
         useBulkFirst: Boolean = false,
-        fallbackPageSize: Int = pageSize
+        fallbackPageSize: Int = pageSize,
+        fullReindex: Boolean = false,
+        useStaging: Boolean = false
     ): Result<Unit> {
         for ((sectionIndex, section) in sectionsToSync.withIndex()) {
-            // Load checkpoint to resume from last position
-            val checkpoint = contentCache.readSectionSyncCheckpoint(section, authConfig)
-            if (skipCompleted && checkpoint?.isComplete == true) {
+            val stagingMode = fullReindex || useStaging
+            val hasStaging = if (stagingMode) {
+                contentCache.hasSectionIndexStaging(section, authConfig)
+            } else {
+                false
+            }
+            val checkpoint = if (stagingMode) {
+                if (hasStaging) {
+                    contentCache.readSectionSyncCheckpoint(section, authConfig)
+                } else {
+                    null
+                }
+            } else {
+                contentCache.readSectionSyncCheckpoint(section, authConfig)
+            }
+
+            if (!stagingMode && skipCompleted && checkpoint?.isComplete == true) {
                 Timber.d("Background sync: $section already complete, skipping")
                 continue
             }
-            val startPage = checkpoint?.lastPageSynced?.plus(1) ?: FAST_START_PAGES
 
-            // Load existing items if any
-            val allItems = loadSectionIndex(section, authConfig)?.toMutableList() ?: mutableListOf()
+            val startPage =
+                if (stagingMode) {
+                    checkpoint?.lastPageSynced?.plus(1) ?: 0
+                } else {
+                    checkpoint?.lastPageSynced?.plus(1) ?: FAST_START_PAGES
+                }
+
+            val allItems =
+                if (stagingMode && hasStaging) {
+                    contentCache.readSectionIndexStaging(section, authConfig)?.toMutableList()
+                        ?: mutableListOf()
+                } else if (stagingMode) {
+                    if (fullReindex) {
+                        contentCache.clearSectionSyncCheckpoint(section, authConfig)
+                    }
+                    mutableListOf()
+                } else {
+                    loadSectionIndex(section, authConfig)?.toMutableList() ?: mutableListOf()
+                }
 
             if (useBulkFirst) {
                 val bulkResult = api.fetchSectionAll(section, authConfig)
                 if (bulkResult.isSuccess) {
                     val bulkItems = bulkResult.getOrNull().orEmpty()
                     if (bulkItems.isNotEmpty()) {
-                        contentCache.writeSectionIndex(section, authConfig, bulkItems)
-                        contentCache.writeSectionSyncCheckpoint(
-                            section,
-                            authConfig,
-                            lastPage = 0,
-                            itemsIndexed = bulkItems.size,
-                            isComplete = true
-                        )
+                        if (stagingMode) {
+                            contentCache.writeSectionIndexStaging(section, authConfig, bulkItems)
+                            contentCache.writeSectionSyncCheckpoint(
+                                section,
+                                authConfig,
+                                lastPage = 0,
+                                itemsIndexed = bulkItems.size,
+                                isComplete = true
+                            )
+                            contentCache.commitSectionIndexStaging(section, authConfig)
+                        } else {
+                            contentCache.writeSectionIndex(section, authConfig, bulkItems)
+                            contentCache.writeSectionSyncCheckpoint(
+                                section,
+                                authConfig,
+                                lastPage = 0,
+                                itemsIndexed = bulkItems.size,
+                                isComplete = true
+                            )
+                        }
+                        val key = indexKey(section, authConfig)
+                        if (bulkItems.size < 50000) {
+                            sectionIndexCache[key] = bulkItems
+                        } else {
+                            sectionIndexCache.remove(key)
+                        }
                         onProgress(
                             LibrarySyncProgress(
                                 section = section,
@@ -870,12 +930,27 @@ class ContentRepository(
                 val pageData = pageDataResult.getOrThrow()
 
                 if (pageData.items.isNotEmpty()) {
-                    allItems.addAll(pageData.items)
+                    val existingIds = allItems.asSequence().map { it.id }.toHashSet()
+                    pageData.items.forEach { item ->
+                        if (existingIds.add(item.id)) {
+                            allItems.add(item)
+                        }
+                    }
                 }
 
                 // Incremental save every 10 pages
                 if (page % BACKGROUND_SAVE_INTERVAL == 0) {
-                    contentCache.updateSectionIndexIncremental(section, authConfig, allItems)
+                    if (stagingMode) {
+                        contentCache.updateSectionIndexIncrementalStaging(section, authConfig, allItems)
+                    } else {
+                        contentCache.updateSectionIndexIncremental(section, authConfig, allItems)
+                        val cacheKey = indexKey(section, authConfig)
+                        if (allItems.size < 50000) {
+                            sectionIndexCache[cacheKey] = allItems
+                        } else {
+                            sectionIndexCache.remove(cacheKey)
+                        }
+                    }
                     contentCache.writeSectionSyncCheckpoint(section, authConfig, page, allItems.size, false)
                 }
 
@@ -890,8 +965,19 @@ class ContentRepository(
 
                 if (pageData.items.isEmpty() || pageData.endReached) {
                     // Section complete
-                    contentCache.writeSectionIndex(section, authConfig, allItems)
+                    if (stagingMode) {
+                        contentCache.writeSectionIndexStaging(section, authConfig, allItems)
+                        contentCache.commitSectionIndexStaging(section, authConfig)
+                    } else {
+                        contentCache.writeSectionIndex(section, authConfig, allItems)
+                    }
                     contentCache.writeSectionSyncCheckpoint(section, authConfig, page, allItems.size, true)
+                    val key = indexKey(section, authConfig)
+                    if (allItems.size < 50000) {
+                        sectionIndexCache[key] = allItems
+                    } else {
+                        sectionIndexCache.remove(key)
+                    }
                     Timber.i("Background sync complete: $section with ${allItems.size} items")
                     break
                 }
@@ -932,7 +1018,14 @@ class ContentRepository(
             }.awaitAll().flatten()
         }
 
-        existingItems.addAll(newItems)
+        if (newItems.isNotEmpty()) {
+            val existingIds = existingItems.asSequence().map { it.id }.toHashSet()
+            newItems.forEach { item ->
+                if (existingIds.add(item.id)) {
+                    existingItems.add(item)
+                }
+            }
+        }
 
         // Update index immediately
         contentCache.updateSectionIndexIncremental(section, authConfig, existingItems)
@@ -965,6 +1058,18 @@ class ContentRepository(
     suspend fun hasFullIndex(authConfig: AuthConfig): Boolean {
         val sections = listOf(Section.MOVIES, Section.SERIES, Section.LIVE)
         return sections.all { section ->
+            contentCache.readSectionSyncCheckpoint(section, authConfig)?.isComplete == true
+        }
+    }
+
+    private suspend fun isSearchIndexComplete(
+        section: Section,
+        authConfig: AuthConfig
+    ): Boolean {
+        return if (section == Section.ALL) {
+            val sections = listOf(Section.MOVIES, Section.SERIES, Section.LIVE)
+            sections.all { contentCache.readSectionSyncCheckpoint(it, authConfig)?.isComplete == true }
+        } else {
             contentCache.readSectionSyncCheckpoint(section, authConfig)?.isComplete == true
         }
     }
