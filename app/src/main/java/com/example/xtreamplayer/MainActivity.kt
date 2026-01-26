@@ -4176,6 +4176,7 @@ private fun ContentCard(
     val cardAspectRatio = if (posterStyle) POSTER_ASPECT_RATIO else LANDSCAPE_ASPECT_RATIO
     val imageContentScale = if (posterStyle) ContentScale.Fit else ContentScale.Crop
     val contentPadding = 2.dp
+    val overlayPadding = if (posterStyle) 10.dp else 12.dp
     val imageRequest =
             remember(imageUrl) {
                 if (imageUrl.isNullOrBlank()) {
@@ -4315,7 +4316,12 @@ private fun ContentCard(
                         Modifier.fillMaxWidth()
                                 .align(Alignment.BottomStart)
                                 .background(AppTheme.colors.overlay)
-                                .padding(10.dp)
+                                .padding(
+                                        start = overlayPadding,
+                                        end = 10.dp,
+                                        top = 10.dp,
+                                        bottom = 10.dp
+                                )
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
@@ -4744,7 +4750,8 @@ private fun CategoryCard(
             fontSize = 16.sp,
             fontFamily = AppTheme.fontFamily,
             fontWeight = FontWeight.SemiBold,
-            letterSpacing = 0.3.sp
+            letterSpacing = 0.3.sp,
+            modifier = Modifier.padding(start = 10.dp, bottom = 8.dp)
     )
     }
 }
@@ -4757,7 +4764,8 @@ private fun CategoryTypeTab(
         onActivate: () -> Unit,
         onMoveLeft: (() -> Unit)? = null,
         onMoveRight: (() -> Unit)? = null,
-        onMoveDown: (() -> Unit)? = null
+        onMoveDown: (() -> Unit)? = null,
+        onMoveUp: (() -> Unit)? = null
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -4809,14 +4817,18 @@ private fun CategoryTypeTab(
                                                 onMoveRight()
                                                 true
                                             }
-                                            onMoveDown != null && it.key == Key.DirectionDown -> {
-                                                onMoveDown()
-                                                true
-                                            }
-                                            isSelectKey -> {
-                                                onActivate()
-                                                true
-                                            }
+                                    onMoveDown != null && it.key == Key.DirectionDown -> {
+                                        onMoveDown()
+                                        true
+                                    }
+                                    onMoveUp != null && it.key == Key.DirectionUp -> {
+                                        onMoveUp()
+                                        true
+                                    }
+                                    isSelectKey -> {
+                                        onActivate()
+                                        true
+                                    }
                                             else -> false
                                         }
                                     }
@@ -7326,6 +7338,8 @@ fun SeriesSeasonsScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var initialFocusSet by remember { mutableStateOf(false) }
     var placeholderFocused by remember { mutableStateOf(false) }
+    var internalEpisodeFocus by remember { mutableStateOf(false) }
+    val backFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(seriesItem.streamId, authConfig) {
         isLoading = true
@@ -7333,6 +7347,7 @@ fun SeriesSeasonsScreen(
         initialFocusSet = false
         placeholderFocused = false
         selectedSeasonIndex = 0
+        internalEpisodeFocus = false
         val result = runCatching {
             contentRepository.loadSeriesEpisodes(seriesItem.streamId, authConfig)
         }
@@ -7378,6 +7393,7 @@ fun SeriesSeasonsScreen(
     val selectedEpisodes = selectedSeason?.episodes.orEmpty()
     val columns = 1
     val handleEpisodeFocused: (ContentItem) -> Unit = { item -> onItemFocused(item) }
+    val shouldRequestEpisodeFocus = pendingEpisodeFocus || internalEpisodeFocus
     LaunchedEffect(
             isLoading,
             errorMessage,
@@ -7403,13 +7419,22 @@ fun SeriesSeasonsScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        Text(
-                text = seriesItem.title,
-                color = AppTheme.colors.textPrimary,
-                fontSize = 16.sp,
-                fontFamily = AppTheme.fontFamily,
-                fontWeight = FontWeight.Medium
-        )
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TopBarButton(
+                    label = "BACK",
+                    onActivate = onBack,
+                    modifier = Modifier.focusRequester(backFocusRequester),
+                    onMoveLeft = onMoveLeft
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                    text = seriesItem.title,
+                    color = AppTheme.colors.textPrimary,
+                    fontSize = 16.sp,
+                    fontFamily = AppTheme.fontFamily,
+                    fontWeight = FontWeight.Medium
+            )
+        }
         Spacer(modifier = Modifier.height(8.dp))
         if (isLoading) {
             Text(
@@ -7490,7 +7515,13 @@ fun SeriesSeasonsScreen(
                                         // navigate there
                                     },
                                     onMoveLeft = onMoveLeft,
-                                    onMoveRight = { episodesFocusRequester.requestFocus() }
+                                    onMoveRight = { internalEpisodeFocus = true },
+                                    onMoveUp =
+                                            if (index == 0) {
+                                                { backFocusRequester.requestFocus() }
+                                            } else {
+                                                null
+                                            }
                             )
                         }
                     }
@@ -7531,11 +7562,14 @@ fun SeriesSeasonsScreen(
                                             index == 0 -> episodesFocusRequester
                                             else -> null
                                         }
-                                if (index == 0 && pendingEpisodeFocus && requester != null) {
-                                    LaunchedEffect(pendingEpisodeFocus, requester) {
+                                if (index == 0 && shouldRequestEpisodeFocus && requester != null) {
+                                    LaunchedEffect(shouldRequestEpisodeFocus, requester) {
                                         withFrameNanos {}
                                         requester.requestFocus()
-                                        onEpisodeFocusHandled()
+                                        if (pendingEpisodeFocus) {
+                                            onEpisodeFocusHandled()
+                                        }
+                                        internalEpisodeFocus = false
                                     }
                                 }
                                 val isLeftEdge = index % columns == 0
