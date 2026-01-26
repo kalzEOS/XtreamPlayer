@@ -917,6 +917,9 @@ fun RootScreen(
         if (showAuthLoading) {
             AuthLoadingScreen()
         } else if (authState.isSignedIn) {
+            val colors = AppTheme.colors
+            val context = LocalContext.current
+            val versionLabel = remember(context) { "v${appVersionName(context)}" }
             Column(modifier = Modifier.fillMaxSize()) {
                 Row(
                         modifier =
@@ -930,6 +933,16 @@ fun RootScreen(
                                 navExpanded = !navExpanded
                                 // Focus stays on menu button - user navigates manually
                             }
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                            text = versionLabel,
+                            color = colors.textSecondary,
+                            fontSize = 12.sp,
+                            fontFamily = settings.appFont.fontFamily,
+                            modifier = Modifier
+                                    .padding(end = 12.dp, bottom = 2.dp)
+                                    .align(Alignment.CenterVertically)
                     )
                 }
 
@@ -2575,6 +2588,23 @@ private fun guessMimeTypeForUri(uri: Uri): String? {
     } else {
         null
     }
+}
+
+private fun appVersionName(context: Context): String {
+    return runCatching {
+        val packageManager = context.packageManager
+        val packageName = context.packageName
+        val versionName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getPackageInfo(
+                packageName,
+                PackageManager.PackageInfoFlags.of(0)
+            ).versionName
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageInfo(packageName, 0).versionName
+        }
+        versionName ?: "?"
+    }.getOrDefault("?")
 }
 
 private fun isHevcDecodeSupported(): Boolean {
