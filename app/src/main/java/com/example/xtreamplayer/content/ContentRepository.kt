@@ -10,9 +10,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 import kotlin.math.ceil
 
 class ContentRepository(
@@ -28,6 +30,12 @@ class ContentRepository(
         const val SEARCH_INITIAL_LOAD = 15
         const val MIN_INDEX_PAGE_SIZE = 200
         const val MIN_LOCAL_SEARCH_QUERY_LENGTH = 2
+        const val FAST_START_PAGE_SIZE = 400
+        const val FAST_START_PAGES = 2
+        const val BACKGROUND_PAGE_SIZE = 400
+        const val BACKGROUND_SAVE_INTERVAL = 10
+        const val BACKGROUND_THROTTLE_MS = 200L
+        const val BOOST_PAGE_SIZE = 400
     }
 
     private val memoryCache = object : LinkedHashMap<String, ContentPage>(200, 0.75f, true) {
@@ -720,6 +728,247 @@ class ContentRepository(
         return items
     }
 
+    /**
+     * Fast start sync: Fetch first 2 pages of each section for immediate search capability
+     * Target: quick partial index for immediate search usability
+     */
+    suspend fun syncFastStartIndex(
+        authConfig: AuthConfig,
+        onProgress: (LibrarySyncProgress) -> Unit = {}
+    ): Result<FastStartResult> {
+        val sections = listOf(Section.MOVIES, Section.SERIES, Section.LIVE)
+
+        return coroutineScope {
+            val results = sections.mapIndexed { index, section ->
+                async {
+                    val items = mutableListOf<ContentItem>()
+                    for (page in 0 until FAST_START_PAGES) {
+                        val pageData = api.fetchSectionPage(
+                            section,
+                            authConfig,
+                            page,
+                            FAST_START_PAGE_SIZE
+                        )
+                            .getOrElse {
+                                Timber.w("Fast start failed for $section page $page")
+                                return@async emptyList()
+                            }
+                        items.addAll(pageData.items)
+
+                        onProgress(LibrarySyncProgress(
+                            section = section,
+                            sectionIndex = index,
+                            totalSections = sections.size,
+                            itemsIndexed = items.size,
+                            progress = ((page + 1) / FAST_START_PAGES.toFloat()),
+                            phase = com.example.xtreamplayer.content.SyncPhase.FAST_START
+                        ))
+                    }
+
+                    // Write partial index to disk
+                    contentCache.writeSectionIndexPartial(
+                        section,
+                        authConfig,
+                        items,
+                        FAST_START_PAGES - 1,
+                        false
+                    )
+                    Timber.d("Fast start: $section indexed ${items.size} items")
+
+                    items
+                }
+            }.awaitAll()
+
+            val totalItems = results.sumOf { it.size }
+            Timber.i("Fast start complete: $totalItems items indexed")
+
+            Result.success(FastStartResult(itemsIndexed = totalItems, ready = true))
+        }
+    }
+
+    /**
+     * Background full sync: Complete library index with throttling to avoid blocking UI
+     * Uses small pages (200 items) with 500ms delays
+     */
+    suspend fun syncBackgroundFull(
+        authConfig: AuthConfig,
+        sectionsToSync: List<Section> = listOf(Section.SERIES, Section.MOVIES, Section.LIVE),
+        onProgress: (LibrarySyncProgress) -> Unit = {},
+        checkPause: suspend () -> Boolean = { false },
+        skipCompleted: Boolean = true,
+        pageSize: Int = BACKGROUND_PAGE_SIZE,
+        throttleMs: Long = BACKGROUND_THROTTLE_MS,
+        useBulkFirst: Boolean = false,
+        fallbackPageSize: Int = pageSize
+    ): Result<Unit> {
+        for ((sectionIndex, section) in sectionsToSync.withIndex()) {
+            // Load checkpoint to resume from last position
+            val checkpoint = contentCache.readSectionSyncCheckpoint(section, authConfig)
+            if (skipCompleted && checkpoint?.isComplete == true) {
+                Timber.d("Background sync: $section already complete, skipping")
+                continue
+            }
+            val startPage = checkpoint?.lastPageSynced?.plus(1) ?: FAST_START_PAGES
+
+            // Load existing items if any
+            val allItems = loadSectionIndex(section, authConfig)?.toMutableList() ?: mutableListOf()
+
+            if (useBulkFirst) {
+                val bulkResult = api.fetchSectionAll(section, authConfig)
+                if (bulkResult.isSuccess) {
+                    val bulkItems = bulkResult.getOrNull().orEmpty()
+                    if (bulkItems.isNotEmpty()) {
+                        contentCache.writeSectionIndex(section, authConfig, bulkItems)
+                        contentCache.writeSectionSyncCheckpoint(
+                            section,
+                            authConfig,
+                            lastPage = 0,
+                            itemsIndexed = bulkItems.size,
+                            isComplete = true
+                        )
+                        onProgress(
+                            LibrarySyncProgress(
+                                section = section,
+                                sectionIndex = sectionIndex,
+                                totalSections = sectionsToSync.size,
+                                itemsIndexed = bulkItems.size,
+                                progress = 1f,
+                                phase = com.example.xtreamplayer.content.SyncPhase.BACKGROUND_FULL
+                            )
+                        )
+                        Timber.i("Background sync (bulk) complete: $section with ${bulkItems.size} items")
+                        if (checkPause()) {
+                            Timber.i("Background sync paused after bulk: $section")
+                            return Result.success(Unit)
+                        }
+                        continue
+                    }
+                }
+                Timber.w("Background sync: bulk fetch failed for $section, falling back to page-by-page")
+            }
+
+            var page = startPage
+            Timber.d("Background sync: $section starting at page $page (checkpoint: ${checkpoint?.itemsIndexed} items)")
+
+            while (true) {
+                // Check pause on every page for responsive pausing
+                if (checkPause()) {
+                    contentCache.writeSectionSyncCheckpoint(section, authConfig, page - 1, allItems.size, false)
+                    Timber.i("Background sync paused: $section at page $page")
+                    return Result.success(Unit)
+                }
+
+                val effectivePageSize = if (useBulkFirst) fallbackPageSize else pageSize
+                val pageDataResult =
+                        api.fetchSectionPage(section, authConfig, page, effectivePageSize)
+                if (pageDataResult.isFailure) {
+                    Timber.w("Background sync: $section page $page failed: ${pageDataResult.exceptionOrNull()}")
+                    contentCache.writeSectionSyncCheckpoint(section, authConfig, page - 1, allItems.size, false)
+                    return Result.failure(pageDataResult.exceptionOrNull() ?: IllegalStateException("Background sync failed"))
+                }
+
+                val pageData = pageDataResult.getOrThrow()
+
+                if (pageData.items.isNotEmpty()) {
+                    allItems.addAll(pageData.items)
+                }
+
+                // Incremental save every 10 pages
+                if (page % BACKGROUND_SAVE_INTERVAL == 0) {
+                    contentCache.updateSectionIndexIncremental(section, authConfig, allItems)
+                    contentCache.writeSectionSyncCheckpoint(section, authConfig, page, allItems.size, false)
+                }
+
+                onProgress(LibrarySyncProgress(
+                    section = section,
+                    sectionIndex = sectionIndex,
+                    totalSections = sectionsToSync.size,
+                    itemsIndexed = allItems.size,
+                    progress = 0.5f, // Indeterminate for background
+                    phase = com.example.xtreamplayer.content.SyncPhase.BACKGROUND_FULL
+                ))
+
+                if (pageData.items.isEmpty() || pageData.endReached) {
+                    // Section complete
+                    contentCache.writeSectionIndex(section, authConfig, allItems)
+                    contentCache.writeSectionSyncCheckpoint(section, authConfig, page, allItems.size, true)
+                    Timber.i("Background sync complete: $section with ${allItems.size} items")
+                    break
+                }
+
+                delay(throttleMs) // Throttle to avoid blocking UI
+                page++
+            }
+        }
+
+        Timber.i("Background sync: All sections complete")
+        return Result.success(Unit)
+    }
+
+    /**
+     * On-demand boost: Fetch next 3 pages for specific section when user enters it
+     * Uses parallel fetching for speed (2-3 seconds target)
+     */
+    suspend fun boostSectionSync(
+        section: Section,
+        authConfig: AuthConfig,
+        targetPages: Int = 3,
+        onProgress: (LibrarySyncProgress) -> Unit = {}
+    ): Result<Unit> {
+        val checkpoint = contentCache.readSectionSyncCheckpoint(section, authConfig)
+        val startPage = checkpoint?.lastPageSynced?.plus(1) ?: 0
+
+        val existingItems = loadSectionIndex(section, authConfig)?.toMutableList() ?: mutableListOf()
+
+        Timber.d("On-demand boost: $section fetching pages $startPage-${startPage + targetPages - 1}")
+
+        // Fetch 3 pages in parallel for speed
+        val newItems = coroutineScope {
+            (startPage until startPage + targetPages).map { page ->
+                async {
+                    api.fetchSectionPage(section, authConfig, page, BOOST_PAGE_SIZE)
+                        .getOrNull()?.items ?: emptyList()
+                }
+            }.awaitAll().flatten()
+        }
+
+        existingItems.addAll(newItems)
+
+        // Update index immediately
+        contentCache.updateSectionIndexIncremental(section, authConfig, existingItems)
+        contentCache.writeSectionSyncCheckpoint(section, authConfig, startPage + targetPages - 1, existingItems.size, false)
+
+        Timber.i("On-demand boost: $section added ${newItems.size} items (total: ${existingItems.size})")
+
+        onProgress(LibrarySyncProgress(
+            section = section,
+            sectionIndex = 0,
+            totalSections = 1,
+            itemsIndexed = existingItems.size,
+            progress = 1.0f,
+            phase = com.example.xtreamplayer.content.SyncPhase.ON_DEMAND_BOOST
+        ))
+
+        return Result.success(Unit)
+    }
+
+    /**
+     * Get sync checkpoint for a section
+     */
+    suspend fun getSectionSyncCheckpoint(
+        section: Section,
+        config: AuthConfig
+    ): SectionSyncCheckpoint? {
+        return contentCache.readSectionSyncCheckpoint(section, config)
+    }
+
+    suspend fun hasFullIndex(authConfig: AuthConfig): Boolean {
+        val sections = listOf(Section.MOVIES, Section.SERIES, Section.LIVE)
+        return sections.all { section ->
+            contentCache.readSectionSyncCheckpoint(section, authConfig)?.isComplete == true
+        }
+    }
+
     private fun indexPageSize(section: Section): Int {
         return when (section) {
             Section.SERIES -> 1000
@@ -819,3 +1068,14 @@ class ContentRepository(
         return result
     }
 }
+
+/**
+ * Result of fast start sync operation
+ */
+data class FastStartResult(
+    /** Total number of items indexed during fast start */
+    val itemsIndexed: Int,
+
+    /** True if fast start completed successfully and search is ready */
+    val ready: Boolean
+)

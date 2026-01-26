@@ -78,7 +78,7 @@ fun SettingsScreen(
         SettingsAction("Remember login", flagLabel(settings.rememberLogin), onToggleRememberLogin),
         SettingsAction("Auto sign-in", flagLabel(settings.autoSignIn), onToggleAutoSignIn),
         SettingsAction("Manage lists", null, onManageLists),
-        SettingsAction("Refresh content", null, onRefreshContent),
+        SettingsAction("Sync library", null, onRefreshContent),
         SettingsAction("Sign out", null, onSignOut)
     )
 

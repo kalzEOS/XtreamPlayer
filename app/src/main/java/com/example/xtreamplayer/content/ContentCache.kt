@@ -257,6 +257,81 @@ class ContentCache(context: Context) {
         return File(cacheDir, "refresh_$key.marker")
     }
 
+    private fun sectionCheckpointFile(section: Section, config: AuthConfig): File {
+        val key = accountHash(config)
+        return File(cacheDir, "checkpoint_${section.name.lowercase()}_$key.json")
+    }
+
+    /**
+     * Write a sync checkpoint for a section to track progress
+     */
+    suspend fun writeSectionSyncCheckpoint(
+        section: Section,
+        config: AuthConfig,
+        lastPage: Int,
+        itemsIndexed: Int,
+        isComplete: Boolean
+    ) {
+        val file = sectionCheckpointFile(section, config)
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val json = JSONObject()
+                json.put("lastPageSynced", lastPage)
+                json.put("itemsIndexed", itemsIndexed)
+                json.put("isComplete", isComplete)
+                json.put("timestamp", System.currentTimeMillis())
+                file.writeText(json.toString())
+            }
+        }
+    }
+
+    /**
+     * Read a sync checkpoint for a section
+     */
+    suspend fun readSectionSyncCheckpoint(
+        section: Section,
+        config: AuthConfig
+    ): SectionSyncCheckpoint? {
+        val file = sectionCheckpointFile(section, config)
+        return withContext(Dispatchers.IO) {
+            if (!file.exists()) return@withContext null
+            runCatching {
+                val json = JSONObject(file.readText())
+                SectionSyncCheckpoint(
+                    lastPageSynced = json.getInt("lastPageSynced"),
+                    itemsIndexed = json.getInt("itemsIndexed"),
+                    isComplete = json.getBoolean("isComplete"),
+                    timestamp = json.getLong("timestamp")
+                )
+            }.getOrNull()
+        }
+    }
+
+    /**
+     * Write a partial section index with checkpoint metadata
+     */
+    suspend fun writeSectionIndexPartial(
+        section: Section,
+        config: AuthConfig,
+        items: List<ContentItem>,
+        lastPage: Int,
+        isComplete: Boolean
+    ) {
+        writeSectionIndex(section, config, items)
+        writeSectionSyncCheckpoint(section, config, lastPage, items.size, isComplete)
+    }
+
+    /**
+     * Update section index incrementally (used during background sync)
+     */
+    suspend fun updateSectionIndexIncremental(
+        section: Section,
+        config: AuthConfig,
+        items: List<ContentItem>
+    ) {
+        writeSectionIndex(section, config, items)
+    }
+
     private fun serializePage(data: ContentPage): String {
         val payload = JSONObject()
         payload.put("endReached", data.endReached)
@@ -339,3 +414,20 @@ class ContentCache(context: Context) {
         return bytes.joinToString("") { "%02x".format(it) }
     }
 }
+
+/**
+ * Checkpoint data for section sync progress
+ */
+data class SectionSyncCheckpoint(
+    /** Last page number successfully synced */
+    val lastPageSynced: Int,
+
+    /** Total items indexed so far */
+    val itemsIndexed: Int,
+
+    /** True if section sync is complete */
+    val isComplete: Boolean,
+
+    /** Timestamp when checkpoint was written */
+    val timestamp: Long
+)

@@ -49,6 +49,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -98,6 +99,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
@@ -265,6 +267,71 @@ fun RootScreen(
     var resumePositionMs by remember { mutableStateOf<Long?>(null) }
     var resumeFocusId by remember { mutableStateOf<String?>(null) }
     val resumeFocusRequester = remember { FocusRequester() }
+
+    // Progressive sync coordinator
+    val settingsRepository = remember { com.example.xtreamplayer.settings.SettingsRepository(context) }
+    val progressiveSyncCoordinator = remember(authState.activeConfig) {
+        authState.activeConfig?.let { config ->
+            com.example.xtreamplayer.content.ProgressiveSyncCoordinator(
+                contentRepository = contentRepository,
+                settingsRepository = settingsRepository,
+                authConfig = config
+            )
+        }
+    }
+    val syncState by (progressiveSyncCoordinator?.syncState ?: kotlinx.coroutines.flow.MutableStateFlow(
+        com.example.xtreamplayer.content.ProgressiveSyncState()
+    )).collectAsStateWithLifecycle()
+
+    DisposableEffect(progressiveSyncCoordinator) {
+        onDispose {
+            progressiveSyncCoordinator?.dispose()
+        }
+    }
+
+    // Auto-start fast start sync on first login
+    LaunchedEffect(authState.activeConfig) {
+        if (authState.activeConfig != null && progressiveSyncCoordinator != null) {
+            val config = authState.activeConfig ?: return@LaunchedEffect
+            val syncAccountKey = "${config.baseUrl}|${config.username}|${config.listName}"
+            val savedState = settingsRepository.loadSyncState(syncAccountKey)
+            val hasFullIndex = contentRepository.hasFullIndex(config)
+
+            val effectiveState =
+                    savedState
+                            ?: if (hasFullIndex) {
+                                com.example.xtreamplayer.content.ProgressiveSyncState(
+                                        phase = com.example.xtreamplayer.content.SyncPhase.COMPLETE,
+                                        fastStartReady = true,
+                                        fullIndexComplete = true,
+                                        lastSyncTimestamp = System.currentTimeMillis()
+                                )
+                            } else {
+                                null
+                            }
+
+            if (effectiveState != null) {
+                progressiveSyncCoordinator.restoreState(effectiveState)
+            }
+
+            if (!hasFullIndex && (savedState == null || !savedState.fastStartReady)) {
+                progressiveSyncCoordinator.startFastStartSync()
+            } else if (savedState?.phase == com.example.xtreamplayer.content.SyncPhase.BACKGROUND_FULL &&
+                            savedState.isPaused.not() &&
+                            savedState.fullIndexComplete.not()
+            ) {
+                progressiveSyncCoordinator.resumeBackgroundSync()
+            }
+        }
+    }
+
+    // Auto-start background sync after fast start completes
+    LaunchedEffect(syncState.fastStartReady) {
+        if (syncState.fastStartReady && !syncState.fullIndexComplete && progressiveSyncCoordinator != null) {
+            kotlinx.coroutines.delay(2000) // 2 second grace period
+            progressiveSyncCoordinator.startBackgroundFullSync()
+        }
+    }
 
     var focusToContentTrigger by remember { mutableStateOf(0) }
     var moveFocusToNav by remember { mutableStateOf(false) }
@@ -456,25 +523,19 @@ fun RootScreen(
     }
 
     fun triggerSectionSync(section: Section, config: AuthConfig) {
-        // Skip if already synced or currently syncing this specific section
-        if (syncedSections.contains(section) || sectionSyncStates[section]?.isActive == true) return
+        // Skip if already synced
+        if (syncedSections.contains(section)) return
 
-        // Check if section already has index on disk
+        // Use progressive sync coordinator for on-demand boost
         coroutineScope.launch {
-            val hasIndex = contentRepository.hasSectionIndex(section, config)
-            if (hasIndex) {
+            val checkpoint = contentRepository.getSectionSyncCheckpoint(section, config)
+            if (checkpoint?.isComplete == true) {
                 syncedSections = syncedSections + section
                 return@launch
             }
 
-            // Trigger sync for this section only
-            val sectionName = when(section) {
-                Section.MOVIES -> "Movies"
-                Section.SERIES -> "Series"
-                Section.LIVE -> "Live"
-                else -> "Content"
-            }
-            triggerLibrarySync(config, "Building $sectionName search index...", force = false, sectionsToSync = listOf(section))
+            // Trigger on-demand boost
+            progressiveSyncCoordinator?.boostSection(section)
         }
     }
     fun triggerRefresh(config: AuthConfig, reason: String) {
@@ -499,9 +560,6 @@ fun RootScreen(
                     }
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
             isRefreshing = false
-            if (result.isSuccess) {
-                triggerLibrarySync(config, "Building library for fast search...", force = true)
-            }
         }
     }
     LaunchedEffect(accountKey) {
@@ -523,12 +581,7 @@ fun RootScreen(
             lastRefreshedAccountKey = accountKey
         }
     }
-    LaunchedEffect(authState.isSignedIn, accountKey, hasSearchIndex) {
-        if (authState.isSignedIn && activeConfig != null && hasSearchIndex == false) {
-            // Only sync MOVIES on initial login (biggest, most used)
-            triggerLibrarySync(activeConfig, "Building Movies search index...", force = false, sectionsToSync = listOf(Section.MOVIES))
-        }
-    }
+    // Legacy search indexing is handled by progressive sync
 
     LaunchedEffect(authState.isSignedIn) {
         if (authState.isSignedIn) {
@@ -774,6 +827,26 @@ fun RootScreen(
                     }
 
                     override fun onPlayerError(error: PlaybackException) {
+                        val currentFormat =
+                                playbackEngine.player.videoFormat
+                        val isHevc =
+                                currentFormat?.sampleMimeType?.equals(
+                                        MimeTypes.VIDEO_H265,
+                                        ignoreCase = true
+                                ) == true ||
+                                        currentFormat?.codecs?.contains("hvc1", ignoreCase = true) == true ||
+                                        currentFormat?.codecs?.contains("hev1", ignoreCase = true) == true ||
+                                        errorIndicatesHevc(error)
+                        if (isHevc && !isHevcDecodeSupported()) {
+                            Toast.makeText(
+                                            context,
+                                            "This device can't decode HEVC (H.265). Try a different device or stream.",
+                                            Toast.LENGTH_LONG
+                            )
+                                    .show()
+                            Timber.e(error, "Playback failed: HEVC not supported on this device")
+                            return
+                        }
                         val mediaId = playbackEngine.player.currentMediaItem?.mediaId ?: return
                         val candidates = activePlaybackQueue?.fallbackUris?.get(mediaId).orEmpty()
                         val attempt = playbackFallbackAttempts[mediaId] ?: 0
@@ -787,7 +860,10 @@ fun RootScreen(
                             )
                             val currentItem = playbackEngine.player.currentMediaItem ?: return
                             playbackEngine.player.setMediaItem(
-                                    currentItem.buildUpon().setUri(nextUri).build()
+                                    currentItem.buildUpon()
+                                            .setUri(nextUri)
+                                            .setMimeType(guessMimeTypeForUri(nextUri))
+                                            .build()
                             )
                             playbackEngine.player.prepare()
                             playbackEngine.player.playWhenReady = true
@@ -853,6 +929,73 @@ fun RootScreen(
                                 // Focus stays on menu button - user navigates manually
                             }
                     )
+                }
+
+                // Progressive sync status indicators
+                Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
+                    Row(modifier = Modifier.align(Alignment.TopEnd), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        // Fast Search Ready indicator
+                        if (syncState.fastStartReady && syncState.phase != com.example.xtreamplayer.content.SyncPhase.COMPLETE) {
+                            Row(
+                                modifier = Modifier
+                                    .background(Color(0xFF2E7D32), RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text("Quick Search Ready", fontSize = 12.sp, color = Color.White, fontFamily = AppTheme.fontFamily)
+                            }
+                        }
+
+                        // Background Syncing indicator
+                        if (syncState.phase == com.example.xtreamplayer.content.SyncPhase.BACKGROUND_FULL ||
+                                        syncState.phase == com.example.xtreamplayer.content.SyncPhase.PAUSED
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .background(Color(0xFF424242), RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                                    .clickable {
+                                        coroutineScope.launch {
+                                            if (syncState.isPaused) {
+                                                progressiveSyncCoordinator?.resumeBackgroundSync()
+                                            } else {
+                                                progressiveSyncCoordinator?.pauseBackgroundSync()
+                                            }
+                                        }
+                                    },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                androidx.compose.material3.CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp,
+                                    color = Color.White
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                val currentSection = syncState.currentSection
+                                val progress = currentSection?.let { syncState.sectionProgress[it] }
+                                val text = if (currentSection != null && progress != null) {
+                                    "Syncing ${currentSection.name.lowercase()}... (${progress.itemsIndexed} items)"
+                                } else {
+                                    "Syncing library..."
+                                }
+                                Text(text, fontSize = 11.sp, color = Color.White, fontFamily = AppTheme.fontFamily)
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    text = if (syncState.isPaused) "Resume" else "Pause",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF81C784),
+                                    fontFamily = AppTheme.fontFamily
+                                )
+                            }
+                        }
+                    }
                 }
 
                 // Show sync banner for currently selected section if syncing
@@ -996,8 +1139,41 @@ fun RootScreen(
                                         onRefreshContent = {
                                             val config = authState.activeConfig
                                             if (config != null) {
-                                                triggerRefresh(config, "Refreshing content...")
-                                                lastRefreshedAccountKey = accountKey
+                                                val isSyncRunning =
+                                                        syncState.phase ==
+                                                                com.example.xtreamplayer.content.SyncPhase.FAST_START ||
+                                                                syncState.phase ==
+                                                                        com.example.xtreamplayer.content.SyncPhase.BACKGROUND_FULL ||
+                                                                syncState.phase ==
+                                                                        com.example.xtreamplayer.content.SyncPhase.ON_DEMAND_BOOST
+                                                if (isSyncRunning) {
+                                                    Toast.makeText(
+                                                                    context,
+                                                                    "Sync already in progress",
+                                                                    Toast.LENGTH_SHORT
+                                                    )
+                                                            .show()
+                                                } else {
+                                                    coroutineScope.launch {
+                                                        if (syncState.isPaused) {
+                                                            Toast.makeText(
+                                                                            context,
+                                                                            "Resuming sync...",
+                                                                            Toast.LENGTH_SHORT
+                                                            )
+                                                                    .show()
+                                                            progressiveSyncCoordinator?.resumeBackgroundSync()
+                                                        } else {
+                                                            Toast.makeText(
+                                                                            context,
+                                                                            "Starting library sync...",
+                                                                            Toast.LENGTH_SHORT
+                                                            )
+                                                                    .show()
+                                                            progressiveSyncCoordinator?.startManualSync()
+                                                        }
+                                                    }
+                                                }
                                             }
                                         },
                                         onSignOut = {
@@ -2388,6 +2564,51 @@ private fun cardTitleColor(colors: AppColors): Color {
 
 private fun cardSubtitleColor(colors: AppColors): Color {
     return if (isLightTheme(colors)) Color.White.copy(alpha = 0.72f) else colors.textSecondary
+}
+
+private fun guessMimeTypeForUri(uri: Uri): String? {
+    val candidate = uri.toString().lowercase()
+    return if (candidate.contains(".m3u8")) {
+        MimeTypes.APPLICATION_M3U8
+    } else {
+        null
+    }
+}
+
+private fun isHevcDecodeSupported(): Boolean {
+    return runCatching {
+                val mediaCodecList =
+                        android.media.MediaCodecList(
+                                android.media.MediaCodecList.REGULAR_CODECS
+                        )
+                mediaCodecList.codecInfos.any { codecInfo ->
+                    !codecInfo.isEncoder && codecInfo.supportedTypes.any { type ->
+                        type.equals("video/hevc", ignoreCase = true) ||
+                                type.equals("video/h265", ignoreCase = true)
+                    }
+                }
+            }
+            .getOrDefault(false)
+}
+
+private fun errorIndicatesHevc(error: PlaybackException): Boolean {
+    val message = error.message?.lowercase().orEmpty()
+    if (message.contains("video/hevc") || message.contains("hvc1") || message.contains("hev1")) {
+        return true
+    }
+    var cause = error.cause
+    while (cause != null) {
+        val causeMessage = cause.message?.lowercase().orEmpty()
+        if (causeMessage.contains("video/hevc") || causeMessage.contains("hvc1") || causeMessage.contains("hev1")) {
+            return true
+        }
+        val className = cause::class.java.name
+        if (className.contains("MediaCodecVideoDecoderException")) {
+            return true
+        }
+        cause = cause.cause
+    }
+    return false
 }
 
 private fun scaleTextSize(size: TextUnit, scale: Float): TextUnit {

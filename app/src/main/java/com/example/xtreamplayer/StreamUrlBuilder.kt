@@ -54,8 +54,23 @@ object StreamUrlBuilder {
                     }
                     else -> {
                         add("$basePath/$trimmedStreamId.mp4")
-                        add("$basePath/$trimmedStreamId.m3u8")
                     }
+                }
+                val inlineExt =
+                    if (hasInlineExtension) {
+                        trimmedStreamId.substringAfterLast('.').lowercase()
+                    } else {
+                        null
+                    }
+                if (inlineExt != "m3u8" && ext?.lowercase() != "m3u8") {
+                    val m3u8Path =
+                        if (hasInlineExtension) {
+                            val baseId = trimmedStreamId.substringBeforeLast('.')
+                            "$basePath/$baseId.m3u8"
+                        } else {
+                            "$basePath/$trimmedStreamId.m3u8"
+                        }
+                    add(m3u8Path)
                 }
                 add("$basePath/$trimmedStreamId")
             }
