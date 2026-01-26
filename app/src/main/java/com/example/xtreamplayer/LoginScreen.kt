@@ -87,7 +87,9 @@ fun LoginScreen(
     val colors = AppTheme.colors
     val borderColor = if (isFocused) colors.focus else colors.border
     val scrollState = rememberScrollState()
-    val isCompactHeight = LocalConfiguration.current.screenHeightDp < 520
+    val configuration = LocalConfiguration.current
+    val baseScreenHeight = remember(configuration.orientation) { configuration.screenHeightDp }
+    val isCompactHeight = baseScreenHeight < 520
     val verticalSpacing = if (isCompactHeight) 10.dp else 14.dp
     val panelPadding = if (isCompactHeight) 18.dp else 28.dp
     val titleSize = if (isCompactHeight) 20.sp else 24.sp
@@ -166,7 +168,13 @@ fun LoginScreen(
                 label = "Password",
                 focusRequester = passwordFocusRequester,
                 onMoveUp = { usernameFocusRequester.requestFocus() },
-                onMoveDown = { submitFocusRequester.requestFocus() },
+                onMoveDown = {
+                    if (canSubmit) {
+                        submitFocusRequester.requestFocus()
+                    } else {
+                        localFilesFocusRequester.requestFocus()
+                    }
+                },
                 textStyle = fieldTextStyle
             )
             if (authState.errorMessage != null) {
@@ -281,7 +289,13 @@ fun LoginScreen(
                         .onPreviewKeyEvent {
                             handleNavKey(
                                 event = it,
-                                onUp = { submitFocusRequester.requestFocus() }
+                                onUp = {
+                                    if (canSubmit) {
+                                        submitFocusRequester.requestFocus()
+                                    } else {
+                                        passwordFocusRequester.requestFocus()
+                                    }
+                                }
                             )
                         }
                 ) {
