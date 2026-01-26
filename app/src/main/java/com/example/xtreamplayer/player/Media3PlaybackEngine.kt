@@ -65,7 +65,12 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
     fun setMedia(uri: Uri) {
         if (currentMedia == uri) return
         currentMedia = uri
-        player.setMediaItem(MediaItem.fromUri(uri))
+        val mediaItem =
+            MediaItem.Builder()
+                .setUri(uri)
+                .setMimeType(guessMimeType(uri))
+                .build()
+        player.setMediaItem(mediaItem)
         player.prepare()
     }
 
@@ -80,6 +85,7 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
                         .setTitle(item.title)
                         .build()
                 )
+                .setMimeType(guessMimeType(item.uri))
                 .build()
         }
         val safeIndex = startIndex.coerceIn(0, mediaItems.lastIndex)
@@ -141,6 +147,15 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
 
     companion object {
         private const val MAX_BOOST_DB = 12f
+    }
+
+    private fun guessMimeType(uri: Uri): String? {
+        val candidate = uri.toString().lowercase()
+        return if (candidate.contains(".m3u8")) {
+            MimeTypes.APPLICATION_M3U8
+        } else {
+            null
+        }
     }
 
     @OptIn(UnstableApi::class)

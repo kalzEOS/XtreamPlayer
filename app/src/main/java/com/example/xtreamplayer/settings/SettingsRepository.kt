@@ -6,9 +6,11 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
@@ -129,5 +131,51 @@ class SettingsRepository(private val context: Context) {
         val FONT_SCALE = floatPreferencesKey("font_scale")
         val OPENSUBTITLES_API_KEY = stringPreferencesKey("opensubtitles_api_key")
         val OPENSUBTITLES_USER_AGENT = stringPreferencesKey("opensubtitles_user_agent")
+
+        // Progressive sync state keys
+        val SYNC_PHASE = stringPreferencesKey("sync_phase")
+        val SYNC_FAST_START_READY = booleanPreferencesKey("sync_fast_start_ready")
+        val SYNC_FULL_COMPLETE = booleanPreferencesKey("sync_full_complete")
+        val SYNC_LAST_TIMESTAMP = longPreferencesKey("sync_last_timestamp")
+        val SYNC_PAUSED = booleanPreferencesKey("sync_paused")
+        val SYNC_ACCOUNT_KEY = stringPreferencesKey("sync_account_key")
+    }
+
+    /**
+     * Save progressive sync state to DataStore
+     */
+    suspend fun saveSyncState(
+        state: com.example.xtreamplayer.content.ProgressiveSyncState,
+        accountKey: String
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.SYNC_PHASE] = state.phase.name
+            prefs[Keys.SYNC_FAST_START_READY] = state.fastStartReady
+            prefs[Keys.SYNC_FULL_COMPLETE] = state.fullIndexComplete
+            prefs[Keys.SYNC_LAST_TIMESTAMP] = state.lastSyncTimestamp
+            prefs[Keys.SYNC_PAUSED] = state.isPaused
+            prefs[Keys.SYNC_ACCOUNT_KEY] = accountKey
+        }
+    }
+
+    /**
+     * Load progressive sync state from DataStore
+     */
+    suspend fun loadSyncState(accountKey: String): com.example.xtreamplayer.content.ProgressiveSyncState? {
+        return context.dataStore.data.firstOrNull()?.let { prefs ->
+            val phaseStr = prefs[Keys.SYNC_PHASE] ?: return@let null
+            val storedAccountKey = prefs[Keys.SYNC_ACCOUNT_KEY] ?: return@let null
+            if (storedAccountKey != accountKey) return@let null
+            com.example.xtreamplayer.content.ProgressiveSyncState(
+                phase = com.example.xtreamplayer.content.SyncPhase.valueOf(phaseStr),
+                sectionsCompleted = emptySet(),
+                fastStartReady = prefs[Keys.SYNC_FAST_START_READY] ?: false,
+                fullIndexComplete = prefs[Keys.SYNC_FULL_COMPLETE] ?: false,
+                currentSection = null,
+                sectionProgress = emptyMap(),
+                isPaused = prefs[Keys.SYNC_PAUSED] ?: false,
+                lastSyncTimestamp = prefs[Keys.SYNC_LAST_TIMESTAMP] ?: 0L
+            )
+        }
     }
 }

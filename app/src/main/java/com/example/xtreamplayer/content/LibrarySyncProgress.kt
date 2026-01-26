@@ -7,5 +7,7 @@ data class LibrarySyncProgress(
     val sectionIndex: Int,
     val totalSections: Int,
     val itemsIndexed: Int,
-    val progress: Float
+    val progress: Float,
+    val phase: SyncPhase = SyncPhase.BACKGROUND_FULL,
+    val estimatedTotal: Int? = null
 )
