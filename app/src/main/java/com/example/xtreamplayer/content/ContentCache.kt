@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
 import java.security.MessageDigest
 
 class ContentCache(context: Context) {
@@ -354,6 +355,7 @@ class ContentCache(context: Context) {
 
     /**
      * Write a partial section index with checkpoint metadata
+     * Uses transactional writes (temp files + atomic rename) to ensure consistency
      */
     suspend fun writeSectionIndexPartial(
         section: Section,
@@ -362,8 +364,41 @@ class ContentCache(context: Context) {
         lastPage: Int,
         isComplete: Boolean
     ) {
-        writeSectionIndex(section, config, items)
-        writeSectionSyncCheckpoint(section, config, lastPage, items.size, isComplete)
+        val indexFile = sectionIndexFile(section, config)
+        val checkpointFile = sectionCheckpointFile(section, config)
+
+        val tempIndexFile = File(indexFile.parent, "temp_${indexFile.name}")
+        val tempCheckpointFile = File(checkpointFile.parent, "temp_${checkpointFile.name}")
+
+        withContext(Dispatchers.IO) {
+            try {
+                // Write index to temp file
+                val indexPayload = JSONObject()
+                indexPayload.put("items", serializeItems(items))
+                tempIndexFile.writeText(indexPayload.toString())
+
+                // Write checkpoint to temp file
+                val checkpointPayload = JSONObject()
+                checkpointPayload.put("lastPageSynced", lastPage)
+                checkpointPayload.put("itemsIndexed", items.size)
+                checkpointPayload.put("isComplete", isComplete)
+                checkpointPayload.put("timestamp", System.currentTimeMillis())
+                tempCheckpointFile.writeText(checkpointPayload.toString())
+
+                // Atomic renames (POSIX guarantees atomicity)
+                if (!tempIndexFile.renameTo(indexFile)) {
+                    throw IOException("Failed to rename index temp file")
+                }
+                if (!tempCheckpointFile.renameTo(checkpointFile)) {
+                    throw IOException("Failed to rename checkpoint temp file")
+                }
+            } catch (e: Exception) {
+                // Clean up temp files on error
+                runCatching { tempIndexFile.delete() }
+                runCatching { tempCheckpointFile.delete() }
+                throw e
+            }
+        }
     }
 
     /**
@@ -375,6 +410,97 @@ class ContentCache(context: Context) {
         items: List<ContentItem>
     ) {
         writeSectionIndex(section, config, items)
+    }
+
+    /**
+     * Update section index incrementally WITH checkpoint (transactional)
+     * Used during background sync to ensure index and checkpoint stay in sync
+     */
+    suspend fun updateSectionIndexIncrementalWithCheckpoint(
+        section: Section,
+        config: AuthConfig,
+        items: List<ContentItem>,
+        lastPage: Int,
+        isComplete: Boolean
+    ) {
+        val indexFile = sectionIndexFile(section, config)
+        val checkpointFile = sectionCheckpointFile(section, config)
+
+        val tempIndexFile = File(indexFile.parent, "temp_${indexFile.name}")
+        val tempCheckpointFile = File(checkpointFile.parent, "temp_${checkpointFile.name}")
+
+        withContext(Dispatchers.IO) {
+            try {
+                // Write index to temp file
+                val indexPayload = JSONObject()
+                indexPayload.put("items", serializeItems(items))
+                tempIndexFile.writeText(indexPayload.toString())
+
+                // Write checkpoint to temp file
+                val checkpointPayload = JSONObject()
+                checkpointPayload.put("lastPageSynced", lastPage)
+                checkpointPayload.put("itemsIndexed", items.size)
+                checkpointPayload.put("isComplete", isComplete)
+                checkpointPayload.put("timestamp", System.currentTimeMillis())
+                tempCheckpointFile.writeText(checkpointPayload.toString())
+
+                // Atomic renames
+                if (!tempIndexFile.renameTo(indexFile)) {
+                    throw IOException("Failed to rename index temp file")
+                }
+                if (!tempCheckpointFile.renameTo(checkpointFile)) {
+                    throw IOException("Failed to rename checkpoint temp file")
+                }
+            } catch (e: Exception) {
+                runCatching { tempIndexFile.delete() }
+                runCatching { tempCheckpointFile.delete() }
+                throw e
+            }
+        }
+    }
+
+    /**
+     * Update staging index incrementally WITH checkpoint (transactional)
+     * Used during staging sync to ensure staging index and checkpoint stay in sync
+     */
+    suspend fun updateSectionIndexIncrementalStagingWithCheckpoint(
+        section: Section,
+        config: AuthConfig,
+        items: List<ContentItem>,
+        lastPage: Int,
+        isComplete: Boolean
+    ) {
+        val indexFile = sectionIndexStagingFile(section, config)
+        val checkpointFile = sectionCheckpointFile(section, config)
+
+        val tempIndexFile = File(indexFile.parent, "temp_${indexFile.name}")
+        val tempCheckpointFile = File(checkpointFile.parent, "temp_${checkpointFile.name}")
+
+        withContext(Dispatchers.IO) {
+            try {
+                val indexPayload = JSONObject()
+                indexPayload.put("items", serializeItems(items))
+                tempIndexFile.writeText(indexPayload.toString())
+
+                val checkpointPayload = JSONObject()
+                checkpointPayload.put("lastPageSynced", lastPage)
+                checkpointPayload.put("itemsIndexed", items.size)
+                checkpointPayload.put("isComplete", isComplete)
+                checkpointPayload.put("timestamp", System.currentTimeMillis())
+                tempCheckpointFile.writeText(checkpointPayload.toString())
+
+                if (!tempIndexFile.renameTo(indexFile)) {
+                    throw IOException("Failed to rename staging index temp file")
+                }
+                if (!tempCheckpointFile.renameTo(checkpointFile)) {
+                    throw IOException("Failed to rename checkpoint temp file")
+                }
+            } catch (e: Exception) {
+                runCatching { tempIndexFile.delete() }
+                runCatching { tempCheckpointFile.delete() }
+                throw e
+            }
+        }
     }
 
     suspend fun updateSectionIndexIncrementalStaging(

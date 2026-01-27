@@ -7,6 +7,10 @@ object SearchNormalizer {
     private val nonAlnumRegex = Regex("[^\\p{L}\\p{N}]+")
     private val titleCache = LruCache<String, String>(200_000)
 
+    fun clearCache() {
+        titleCache.evictAll()
+    }
+
     fun preWarmCache(titles: List<String>) {
         titles.forEach { title ->
             if (titleCache.get(title) == null) {
