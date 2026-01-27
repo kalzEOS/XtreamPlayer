@@ -4184,13 +4184,13 @@ private fun ContentCard(
     val isLiveCard = item?.contentType == ContentType.LIVE && !posterStyle
     val showBackdrop = (posterStyle && item != null && !isNaturalPoster) || isLiveCard
     val cardAspectRatio = if (posterStyle) POSTER_ASPECT_RATIO else LANDSCAPE_ASPECT_RATIO
-    val imageContentScale = if (posterStyle) ContentScale.Fit else ContentScale.Crop
+    val imageContentScale = if (posterStyle || isLiveCard) ContentScale.Fit else ContentScale.Crop
     val contentPadding = 2.dp
     val overlayPadding = if (posterStyle) 10.dp else 12.dp
     val labelStripColor = cardTextStripColor(colors, titleColor)
-    val liveBackdropBlur = if (isLightTheme(colors)) 10.dp else 8.dp
-    val liveBackdropAlpha = if (isLightTheme(colors)) 0.8f else 0.14f
-    val liveImageAlpha = if (isLiveCard) 0.92f else 1f
+    val liveBackdropBlur = 18.dp
+    val liveBackdropAlpha = 0.65f
+    val liveImageAlpha = 1f
     val imageRequest =
             remember(imageUrl) {
                 if (imageUrl.isNullOrBlank()) {
