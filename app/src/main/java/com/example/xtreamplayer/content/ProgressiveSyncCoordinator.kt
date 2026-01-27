@@ -37,6 +37,8 @@ class ProgressiveSyncCoordinator(
     private val onDemandJobs = mutableMapOf<Section, Job>()
 
     private val syncMutex = Mutex()
+    private val activeSyncSections = mutableSetOf<Section>()
+    private val activeSyncMutex = Mutex()
 
     /**
      * Start fast start sync: 2 pages per section for immediate search capability
@@ -161,7 +163,19 @@ class ProgressiveSyncCoordinator(
                                 useBulkFirst = true,
                                 fallbackPageSize = 1000,
                                 fullReindex = fullReindex,
-                                useStaging = fullReindex
+                                useStaging = fullReindex,
+                                onSectionStart = { section ->
+                                    activeSyncMutex.withLock {
+                                        activeSyncSections.add(section)
+                                    }
+                                    Timber.d("Background sync: started section $section")
+                                },
+                                onSectionComplete = { section ->
+                                    activeSyncMutex.withLock {
+                                        activeSyncSections.remove(section)
+                                    }
+                                    Timber.d("Background sync: completed section $section")
+                                }
                             )
                         }.getOrElse { error ->
                             Result.failure(error)
@@ -190,6 +204,11 @@ class ProgressiveSyncCoordinator(
 
                     settingsRepository.saveSyncState(_syncState.value, accountKey())
                 }.onFailure { error ->
+                    // Clear active sections on failure
+                    scope.launch {
+                        activeSyncMutex.withLock { activeSyncSections.clear() }
+                    }
+
                     if (error is kotlinx.coroutines.CancellationException && _syncState.value.isPaused) {
                         Timber.i("Background sync paused (cancelled)")
                         _syncState.value = _syncState.value.copy(
@@ -215,6 +234,14 @@ class ProgressiveSyncCoordinator(
      */
     suspend fun boostSection(section: Section) {
         syncMutex.withLock {
+            // Check if section is already being synced
+            val isActive =
+                activeSyncMutex.withLock { activeSyncSections.contains(section) }
+            if (isActive) {
+                Timber.d("Section $section sync already in progress, skipping boost")
+                return
+            }
+
             // Cancel existing boost for this section if any
             onDemandJobs[section]?.cancel()
 
@@ -224,9 +251,16 @@ class ProgressiveSyncCoordinator(
                 return
             }
 
+            // Mark section as actively syncing
+            activeSyncMutex.withLock {
+                activeSyncSections.add(section)
+            }
+
             // Create boost job
             onDemandJobs[section] = scope.launch {
                 Timber.i("Starting on-demand boost for $section")
+
+                try {
 
                 val result = contentRepository.boostSectionSync(
                     section = section,
@@ -247,8 +281,13 @@ class ProgressiveSyncCoordinator(
                     Timber.e(error, "On-demand boost failed for $section")
                 }
 
-                // Clean up job
-                onDemandJobs.remove(section)
+                } finally {
+                    // Clean up: remove from active syncs and job map
+                    activeSyncMutex.withLock {
+                        activeSyncSections.remove(section)
+                    }
+                    onDemandJobs.remove(section)
+                }
             }
         }
     }
@@ -274,6 +313,7 @@ class ProgressiveSyncCoordinator(
             backgroundSyncJob?.cancel()
             settingsRepository.saveSyncState(_syncState.value, accountKey())
         }
+        activeSyncMutex.withLock { activeSyncSections.clear() }
     }
 
     /**
@@ -324,6 +364,17 @@ class ProgressiveSyncCoordinator(
         backgroundSyncJob?.cancel()
         onDemandJobs.values.forEach { it.cancel() }
         onDemandJobs.clear()
+        if (activeSyncMutex.tryLock()) {
+            try {
+                activeSyncSections.clear()
+            } finally {
+                activeSyncMutex.unlock()
+            }
+        } else {
+            scope.launch {
+                activeSyncMutex.withLock { activeSyncSections.clear() }
+            }
+        }
 
         _syncState.value = _syncState.value.copy(
             phase = SyncPhase.IDLE,

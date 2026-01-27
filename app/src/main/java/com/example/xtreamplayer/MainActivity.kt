@@ -2581,6 +2581,15 @@ private fun cardSubtitleColor(colors: AppColors): Color {
     return if (isLightTheme(colors)) Color.White.copy(alpha = 0.72f) else colors.textSecondary
 }
 
+private fun cardTextStripColor(colors: AppColors, textColor: Color): Color {
+    val lightText = textColor.luminance() > 0.6f
+    return if (lightText) {
+        Color.Black.copy(alpha = if (isLightTheme(colors)) 0.28f else 0.22f)
+    } else {
+        Color.White.copy(alpha = if (isLightTheme(colors)) 0.35f else 0.16f)
+    }
+}
+
 private fun guessMimeTypeForUri(uri: Uri): String? {
     val candidate = uri.toString().lowercase()
     return if (candidate.contains(".m3u8")) {
@@ -4172,11 +4181,16 @@ private fun ContentCard(
     val isSeriesTitle = item?.contentType == ContentType.SERIES && item.containerExtension.isNullOrBlank()
     val isNaturalPoster = item?.contentType == ContentType.MOVIES || isSeriesTitle
     val posterStyle = isNaturalPoster || isPoster
-    val showBackdrop = posterStyle && item != null && !isNaturalPoster
+    val isLiveCard = item?.contentType == ContentType.LIVE && !posterStyle
+    val showBackdrop = (posterStyle && item != null && !isNaturalPoster) || isLiveCard
     val cardAspectRatio = if (posterStyle) POSTER_ASPECT_RATIO else LANDSCAPE_ASPECT_RATIO
     val imageContentScale = if (posterStyle) ContentScale.Fit else ContentScale.Crop
     val contentPadding = 2.dp
     val overlayPadding = if (posterStyle) 10.dp else 12.dp
+    val labelStripColor = cardTextStripColor(colors, titleColor)
+    val liveBackdropBlur = if (isLightTheme(colors)) 10.dp else 8.dp
+    val liveBackdropAlpha = if (isLightTheme(colors)) 0.8f else 0.14f
+    val liveImageAlpha = if (isLiveCard) 0.92f else 1f
     val imageRequest =
             remember(imageUrl) {
                 if (imageUrl.isNullOrBlank()) {
@@ -4292,12 +4306,14 @@ private fun ContentCard(
     ) {
         if (imageRequest != null) {
             if (showBackdrop) {
+                val backdropBlur = if (isLiveCard) liveBackdropBlur else 18.dp
+                val backdropAlpha = if (isLiveCard) liveBackdropAlpha else 0.65f
                 AsyncImage(
                         model = imageRequest,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         filterQuality = FilterQuality.Low,
-                        modifier = Modifier.fillMaxSize().blur(18.dp).alpha(0.65f)
+                        modifier = Modifier.fillMaxSize().blur(backdropBlur).alpha(backdropAlpha)
                 )
             }
             AsyncImage(
@@ -4305,7 +4321,7 @@ private fun ContentCard(
                     contentDescription = null,
                     contentScale = imageContentScale,
                     filterQuality = FilterQuality.Low,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize().alpha(liveImageAlpha)
             )
         }
         if (isFavorite) {
@@ -4315,7 +4331,7 @@ private fun ContentCard(
                 modifier =
                         Modifier.fillMaxWidth()
                                 .align(Alignment.BottomStart)
-                                .background(AppTheme.colors.overlay)
+                                .background(labelStripColor)
                                 .padding(
                                         start = overlayPadding,
                                         end = 10.dp,
@@ -4370,6 +4386,7 @@ private fun ContinueWatchingCard(
     val subtitle = item.subtitle
     val imageUrl = item.imageUrl
     val context = LocalContext.current
+    val labelStripColor = cardTextStripColor(colors, cardTitleColor(colors))
     val isSeriesTitle =
             item.contentType == ContentType.SERIES && item.containerExtension.isNullOrBlank()
     val isNaturalPoster = item.contentType == ContentType.MOVIES || isSeriesTitle
@@ -4506,7 +4523,7 @@ private fun ContinueWatchingCard(
                 modifier =
                         Modifier.fillMaxWidth()
                                 .align(Alignment.BottomStart)
-                                .background(AppTheme.colors.overlay)
+                                .background(labelStripColor)
                                 .padding(10.dp)
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -4585,6 +4602,11 @@ private fun CategoryCard(
     val colors = AppTheme.colors
     val borderColor = if (isFocused) colors.focus else colors.borderStrong
     val backgroundColor = if (isFocused) colors.surfaceAlt else colors.surface
+    val lightTheme = isLightTheme(colors)
+    val backdropBlur = if (lightTheme) 11.dp else 11.dp
+    val backdropAlpha = if (lightTheme) 0.9f else 0.9f
+    val backdropScrimAlpha = if (lightTheme) 0.2f else 0.2f
+    val backdropScrimColor = if (lightTheme) Color.White else Color.Black
     val labelColor =
             when {
                 useContrastText -> bestContrastText(backgroundColor, colors.textPrimary, colors.textOnAccent)
@@ -4709,6 +4731,32 @@ private fun CategoryCard(
                     contentScale = ContentScale.Crop,
                     filterQuality = FilterQuality.Low,
                     modifier =
+                            Modifier.matchParentSize()
+                                    .blur(backdropBlur)
+                                    .alpha(backdropAlpha)
+            )
+        } else if (thumbnail != null) {
+            Box(
+                    modifier =
+                            Modifier.matchParentSize()
+                                    .alpha(backdropAlpha * 1.2f)
+                                    .background(thumbnail.brush)
+            )
+        }
+        if (imageRequest != null || thumbnail != null) {
+            Box(
+                    modifier =
+                            Modifier.matchParentSize()
+                                    .background(backdropScrimColor.copy(alpha = backdropScrimAlpha))
+            )
+        }
+        if (imageRequest != null) {
+            AsyncImage(
+                    model = imageRequest,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    filterQuality = FilterQuality.Low,
+                    modifier =
                             Modifier.align(Alignment.TopStart)
                                     .offset(x = 6.dp, y = 6.dp)
                                     .size(54.dp)
@@ -4744,15 +4792,23 @@ private fun CategoryCard(
     if (isFavorite) {
         FavoriteIndicator(modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
     }
-    Text(
-            text = label,
-            color = labelColor,
-            fontSize = 16.sp,
-            fontFamily = AppTheme.fontFamily,
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = 0.3.sp,
-            modifier = Modifier.padding(start = 10.dp, bottom = 8.dp)
-    )
+    val labelStripColor = cardTextStripColor(colors, labelColor)
+    Box(
+            modifier =
+                    Modifier.fillMaxWidth()
+                            .align(Alignment.BottomStart)
+                            .background(labelStripColor)
+                            .padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 8.dp)
+    ) {
+        Text(
+                text = label,
+                color = labelColor,
+                fontSize = 16.sp,
+                fontFamily = AppTheme.fontFamily,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.3.sp
+        )
+    }
     }
 }
 

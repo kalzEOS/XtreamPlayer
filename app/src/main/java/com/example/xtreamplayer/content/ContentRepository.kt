@@ -49,6 +49,7 @@ class ContentRepository(
         }
     }
     private val sectionIndexCache = mutableMapOf<String, List<ContentItem>>()
+    private val sectionIndexMutex = Mutex()
     private val seriesEpisodesCache = object : LinkedHashMap<String, List<ContentItem>>(50, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<ContentItem>>): Boolean {
             return size > 50
@@ -70,6 +71,17 @@ class ContentRepository(
             return size > 100
         }
     }
+
+    // Cache for checkpoint validation results to avoid repeated file reads
+    // Key: section+authConfig+timestamp, Value: validation result
+    private data class ValidationCacheEntry(val isValid: Boolean, val cachedAt: Long)
+    private val validationCache = object : LinkedHashMap<String, ValidationCacheEntry>(50, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ValidationCacheEntry>): Boolean {
+            return size > 50
+        }
+    }
+    private val validationCacheMutex = Mutex()
+    private class SyncPausedException : Exception()
 
     fun pager(section: Section, authConfig: AuthConfig): Pager<Int, ContentItem> {
         return Pager(
@@ -557,10 +569,30 @@ class ContentRepository(
         authConfig: AuthConfig
     ): List<ContentItem>? {
         val key = indexKey(section, authConfig)
-        sectionIndexCache[key]?.let { return it }
+
+        // Check memory cache with lock
+        sectionIndexMutex.withLock {
+            sectionIndexCache[key]?.let { return it }
+        }
+
+        // Read from disk cache (outside lock to avoid blocking)
         val cached = contentCache.readSectionIndex(section, authConfig)
         if (cached != null) {
-            sectionIndexCache[key] = cached
+            // Check if cache is stale before using it
+            val checkpoint = contentCache.readSectionSyncCheckpoint(section, authConfig)
+            if (checkpoint != null) {
+                val ageMs = System.currentTimeMillis() - checkpoint.timestamp
+                val ageDays = ageMs / (24 * 60 * 60 * 1000L)
+                if (ageDays > 7) {
+                    Timber.i("Section $section cache is ${ageDays}d old, marking for resync")
+                    // Don't return stale cache
+                    return null
+                }
+            }
+
+            sectionIndexMutex.withLock {
+                sectionIndexCache[key] = cached
+            }
             withContext(Dispatchers.Default) {
                 SearchNormalizer.preWarmCache(cached.map { it.title })
             }
@@ -620,7 +652,7 @@ class ContentRepository(
 
         val sectionStates = sections.mapIndexed { index, section ->
             val key = indexKey(section, authConfig)
-            val cached = sectionIndexCache[key]
+            val cached = sectionIndexMutex.withLock { sectionIndexCache[key] }
             val hasDisk = contentCache.hasSectionIndex(section, authConfig)
             val needsSync = force || (cached == null && !hasDisk)
             val cachedItems = if (!needsSync) {
@@ -683,7 +715,9 @@ class ContentRepository(
                     // Cache results
                     // Skip in-memory cache for huge indexes (>50k items) to avoid OOM
                     if (finalItems.size < 50000) {
-                        sectionIndexCache[key] = finalItems
+                        sectionIndexMutex.withLock {
+                            sectionIndexCache[key] = finalItems
+                        }
                     } else {
                         timber.log.Timber.d("Skipping memory cache for large section $section (${finalItems.size} items)")
                     }
@@ -725,6 +759,16 @@ class ContentRepository(
                 pageSize = MIN_INDEX_PAGE_SIZE
                 continue
             }
+            if (result.isFailure) {
+                contentCache.writeSectionSyncCheckpoint(
+                    section,
+                    authConfig,
+                    lastPage = 0,
+                    itemsIndexed = 0,
+                    isComplete = false
+                )
+                throw result.exceptionOrNull() ?: IllegalStateException("Sync failed")
+            }
             val pageData = result.getOrElse { throw it }
             if (pageData.items.isEmpty()) {
                 endReached = true
@@ -748,51 +792,73 @@ class ContentRepository(
     ): Result<FastStartResult> {
         val sections = listOf(Section.MOVIES, Section.SERIES, Section.LIVE)
 
-        return coroutineScope {
-            val results = sections.mapIndexed { index, section ->
-                async {
-                    val items = mutableListOf<ContentItem>()
-                    for (page in 0 until FAST_START_PAGES) {
-                        val pageData = api.fetchSectionPage(
+        return runCatching {
+            coroutineScope {
+                val results = sections.mapIndexed { index, section ->
+                    async {
+                        val items = mutableListOf<ContentItem>()
+                        for (page in 0 until FAST_START_PAGES) {
+                            val pageData = api.fetchSectionPage(
+                                section,
+                                authConfig,
+                                page,
+                                FAST_START_PAGE_SIZE
+                            )
+                                .getOrElse {
+                                    Timber.w("Fast start failed for $section page $page")
+                                    // Rollback checkpoint on failure
+                                    contentCache.writeSectionSyncCheckpoint(
+                                        section, authConfig,
+                                        lastPage = 0,
+                                        itemsIndexed = 0,
+                                        isComplete = false
+                                    )
+                                    return@async emptyList()
+                                }
+                            items.addAll(pageData.items)
+
+                            onProgress(LibrarySyncProgress(
+                                section = section,
+                                sectionIndex = index,
+                                totalSections = sections.size,
+                                itemsIndexed = items.size,
+                                progress = ((page + 1) / FAST_START_PAGES.toFloat()),
+                                phase = com.example.xtreamplayer.content.SyncPhase.FAST_START
+                            ))
+                        }
+
+                        // Write partial index to disk
+                        contentCache.writeSectionIndexPartial(
                             section,
                             authConfig,
-                            page,
-                            FAST_START_PAGE_SIZE
+                            items,
+                            FAST_START_PAGES - 1,
+                            false
                         )
-                            .getOrElse {
-                                Timber.w("Fast start failed for $section page $page")
-                                return@async emptyList()
-                            }
-                        items.addAll(pageData.items)
+                        Timber.d("Fast start: $section indexed ${items.size} items")
 
-                        onProgress(LibrarySyncProgress(
-                            section = section,
-                            sectionIndex = index,
-                            totalSections = sections.size,
-                            itemsIndexed = items.size,
-                            progress = ((page + 1) / FAST_START_PAGES.toFloat()),
-                            phase = com.example.xtreamplayer.content.SyncPhase.FAST_START
-                        ))
+                        items
                     }
+                }.awaitAll()
 
-                    // Write partial index to disk
-                    contentCache.writeSectionIndexPartial(
-                        section,
-                        authConfig,
-                        items,
-                        FAST_START_PAGES - 1,
-                        false
+                val totalItems = results.sumOf { it.size }
+                Timber.i("Fast start complete: $totalItems items indexed")
+
+                FastStartResult(itemsIndexed = totalItems, ready = true)
+            }
+        }.onFailure { error ->
+            Timber.e(error, "Fast start sync failed, rolling back checkpoints")
+            // Rollback all section checkpoints on catastrophic failure
+            sections.forEach { section ->
+                runCatching {
+                    contentCache.writeSectionSyncCheckpoint(
+                        section, authConfig,
+                        lastPage = 0,
+                        itemsIndexed = 0,
+                        isComplete = false
                     )
-                    Timber.d("Fast start: $section indexed ${items.size} items")
-
-                    items
                 }
-            }.awaitAll()
-
-            val totalItems = results.sumOf { it.size }
-            Timber.i("Fast start complete: $totalItems items indexed")
-
-            Result.success(FastStartResult(itemsIndexed = totalItems, ready = true))
+            }
         }
     }
 
@@ -811,8 +877,11 @@ class ContentRepository(
         useBulkFirst: Boolean = false,
         fallbackPageSize: Int = pageSize,
         fullReindex: Boolean = false,
-        useStaging: Boolean = false
+        useStaging: Boolean = false,
+        onSectionStart: suspend (Section) -> Unit = {},
+        onSectionComplete: suspend (Section) -> Unit = {}
     ): Result<Unit> {
+        var lastError: Throwable? = null
         for ((sectionIndex, section) in sectionsToSync.withIndex()) {
             val stagingMode = fullReindex || useStaging
             val hasStaging = if (stagingMode) {
@@ -835,160 +904,215 @@ class ContentRepository(
                 continue
             }
 
-            val startPage =
-                if (stagingMode) {
-                    checkpoint?.lastPageSynced?.plus(1) ?: 0
-                } else {
-                    checkpoint?.lastPageSynced?.plus(1) ?: FAST_START_PAGES
-                }
+            // Notify that this section is starting
+            onSectionStart(section)
 
-            val allItems =
-                if (stagingMode && hasStaging) {
-                    contentCache.readSectionIndexStaging(section, authConfig)?.toMutableList()
-                        ?: mutableListOf()
-                } else if (stagingMode) {
-                    if (fullReindex) {
-                        contentCache.clearSectionSyncCheckpoint(section, authConfig)
+            val result = runCatching {
+                val startPage =
+                    if (stagingMode) {
+                        checkpoint?.lastPageSynced?.plus(1) ?: 0
+                    } else {
+                        checkpoint?.lastPageSynced?.plus(1) ?: FAST_START_PAGES
                     }
-                    mutableListOf()
-                } else {
-                    loadSectionIndex(section, authConfig)?.toMutableList() ?: mutableListOf()
+
+                val allItems =
+                    if (stagingMode && hasStaging) {
+                        contentCache.readSectionIndexStaging(section, authConfig)?.toMutableList()
+                            ?: mutableListOf()
+                    } else if (stagingMode) {
+                        if (fullReindex) {
+                            contentCache.clearSectionSyncCheckpoint(section, authConfig)
+                        }
+                        mutableListOf()
+                    } else {
+                        loadSectionIndex(section, authConfig)?.toMutableList() ?: mutableListOf()
+                    }
+
+                suspend fun saveProgressCheckpoint(lastPage: Int) {
+                    if (stagingMode) {
+                        contentCache.updateSectionIndexIncrementalStagingWithCheckpoint(
+                            section, authConfig, allItems, lastPage, false
+                        )
+                    } else {
+                        contentCache.updateSectionIndexIncrementalWithCheckpoint(
+                            section, authConfig, allItems, lastPage, false
+                        )
+                    }
                 }
 
-            if (useBulkFirst) {
-                val bulkResult = api.fetchSectionAll(section, authConfig)
-                if (bulkResult.isSuccess) {
-                    val bulkItems = bulkResult.getOrNull().orEmpty()
-                    if (bulkItems.isNotEmpty()) {
-                        if (stagingMode) {
-                            contentCache.writeSectionIndexStaging(section, authConfig, bulkItems)
-                            contentCache.writeSectionSyncCheckpoint(
-                                section,
-                                authConfig,
-                                lastPage = 0,
-                                itemsIndexed = bulkItems.size,
-                                isComplete = true
+                // Try bulk fetch first if requested
+                var bulkSuccess = false
+                if (useBulkFirst) {
+                    val bulkResult = api.fetchSectionAll(section, authConfig)
+                    if (bulkResult.isSuccess) {
+                        val bulkItems = bulkResult.getOrNull().orEmpty()
+                        if (bulkItems.isNotEmpty()) {
+                            if (stagingMode) {
+                                contentCache.updateSectionIndexIncrementalStagingWithCheckpoint(
+                                    section, authConfig, bulkItems, 0, true
+                                )
+                                contentCache.commitSectionIndexStaging(section, authConfig)
+                            } else {
+                                // Transactional write: index + checkpoint atomically
+                                contentCache.writeSectionIndexPartial(
+                                    section, authConfig, bulkItems, 0, true
+                                )
+                            }
+                            val key = indexKey(section, authConfig)
+                            sectionIndexMutex.withLock {
+                                if (bulkItems.size < 50000) {
+                                    sectionIndexCache[key] = bulkItems
+                                } else {
+                                    sectionIndexCache.remove(key)
+                                }
+                            }
+                            onProgress(
+                                LibrarySyncProgress(
+                                    section = section,
+                                    sectionIndex = sectionIndex,
+                                    totalSections = sectionsToSync.size,
+                                    itemsIndexed = bulkItems.size,
+                                    progress = 1f,
+                                    phase = com.example.xtreamplayer.content.SyncPhase.BACKGROUND_FULL
+                                )
                             )
-                            contentCache.commitSectionIndexStaging(section, authConfig)
-                        } else {
-                            contentCache.writeSectionIndex(section, authConfig, bulkItems)
-                            contentCache.writeSectionSyncCheckpoint(
-                                section,
-                                authConfig,
-                                lastPage = 0,
-                                itemsIndexed = bulkItems.size,
-                                isComplete = true
-                            )
+                            Timber.i("Background sync (bulk) complete: $section with ${bulkItems.size} items")
+                            if (checkPause()) {
+                                Timber.i("Background sync paused after bulk: $section")
+                                throw SyncPausedException()
+                            }
+                            bulkSuccess = true
                         }
-                        val key = indexKey(section, authConfig)
-                        if (bulkItems.size < 50000) {
-                            sectionIndexCache[key] = bulkItems
-                        } else {
-                            sectionIndexCache.remove(key)
+                    }
+                    if (!bulkSuccess) {
+                        Timber.w("Background sync: bulk fetch failed for $section, falling back to page-by-page")
+                    }
+                }
+
+                // Only do page-by-page if bulk didn't succeed
+                if (!bulkSuccess) {
+                    var page = startPage
+                    Timber.d("Background sync: $section starting at page $page (checkpoint: ${checkpoint?.itemsIndexed} items)")
+
+                    while (true) {
+                        // Check pause on every page for responsive pausing
+                        if (checkPause()) {
+                            saveProgressCheckpoint(page - 1)
+                            Timber.i("Background sync paused: $section at page $page")
+                            throw SyncPausedException()
                         }
+
+                        val effectivePageSize = if (useBulkFirst) fallbackPageSize else pageSize
+                        val pageDataResult =
+                            api.fetchSectionPage(section, authConfig, page, effectivePageSize)
+                        if (pageDataResult.isFailure) {
+                            Timber.w("Background sync: $section page $page failed: ${pageDataResult.exceptionOrNull()}")
+                            throw pageDataResult.exceptionOrNull()
+                                ?: IllegalStateException("Background sync failed")
+                        }
+
+                        val pageData = pageDataResult.getOrThrow()
+
+                        if (pageData.items.isNotEmpty()) {
+                            val existingIds = allItems.asSequence().map { it.id }.toHashSet()
+                            pageData.items.forEach { item ->
+                                if (existingIds.add(item.id)) {
+                                    allItems.add(item)
+                                }
+                            }
+                        }
+
+                        // Incremental save every 10 pages
+                        if (page % BACKGROUND_SAVE_INTERVAL == 0) {
+                            if (stagingMode) {
+                                contentCache.updateSectionIndexIncrementalStagingWithCheckpoint(
+                                    section, authConfig, allItems, page, false
+                                )
+                            } else {
+                                // Transactional write: index + checkpoint atomically
+                                contentCache.updateSectionIndexIncrementalWithCheckpoint(
+                                    section, authConfig, allItems, page, false
+                                )
+                                val cacheKey = indexKey(section, authConfig)
+                                sectionIndexMutex.withLock {
+                                    if (allItems.size < 50000) {
+                                        sectionIndexCache[cacheKey] = allItems
+                                    } else {
+                                        sectionIndexCache.remove(cacheKey)
+                                    }
+                                }
+                            }
+                        }
+
                         onProgress(
                             LibrarySyncProgress(
                                 section = section,
                                 sectionIndex = sectionIndex,
                                 totalSections = sectionsToSync.size,
-                                itemsIndexed = bulkItems.size,
-                                progress = 1f,
+                                itemsIndexed = allItems.size,
+                                progress = 0.5f, // Indeterminate for background
                                 phase = com.example.xtreamplayer.content.SyncPhase.BACKGROUND_FULL
                             )
                         )
-                        Timber.i("Background sync (bulk) complete: $section with ${bulkItems.size} items")
-                        if (checkPause()) {
-                            Timber.i("Background sync paused after bulk: $section")
-                            return Result.success(Unit)
+
+                        if (pageData.items.isEmpty() || pageData.endReached) {
+                            // Section complete
+                            if (stagingMode) {
+                                contentCache.updateSectionIndexIncrementalStagingWithCheckpoint(
+                                    section, authConfig, allItems, page, true
+                                )
+                                contentCache.commitSectionIndexStaging(section, authConfig)
+                            } else {
+                                // Transactional write: index + checkpoint atomically
+                                contentCache.writeSectionIndexPartial(section, authConfig, allItems, page, true)
+                            }
+                            val key = indexKey(section, authConfig)
+                            sectionIndexMutex.withLock {
+                                if (allItems.size < 50000) {
+                                    sectionIndexCache[key] = allItems
+                                } else {
+                                    sectionIndexCache.remove(key)
+                                }
+                            }
+                            Timber.i("Background sync complete: $section with ${allItems.size} items")
+                            break
                         }
-                        continue
+
+                        delay(throttleMs) // Throttle to avoid blocking UI
+                        page++
                     }
-                }
-                Timber.w("Background sync: bulk fetch failed for $section, falling back to page-by-page")
+                } // end if (!bulkSuccess)
             }
 
-            var page = startPage
-            Timber.d("Background sync: $section starting at page $page (checkpoint: ${checkpoint?.itemsIndexed} items)")
+            // Notify that this section is complete (success or failure)
+            onSectionComplete(section)
 
-            while (true) {
-                // Check pause on every page for responsive pausing
-                if (checkPause()) {
-                    contentCache.writeSectionSyncCheckpoint(section, authConfig, page - 1, allItems.size, false)
-                    Timber.i("Background sync paused: $section at page $page")
-                    return Result.success(Unit)
+            val error = result.exceptionOrNull()
+            if (error is SyncPausedException) {
+                return Result.success(Unit)
+            }
+            if (error != null) {
+                Timber.e(error, "Background sync failed for $section, rolling back checkpoint")
+                lastError = error
+                runCatching {
+                    contentCache.writeSectionSyncCheckpoint(
+                        section, authConfig,
+                        lastPage = 0,
+                        itemsIndexed = 0,
+                        isComplete = false
+                    )
                 }
-
-                val effectivePageSize = if (useBulkFirst) fallbackPageSize else pageSize
-                val pageDataResult =
-                        api.fetchSectionPage(section, authConfig, page, effectivePageSize)
-                if (pageDataResult.isFailure) {
-                    Timber.w("Background sync: $section page $page failed: ${pageDataResult.exceptionOrNull()}")
-                    contentCache.writeSectionSyncCheckpoint(section, authConfig, page - 1, allItems.size, false)
-                    return Result.failure(pageDataResult.exceptionOrNull() ?: IllegalStateException("Background sync failed"))
-                }
-
-                val pageData = pageDataResult.getOrThrow()
-
-                if (pageData.items.isNotEmpty()) {
-                    val existingIds = allItems.asSequence().map { it.id }.toHashSet()
-                    pageData.items.forEach { item ->
-                        if (existingIds.add(item.id)) {
-                            allItems.add(item)
-                        }
-                    }
-                }
-
-                // Incremental save every 10 pages
-                if (page % BACKGROUND_SAVE_INTERVAL == 0) {
-                    if (stagingMode) {
-                        contentCache.updateSectionIndexIncrementalStaging(section, authConfig, allItems)
-                    } else {
-                        contentCache.updateSectionIndexIncremental(section, authConfig, allItems)
-                        val cacheKey = indexKey(section, authConfig)
-                        if (allItems.size < 50000) {
-                            sectionIndexCache[cacheKey] = allItems
-                        } else {
-                            sectionIndexCache.remove(cacheKey)
-                        }
-                    }
-                    contentCache.writeSectionSyncCheckpoint(section, authConfig, page, allItems.size, false)
-                }
-
-                onProgress(LibrarySyncProgress(
-                    section = section,
-                    sectionIndex = sectionIndex,
-                    totalSections = sectionsToSync.size,
-                    itemsIndexed = allItems.size,
-                    progress = 0.5f, // Indeterminate for background
-                    phase = com.example.xtreamplayer.content.SyncPhase.BACKGROUND_FULL
-                ))
-
-                if (pageData.items.isEmpty() || pageData.endReached) {
-                    // Section complete
-                    if (stagingMode) {
-                        contentCache.writeSectionIndexStaging(section, authConfig, allItems)
-                        contentCache.commitSectionIndexStaging(section, authConfig)
-                    } else {
-                        contentCache.writeSectionIndex(section, authConfig, allItems)
-                    }
-                    contentCache.writeSectionSyncCheckpoint(section, authConfig, page, allItems.size, true)
-                    val key = indexKey(section, authConfig)
-                    if (allItems.size < 50000) {
-                        sectionIndexCache[key] = allItems
-                    } else {
-                        sectionIndexCache.remove(key)
-                    }
-                    Timber.i("Background sync complete: $section with ${allItems.size} items")
-                    break
-                }
-
-                delay(throttleMs) // Throttle to avoid blocking UI
-                page++
             }
         }
 
-        Timber.i("Background sync: All sections complete")
-        return Result.success(Unit)
+        // Return failure if any section failed
+        return if (lastError != null) {
+            Timber.e(lastError, "Background sync completed with errors")
+            Result.failure(lastError!!)
+        } else {
+            Timber.i("Background sync: All sections complete successfully")
+            Result.success(Unit)
+        }
     }
 
     /**
@@ -1001,48 +1125,60 @@ class ContentRepository(
         targetPages: Int = 3,
         onProgress: (LibrarySyncProgress) -> Unit = {}
     ): Result<Unit> {
-        val checkpoint = contentCache.readSectionSyncCheckpoint(section, authConfig)
-        val startPage = checkpoint?.lastPageSynced?.plus(1) ?: 0
+        return runCatching {
+            val checkpoint = contentCache.readSectionSyncCheckpoint(section, authConfig)
+            val startPage = checkpoint?.lastPageSynced?.plus(1) ?: 0
 
-        val existingItems = loadSectionIndex(section, authConfig)?.toMutableList() ?: mutableListOf()
+            val existingItems = loadSectionIndex(section, authConfig)?.toMutableList() ?: mutableListOf()
 
-        Timber.d("On-demand boost: $section fetching pages $startPage-${startPage + targetPages - 1}")
+            Timber.d("On-demand boost: $section fetching pages $startPage-${startPage + targetPages - 1}")
 
-        // Fetch 3 pages in parallel for speed
-        val newItems = coroutineScope {
-            (startPage until startPage + targetPages).map { page ->
-                async {
-                    api.fetchSectionPage(section, authConfig, page, BOOST_PAGE_SIZE)
-                        .getOrNull()?.items ?: emptyList()
-                }
-            }.awaitAll().flatten()
-        }
+            // Fetch 3 pages in parallel for speed
+            val newItems = coroutineScope {
+                (startPage until startPage + targetPages).map { page ->
+                    async {
+                        api.fetchSectionPage(section, authConfig, page, BOOST_PAGE_SIZE)
+                            .getOrNull()?.items ?: emptyList()
+                    }
+                }.awaitAll().flatten()
+            }
 
-        if (newItems.isNotEmpty()) {
-            val existingIds = existingItems.asSequence().map { it.id }.toHashSet()
-            newItems.forEach { item ->
-                if (existingIds.add(item.id)) {
-                    existingItems.add(item)
+            if (newItems.isNotEmpty()) {
+                val existingIds = existingItems.asSequence().map { it.id }.toHashSet()
+                newItems.forEach { item ->
+                    if (existingIds.add(item.id)) {
+                        existingItems.add(item)
+                    }
                 }
             }
+
+            // Update index immediately (transactional write: index + checkpoint atomically)
+            contentCache.updateSectionIndexIncrementalWithCheckpoint(
+                section, authConfig, existingItems, startPage + targetPages - 1, false
+            )
+
+            Timber.i("On-demand boost: $section added ${newItems.size} items (total: ${existingItems.size})")
+
+            onProgress(LibrarySyncProgress(
+                section = section,
+                sectionIndex = 0,
+                totalSections = 1,
+                itemsIndexed = existingItems.size,
+                progress = 1.0f,
+                phase = com.example.xtreamplayer.content.SyncPhase.ON_DEMAND_BOOST
+            ))
+        }.onFailure { error ->
+            Timber.e(error, "On-demand boost failed for $section, rolling back checkpoint")
+            // Rollback checkpoint on failure
+            runCatching {
+                contentCache.writeSectionSyncCheckpoint(
+                    section, authConfig,
+                    lastPage = 0,
+                    itemsIndexed = 0,
+                    isComplete = false
+                )
+            }
         }
-
-        // Update index immediately
-        contentCache.updateSectionIndexIncremental(section, authConfig, existingItems)
-        contentCache.writeSectionSyncCheckpoint(section, authConfig, startPage + targetPages - 1, existingItems.size, false)
-
-        Timber.i("On-demand boost: $section added ${newItems.size} items (total: ${existingItems.size})")
-
-        onProgress(LibrarySyncProgress(
-            section = section,
-            sectionIndex = 0,
-            totalSections = 1,
-            itemsIndexed = existingItems.size,
-            progress = 1.0f,
-            phase = com.example.xtreamplayer.content.SyncPhase.ON_DEMAND_BOOST
-        ))
-
-        return Result.success(Unit)
     }
 
     /**
@@ -1058,8 +1194,92 @@ class ContentRepository(
     suspend fun hasFullIndex(authConfig: AuthConfig): Boolean {
         val sections = listOf(Section.MOVIES, Section.SERIES, Section.LIVE)
         return sections.all { section ->
-            contentCache.readSectionSyncCheckpoint(section, authConfig)?.isComplete == true
+            validateCheckpoint(section, authConfig)
         }
+    }
+
+    /**
+     * Validate checkpoint against actual cached data
+     * Checks for staleness, item count accuracy, and isComplete flag validity
+     * Uses caching to avoid repeated file reads during search paging
+     */
+    private suspend fun validateCheckpoint(
+        section: Section,
+        authConfig: AuthConfig
+    ): Boolean {
+        val checkpoint = contentCache.readSectionSyncCheckpoint(section, authConfig) ?: return false
+
+        // Not marked complete? Then not valid for search
+        if (!checkpoint.isComplete) return false
+
+        // Check validation cache first (avoids repeated file reads during search)
+        val cacheKey = "${section.name}|${authConfig.baseUrl}|${authConfig.username}|${checkpoint.timestamp}"
+        val cachedValidation = validationCacheMutex.withLock { validationCache[cacheKey] }
+        if (cachedValidation != null) {
+            val cacheAge = System.currentTimeMillis() - cachedValidation.cachedAt
+            if (cacheAge < 120_000) {
+                return cachedValidation.isValid
+            }
+        }
+
+        // Perform full validation
+        val isValid = performFullValidation(section, authConfig, checkpoint)
+
+        // Cache the result
+        validationCacheMutex.withLock {
+            validationCache[cacheKey] = ValidationCacheEntry(isValid, System.currentTimeMillis())
+        }
+
+        return isValid
+    }
+
+    private suspend fun performFullValidation(
+        section: Section,
+        authConfig: AuthConfig,
+        checkpoint: SectionSyncCheckpoint
+    ): Boolean {
+        // Check staleness (>7 days old)
+        val ageMs = System.currentTimeMillis() - checkpoint.timestamp
+        val staleDays = ageMs / (24 * 60 * 60 * 1000L)
+        if (staleDays > 7) {
+            Timber.w("Checkpoint for $section is stale (${staleDays}d old)")
+            // Mark checkpoint as invalid to trigger resync
+            contentCache.writeSectionSyncCheckpoint(
+                section, authConfig,
+                lastPage = 0,
+                itemsIndexed = 0,
+                isComplete = false
+            )
+            return false
+        }
+
+        // Verify actual cached items match checkpoint claim
+        val cachedItems = contentCache.readSectionIndex(section, authConfig)
+        if (cachedItems == null) {
+            Timber.w("Checkpoint claims complete for $section but no index file exists")
+            contentCache.writeSectionSyncCheckpoint(
+                section, authConfig,
+                lastPage = 0,
+                itemsIndexed = 0,
+                isComplete = false
+            )
+            return false
+        }
+
+        // Allow 10% margin for minor discrepancies (some items might be filtered)
+        val minExpected = (checkpoint.itemsIndexed * 0.9).toInt()
+        if (cachedItems.size < minExpected) {
+            Timber.w("Checkpoint mismatch for $section: claims ${checkpoint.itemsIndexed} but index has ${cachedItems.size}")
+            contentCache.writeSectionSyncCheckpoint(
+                section, authConfig,
+                lastPage = 0,
+                itemsIndexed = 0,
+                isComplete = false
+            )
+            return false
+        }
+
+        return true
     }
 
     private suspend fun isSearchIndexComplete(
@@ -1068,9 +1288,9 @@ class ContentRepository(
     ): Boolean {
         return if (section == Section.ALL) {
             val sections = listOf(Section.MOVIES, Section.SERIES, Section.LIVE)
-            sections.all { contentCache.readSectionSyncCheckpoint(it, authConfig)?.isComplete == true }
+            sections.all { validateCheckpoint(it, authConfig) }
         } else {
-            contentCache.readSectionSyncCheckpoint(section, authConfig)?.isComplete == true
+            validateCheckpoint(section, authConfig)
         }
     }
 
@@ -1104,9 +1324,11 @@ class ContentRepository(
         memoryCacheMutex.withLock { memoryCache.clear() }
         categoryLock.withLock { categoryCache.clear() }
         categoryThumbnailMutex.withLock { categoryThumbnailCache.clear() }
-        sectionIndexCache.clear()
+        sectionIndexMutex.withLock { sectionIndexCache.clear() }
         seriesEpisodesMutex.withLock { seriesEpisodesCache.clear() }
         seriesSeasonCountMutex.withLock { seriesSeasonCountCache.clear() }
+        validationCacheMutex.withLock { validationCache.clear() }
+        SearchNormalizer.clearCache()
     }
 
     suspend fun clearDiskCache() {
