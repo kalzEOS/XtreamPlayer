@@ -99,6 +99,7 @@ class XtreamPlayerView @JvmOverloads constructor(
         }.getOrDefault(false)
     }
 
+
     override fun onContentAspectRatioChanged(
         contentFrame: AspectRatioFrameLayout?,
         aspectRatio: Float
@@ -180,4 +181,5 @@ class XtreamPlayerView @JvmOverloads constructor(
         }
         view?.setOnClickListener { onSettingsClick?.invoke() }
     }
+
 }

@@ -156,6 +156,7 @@ import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -260,6 +261,7 @@ fun RootScreen(
     var showFontScaleDialog by remember { mutableStateOf(false) }
     var showNextEpisodeThresholdDialog by remember { mutableStateOf(false) }
     var showLocalFilesGuest by remember { mutableStateOf(false) }
+    var cacheClearNonce by remember { mutableStateOf(0) }
     var activePlaybackQueue by remember { mutableStateOf<PlaybackQueue?>(null) }
     var activePlaybackTitle by remember { mutableStateOf<String?>(null) }
     var activePlaybackItem by remember { mutableStateOf<ContentItem?>(null) }
@@ -843,42 +845,57 @@ fun RootScreen(
                         if (isHevc && !isHevcDecodeSupported()) {
                             Toast.makeText(
                                             context,
-                                            "This device can't decode HEVC (H.265). Try a different device or stream.",
+                                            "HEVC not supported. Use Next/Previous to continue.",
                                             Toast.LENGTH_LONG
                             )
                                     .show()
                             Timber.e(error, "Playback failed: HEVC not supported on this device")
-                            return
+                            // Don't return - allow Next/Previous navigation even for HEVC errors
                         }
-                        val mediaId = playbackEngine.player.currentMediaItem?.mediaId ?: return
-                        val candidates = activePlaybackQueue?.fallbackUris?.get(mediaId).orEmpty()
-                        val attempt = playbackFallbackAttempts[mediaId] ?: 0
-                        val nextAttempt = attempt + 1
-                        if (nextAttempt < candidates.size) {
-                            playbackFallbackAttempts = playbackFallbackAttempts + (mediaId to nextAttempt)
-                            val nextUri = candidates[nextAttempt]
-                            Timber.w(
-                                    error,
-                                    "Playback failed for $mediaId, retrying with fallback ${nextAttempt + 1}/${candidates.size}: $nextUri"
-                            )
-                            val currentItem = playbackEngine.player.currentMediaItem ?: return
-                            playbackEngine.player.setMediaItem(
-                                    currentItem.buildUpon()
-                                            .setUri(nextUri)
-                                            .setMimeType(guessMimeTypeForUri(nextUri))
-                                            .build()
-                            )
-                            playbackEngine.player.prepare()
-                            playbackEngine.player.playWhenReady = true
+                        val mediaId = playbackEngine.player.currentMediaItem?.mediaId
+                        if (mediaId != null) {
+                            val candidates = activePlaybackQueue?.fallbackUris?.get(mediaId).orEmpty()
+                            val attempt = playbackFallbackAttempts[mediaId] ?: 0
+                            val nextAttempt = attempt + 1
+                            if (nextAttempt < candidates.size) {
+                                playbackFallbackAttempts = playbackFallbackAttempts + (mediaId to nextAttempt)
+                                val nextUri = candidates[nextAttempt]
+                                Timber.w(
+                                        error,
+                                        "Playback failed for $mediaId, retrying with fallback ${nextAttempt + 1}/${candidates.size}: $nextUri"
+                                )
+                                val currentItem = playbackEngine.player.currentMediaItem
+                                if (currentItem != null) {
+                                    playbackEngine.player.setMediaItem(
+                                            currentItem.buildUpon()
+                                                    .setUri(nextUri)
+                                                    .setMimeType(guessMimeTypeForUri(nextUri))
+                                                    .build()
+                                    )
+                                    playbackEngine.player.prepare()
+                                    playbackEngine.player.playWhenReady = true
+                                } else {
+                                    Timber.w("Current item is null during fallback retry")
+                                }
+                            } else {
+                                Timber.e(error, "Playback failed for $mediaId; no more fallbacks")
+                                Toast.makeText(
+                                                context,
+                                                "Playback failed. Use Next/Previous to continue.",
+                                                Toast.LENGTH_LONG
+                                )
+                                        .show()
+                            }
                         } else {
-                            Timber.e(error, "Playback failed for $mediaId; no more fallbacks")
+                            Timber.w(error, "Playback error with null mediaId")
                             Toast.makeText(
                                             context,
-                                            "Playback failed. Please try again later.",
+                                            "Playback failed. Use Next/Previous to continue.",
                                             Toast.LENGTH_LONG
                             )
                                     .show()
                         }
+                        // Player is now in error state but Next/Previous navigation will still work
                     }
                 }
         playbackEngine.player.addListener(listener)
@@ -921,6 +938,19 @@ fun RootScreen(
             val colors = AppTheme.colors
             val context = LocalContext.current
             val versionLabel = remember(context) { "v${appVersionName(context)}" }
+            val quickSearchReady by produceState(
+                    initialValue = false,
+                    key1 = authState.activeConfig,
+                    key2 = syncState.fastStartReady,
+                    key3 = cacheClearNonce
+            ) {
+                val config = authState.activeConfig
+                value = if (config == null) {
+                    false
+                } else {
+                    contentRepository.hasAnySearchIndex(config)
+                }
+            }
             Column(modifier = Modifier.fillMaxSize()) {
                 Row(
                         modifier =
@@ -951,7 +981,7 @@ fun RootScreen(
                 Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
                     Row(modifier = Modifier.align(Alignment.TopEnd), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         // Fast Search Ready indicator
-                        if (syncState.fastStartReady && syncState.phase != com.example.xtreamplayer.content.SyncPhase.COMPLETE) {
+                        if (quickSearchReady && syncState.phase != com.example.xtreamplayer.content.SyncPhase.COMPLETE) {
                             Row(
                                 modifier = Modifier
                                     .background(Color(0xFF2E7D32), RoundedCornerShape(4.dp))
@@ -1197,6 +1227,7 @@ fun RootScreen(
                                                 val bytes = contentRepository.diskCacheSizeBytes()
                                                 contentRepository.clearCache()
                                                 contentRepository.clearDiskCache()
+                                                cacheClearNonce++
                                                 val mb = bytes / (1024.0 * 1024.0)
                                                 val sizeLabel =
                                                         if (mb < 0.1) {
@@ -7426,19 +7457,18 @@ fun SeriesSeasonsScreen(
         selectedSeasonIndex = 0
         internalEpisodeFocus = false
         val result = runCatching {
-            contentRepository.loadSeriesEpisodes(seriesItem.streamId, authConfig)
+            contentRepository.loadSeriesSeasons(seriesItem.streamId, authConfig)
         }
         result
-                .onSuccess { episodes ->
+                .onSuccess { summaries ->
                     val grouped =
-                            episodes
-                                    .groupBy { seasonLabelFromSubtitle(it.subtitle) }
-                                    .map { (label, items) ->
+                            summaries
+                                    .map { summary ->
                                         SeasonGroup(
-                                                label = label,
-                                                displayLabel = buildSeasonLabel(label),
-                                                seasonNumber = seasonNumberFromLabel(label),
-                                                episodes = items
+                                                label = summary.label,
+                                                displayLabel = buildSeasonLabel(summary.label),
+                                                seasonNumber = seasonNumberFromLabel(summary.label),
+                                                episodeCount = summary.episodeCount
                                         )
                                     }
                                     .sortedWith(
@@ -7467,10 +7497,26 @@ fun SeriesSeasonsScreen(
     // Keep focus inside the series view when the details screen opens.
 
     val selectedSeason = seasonGroups.getOrNull(selectedSeasonIndex)
-    val selectedEpisodes = selectedSeason?.episodes.orEmpty()
+    val selectedSeasonLabel = selectedSeason?.label
+    val pagerFlow =
+            remember(seriesItem.streamId, selectedSeasonLabel, authConfig) {
+                val label = selectedSeasonLabel
+                if (label.isNullOrBlank()) {
+                    flowOf(androidx.paging.PagingData.empty())
+                } else {
+                    contentRepository.seriesSeasonPager(seriesItem.streamId, label, authConfig).flow
+                }
+            }
+    val lazyItems = pagerFlow.collectAsLazyPagingItems()
     val columns = 1
     val handleEpisodeFocused: (ContentItem) -> Unit = { item -> onItemFocused(item) }
     val shouldRequestEpisodeFocus = pendingEpisodeFocus || internalEpisodeFocus
+    LaunchedEffect(seriesItem.streamId, selectedSeasonLabel, authConfig) {
+        val label = selectedSeasonLabel
+        if (!label.isNullOrBlank()) {
+            contentRepository.prefetchSeriesSeasonFull(seriesItem.streamId, label, authConfig)
+        }
+    }
     LaunchedEffect(
             isLoading,
             errorMessage,
@@ -7581,7 +7627,7 @@ fun SeriesSeasonsScreen(
                                 key = { index -> seasonGroups[index].displayLabel }
                         ) { index ->
                             val season = seasonGroups[index]
-                            val label = "${season.displayLabel} (${season.episodes.size})"
+                            val label = "${season.displayLabel} (${season.episodeCount})"
                             CategoryTypeTab(
                                     label = label,
                                     selected = index == selectedSeasonIndex,
@@ -7613,7 +7659,25 @@ fun SeriesSeasonsScreen(
                             fontWeight = FontWeight.Medium
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    if (selectedEpisodes.isEmpty()) {
+                    if (lazyItems.loadState.refresh is LoadState.Loading &&
+                                    lazyItems.itemCount == 0
+                    ) {
+                        Text(
+                                text = "Loading episodes...",
+                                color = AppTheme.colors.textSecondary,
+                                fontSize = 14.sp,
+                                fontFamily = AppTheme.fontFamily,
+                                letterSpacing = 0.6.sp
+                        )
+                    } else if (lazyItems.loadState.refresh is LoadState.Error) {
+                        Text(
+                                text = "Episodes failed to load",
+                                color = AppTheme.colors.error,
+                                fontSize = 14.sp,
+                                fontFamily = AppTheme.fontFamily,
+                                letterSpacing = 0.6.sp
+                        )
+                    } else if (lazyItems.itemCount == 0) {
                         Text(
                                 text = "No episodes yet",
                                 color = AppTheme.colors.textSecondary,
@@ -7629,13 +7693,14 @@ fun SeriesSeasonsScreen(
                                 modifier = Modifier.fillMaxSize()
                         ) {
                             items(
-                                    count = selectedEpisodes.size,
-                                    key = { index -> selectedEpisodes[index].id }
+                                    count = lazyItems.itemCount,
+                                    key = { index -> lazyItems[index]?.id ?: "episode-$index" }
                             ) { index ->
-                                val item = selectedEpisodes[index]
+                                val item = lazyItems[index]
                                 val requester =
                                         when {
-                                            item.id == resumeFocusId -> resumeFocusRequester
+                                            item?.id != null && item.id == resumeFocusId ->
+                                                    resumeFocusRequester
                                             index == 0 -> episodesFocusRequester
                                             else -> null
                                         }
@@ -7655,8 +7720,30 @@ fun SeriesSeasonsScreen(
                                         item = item,
                                         focusRequester = requester,
                                         isLeftEdge = isLeftEdge,
-                                        isFavorite = isItemFavorite(item),
-                                        onActivate = { onPlay(item, selectedEpisodes) },
+                                        isFavorite = item != null && isItemFavorite(item),
+                                        onActivate =
+                                                if (item != null) {
+                                                    {
+                                                        val label = selectedSeasonLabel
+                                                        val cachedSeason =
+                                                                if (!label.isNullOrBlank()) {
+                                                                    contentRepository.peekSeriesSeasonFullCache(
+                                                                            seriesItem.streamId,
+                                                                            label,
+                                                                            authConfig
+                                                                    )
+                                                                } else {
+                                                                    null
+                                                                }
+                                                        onPlay(
+                                                                item,
+                                                                cachedSeason
+                                                                        ?: lazyItems.itemSnapshotList.items
+                                                        )
+                                                    }
+                                                } else {
+                                                    null
+                                                },
                                         onFocused = handleEpisodeFocused,
                                         onMoveLeft = {
                                             seasonRequesterFor(selectedSeasonIndex)
@@ -7675,7 +7762,12 @@ fun SeriesSeasonsScreen(
                                                 } else {
                                                     null
                                         },
-                                        onLongClick = { onToggleFavorite(item) },
+                                        onLongClick =
+                                                if (item != null) {
+                                                    { onToggleFavorite(item) }
+                                                } else {
+                                                    null
+                                                },
                                         titleFontSize = 13.sp,
                                         subtitleFontSize = 10.sp,
                                         forceDarkText = forceDarkText
@@ -7693,19 +7785,8 @@ private data class SeasonGroup(
         val label: String,
         val displayLabel: String,
         val seasonNumber: Int,
-        val episodes: List<ContentItem>
+        val episodeCount: Int
 )
-
-private fun seasonLabelFromSubtitle(subtitle: String): String {
-    val prefix = subtitle.substringBefore("·").trim()
-    if (prefix.startsWith("S", ignoreCase = true)) {
-        val trimmed = prefix.drop(1).trim()
-        if (trimmed.isNotBlank()) {
-            return trimmed
-        }
-    }
-    return prefix.ifBlank { "1" }
-}
 
 private fun buildSeasonLabel(rawLabel: String): String {
     val label = rawLabel.ifBlank { "1" }
