@@ -356,6 +356,83 @@ class XtreamApi(
         }
     }
 
+    suspend fun fetchSeriesSeasonSummaries(
+        config: AuthConfig,
+        seriesId: String
+    ): Result<List<com.example.xtreamplayer.content.SeasonSummary>> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val url = buildApiUrl(
+                    config,
+                    "get_series_info",
+                    mapOf("series_id" to seriesId)
+                ) ?: return@withContext Result.failure(
+                    IllegalArgumentException("Invalid service URL")
+                )
+                val request = Request.Builder().url(url).get().build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        return@withContext Result.failure(
+                            IllegalStateException("Request failed: ${response.code}")
+                        )
+                    }
+                    val body = response.body ?: return@withContext Result.failure(
+                        IllegalStateException("Empty response")
+                    )
+                    body.charStream().use { stream ->
+                        val reader = JsonReader(stream)
+                        val summaries = parseSeriesSeasonSummaries(reader)
+                        Result.success(summaries)
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "API request failed")
+                Result.failure(e)
+            }
+        }
+    }
+
+    suspend fun fetchSeriesSeasonPage(
+        config: AuthConfig,
+        seriesId: String,
+        seasonLabel: String,
+        page: Int,
+        limit: Int
+    ): Result<ContentPage> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val offset = page * limit
+                val url = buildApiUrl(
+                    config,
+                    "get_series_info",
+                    mapOf("series_id" to seriesId)
+                ) ?: return@withContext Result.failure(
+                    IllegalArgumentException("Invalid service URL")
+                )
+                val request = Request.Builder().url(url).get().build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        return@withContext Result.failure(
+                            IllegalStateException("Request failed: ${response.code}")
+                        )
+                    }
+                    val body = response.body ?: return@withContext Result.failure(
+                        IllegalStateException("Empty response")
+                    )
+                    body.charStream().use { stream ->
+                        val reader = JsonReader(stream)
+                        val pageData =
+                            parseSeriesSeasonPage(reader, seasonLabel, offset, limit)
+                        Result.success(pageData)
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "API request failed")
+                Result.failure(e)
+            }
+        }
+    }
+
     private fun parsePage(
         reader: JsonReader,
         section: Section,
@@ -554,6 +631,110 @@ class XtreamApi(
         }
         reader.endObject()
         return count
+    }
+
+    private fun parseSeriesSeasonSummaries(
+        reader: JsonReader
+    ): List<com.example.xtreamplayer.content.SeasonSummary> {
+        if (reader.peek() != JsonToken.BEGIN_OBJECT) {
+            reader.skipValue()
+            return emptyList()
+        }
+        reader.beginObject()
+        val summaries = mutableListOf<com.example.xtreamplayer.content.SeasonSummary>()
+        while (reader.hasNext()) {
+            val name = reader.nextName()
+            if (name != "episodes") {
+                reader.skipValue()
+                continue
+            }
+            if (reader.peek() != JsonToken.BEGIN_OBJECT) {
+                reader.skipValue()
+                break
+            }
+            reader.beginObject()
+            while (reader.hasNext()) {
+                val seasonKey = reader.nextName()
+                if (reader.peek() != JsonToken.BEGIN_ARRAY) {
+                    reader.skipValue()
+                    continue
+                }
+                reader.beginArray()
+                var count = 0
+                while (reader.hasNext()) {
+                    reader.skipValue()
+                    count++
+                }
+                reader.endArray()
+                summaries.add(
+                    com.example.xtreamplayer.content.SeasonSummary(
+                        label = seasonKey,
+                        episodeCount = count
+                    )
+                )
+            }
+            reader.endObject()
+        }
+        reader.endObject()
+        return summaries
+    }
+
+    private fun parseSeriesSeasonPage(
+        reader: JsonReader,
+        seasonLabel: String,
+        offset: Int,
+        limit: Int
+    ): ContentPage {
+        if (reader.peek() != JsonToken.BEGIN_OBJECT) {
+            reader.skipValue()
+            return ContentPage(items = emptyList(), endReached = true)
+        }
+        reader.beginObject()
+        val items = ArrayList<ContentItem>(limit)
+        var totalCount = 0
+        var endReached = true
+        while (reader.hasNext()) {
+            val name = reader.nextName()
+            if (name != "episodes") {
+                reader.skipValue()
+                continue
+            }
+            if (reader.peek() != JsonToken.BEGIN_OBJECT) {
+                reader.skipValue()
+                break
+            }
+            reader.beginObject()
+            while (reader.hasNext()) {
+                val seasonKey = reader.nextName()
+                if (seasonKey != seasonLabel) {
+                    reader.skipValue()
+                    continue
+                }
+                if (reader.peek() != JsonToken.BEGIN_ARRAY) {
+                    reader.skipValue()
+                    continue
+                }
+                reader.beginArray()
+                while (reader.hasNext()) {
+                    val entry = parseEpisodeEntry(reader, seasonKey)
+                    if (entry != null) {
+                        if (totalCount >= offset && items.size < limit) {
+                            items.add(entry.item)
+                        }
+                        totalCount++
+                    }
+                }
+                reader.endArray()
+            }
+            reader.endObject()
+        }
+        reader.endObject()
+        if (items.size == limit && totalCount > offset + items.size) {
+            endReached = false
+        } else {
+            endReached = offset + limit >= totalCount
+        }
+        return ContentPage(items = items, endReached = endReached)
     }
 
     private fun parseSeriesEpisodesAll(reader: JsonReader): List<ContentItem> {

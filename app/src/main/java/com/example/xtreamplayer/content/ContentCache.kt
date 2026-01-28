@@ -117,6 +117,33 @@ class ContentCache(context: Context) {
         }
     }
 
+    suspend fun readSeasonFull(
+        seriesId: String,
+        seasonLabel: String,
+        config: AuthConfig
+    ): List<ContentItem>? {
+        return withContext(Dispatchers.IO) {
+            val file = seasonFullFile(seriesId, seasonLabel, config)
+            if (!file.exists()) return@withContext null
+            val text = runCatching { file.readText() }.getOrNull() ?: return@withContext null
+            if (text.isBlank()) return@withContext null
+            parseIndexItems(text)
+        }
+    }
+
+    suspend fun writeSeasonFull(
+        seriesId: String,
+        seasonLabel: String,
+        config: AuthConfig,
+        items: List<ContentItem>
+    ) {
+        withContext(Dispatchers.IO) {
+            val file = seasonFullFile(seriesId, seasonLabel, config)
+            val array = serializeItems(items)
+            runCatching { file.writeText(array.toString()) }
+        }
+    }
+
     suspend fun readSectionIndex(
         section: Section,
         config: AuthConfig
@@ -297,6 +324,13 @@ class ContentCache(context: Context) {
         val key = accountHash(config)
         val safeCategory = hashKey(categoryId)
         val name = "category_thumb_${type.name.lowercase()}_${safeCategory}_$key.json"
+        return File(cacheDir, name)
+    }
+
+    private fun seasonFullFile(seriesId: String, seasonLabel: String, config: AuthConfig): File {
+        val key = accountHash(config)
+        val safeKey = hashKey("$seriesId|$seasonLabel")
+        val name = "season_full_${safeKey}_$key.json"
         return File(cacheDir, name)
     }
 

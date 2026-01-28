@@ -60,11 +60,29 @@ class ContentRepository(
             return size > 200
         }
     }
+    private val seriesSeasonFullCache =
+        object : LinkedHashMap<String, List<ContentItem>>(20, 0.75f, true) {
+            override fun removeEldestEntry(
+                eldest: MutableMap.MutableEntry<String, List<ContentItem>>
+            ): Boolean {
+                return size > 20
+            }
+        }
+    private val seriesSeasonsCache =
+        object : LinkedHashMap<String, List<SeasonSummary>>(50, 0.75f, true) {
+            override fun removeEldestEntry(
+                eldest: MutableMap.MutableEntry<String, List<SeasonSummary>>
+            ): Boolean {
+                return size > 50
+            }
+        }
     private val locks = Section.values().associateWith { Mutex() }
     private val categoryLock = Mutex()
     private val memoryCacheMutex = Mutex()
     private val seriesEpisodesMutex = Mutex()
     private val seriesSeasonCountMutex = Mutex()
+    private val seriesSeasonFullMutex = Mutex()
+    private val seriesSeasonsMutex = Mutex()
     private val categoryThumbnailMutex = Mutex()
     private val categoryCache = object : LinkedHashMap<String, List<CategoryItem>>(100, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<CategoryItem>>): Boolean {
@@ -162,6 +180,24 @@ class ContentRepository(
             ),
             pagingSourceFactory = {
                 XtreamSeriesPagingSource(seriesId, authConfig, this)
+            }
+        )
+    }
+
+    fun seriesSeasonPager(
+        seriesId: String,
+        seasonLabel: String,
+        authConfig: AuthConfig
+    ): Pager<Int, ContentItem> {
+        return Pager(
+            config = PagingConfig(
+                pageSize = DEFAULT_PAGE_SIZE,
+                prefetchDistance = DEFAULT_PREFETCH_DISTANCE,
+                initialLoadSize = DEFAULT_INITIAL_LOAD,
+                enablePlaceholders = false
+            ),
+            pagingSourceFactory = {
+                XtreamSeasonEpisodesPagingSource(seriesId, seasonLabel, authConfig, this)
             }
         )
     }
@@ -268,6 +304,32 @@ class ContentRepository(
         return ContentPage(items = slice, endReached = endReached)
     }
 
+    suspend fun loadSeriesSeasonPage(
+        seriesId: String,
+        seasonLabel: String,
+        page: Int,
+        limit: Int,
+        authConfig: AuthConfig
+    ): ContentPage {
+        val cacheKey = "series-season-${accountKey(authConfig)}-$seriesId-$seasonLabel"
+        val key = cacheKey(cacheKey, page, limit)
+        memoryCacheMutex.withLock {
+            memoryCache[key]?.let { return it }
+        }
+        val cached = contentCache.readPage(cacheKey, authConfig, page, limit)
+        if (cached != null) {
+            memoryCacheMutex.withLock { memoryCache[key] = cached }
+            return cached
+        }
+        val result = api.fetchSeriesSeasonPage(authConfig, seriesId, seasonLabel, page, limit)
+        val pageData = result.getOrElse { throw it }
+        if (pageData.items.isNotEmpty()) {
+            contentCache.writePage(cacheKey, authConfig, page, limit, pageData)
+        }
+        memoryCacheMutex.withLock { memoryCache[key] = pageData }
+        return pageData
+    }
+
     suspend fun loadSeriesEpisodes(
         seriesId: String,
         authConfig: AuthConfig
@@ -295,6 +357,78 @@ class ContentRepository(
         val count = result.getOrNull() ?: return null
         seriesSeasonCountMutex.withLock { seriesSeasonCountCache[key] = count }
         return count
+    }
+
+    suspend fun loadSeriesSeasons(
+        seriesId: String,
+        authConfig: AuthConfig
+    ): List<SeasonSummary> {
+        val key = seasonCountKey(seriesId, authConfig)
+        seriesSeasonsMutex.withLock {
+            seriesSeasonsCache[key]?.let { return it }
+        }
+        val result = api.fetchSeriesSeasonSummaries(authConfig, seriesId)
+        val summaries = result.getOrElse { throw it }
+        seriesSeasonsMutex.withLock { seriesSeasonsCache[key] = summaries }
+        return summaries
+    }
+
+    fun peekSeriesSeasonFullCache(
+        seriesId: String,
+        seasonLabel: String,
+        authConfig: AuthConfig
+    ): List<ContentItem>? {
+        val key = "season-full-${accountKey(authConfig)}-$seriesId-$seasonLabel"
+        if (!seriesSeasonFullMutex.tryLock()) {
+            return null
+        }
+        return try {
+            seriesSeasonFullCache[key]
+        } finally {
+            seriesSeasonFullMutex.unlock()
+        }
+    }
+
+    suspend fun prefetchSeriesSeasonFull(
+        seriesId: String,
+        seasonLabel: String,
+        authConfig: AuthConfig
+    ) {
+        runCatching { loadSeriesSeasonFull(seriesId, seasonLabel, authConfig) }
+            .onFailure { Timber.w(it, "Failed to prefetch season $seasonLabel") }
+    }
+
+    suspend fun loadSeriesSeasonFull(
+        seriesId: String,
+        seasonLabel: String,
+        authConfig: AuthConfig
+    ): List<ContentItem> {
+        val key = "season-full-${accountKey(authConfig)}-$seriesId-$seasonLabel"
+        seriesSeasonFullMutex.withLock {
+            seriesSeasonFullCache[key]?.let { return it }
+        }
+        val cached = contentCache.readSeasonFull(seriesId, seasonLabel, authConfig)
+        if (cached != null) {
+            seriesSeasonFullMutex.withLock { seriesSeasonFullCache[key] = cached }
+            return cached
+        }
+        val items = mutableListOf<ContentItem>()
+        var page = 0
+        val limit = 200
+        while (true) {
+            val pageData = loadSeriesSeasonPage(seriesId, seasonLabel, page, limit, authConfig)
+            if (pageData.items.isEmpty()) {
+                break
+            }
+            items.addAll(pageData.items)
+            if (pageData.endReached) {
+                break
+            }
+            page++
+        }
+        contentCache.writeSeasonFull(seriesId, seasonLabel, authConfig, items)
+        seriesSeasonFullMutex.withLock { seriesSeasonFullCache[key] = items }
+        return items
     }
 
     suspend fun loadCategories(
@@ -1327,6 +1461,8 @@ class ContentRepository(
         sectionIndexMutex.withLock { sectionIndexCache.clear() }
         seriesEpisodesMutex.withLock { seriesEpisodesCache.clear() }
         seriesSeasonCountMutex.withLock { seriesSeasonCountCache.clear() }
+        seriesSeasonFullMutex.withLock { seriesSeasonFullCache.clear() }
+        seriesSeasonsMutex.withLock { seriesSeasonsCache.clear() }
         validationCacheMutex.withLock { validationCache.clear() }
         SearchNormalizer.clearCache()
     }
