@@ -307,24 +307,24 @@ class ContentRepository(
     suspend fun loadSeriesSeasonPage(
         seriesId: String,
         seasonLabel: String,
-        page: Int,
+        offset: Int,
         limit: Int,
         authConfig: AuthConfig
     ): ContentPage {
         val cacheKey = "series-season-${accountKey(authConfig)}-$seriesId-$seasonLabel"
-        val key = cacheKey(cacheKey, page, limit)
+        val key = cacheKey(cacheKey, offset, limit)
         memoryCacheMutex.withLock {
             memoryCache[key]?.let { return it }
         }
-        val cached = contentCache.readPage(cacheKey, authConfig, page, limit)
+        val cached = contentCache.readPage(cacheKey, authConfig, offset, limit)
         if (cached != null) {
             memoryCacheMutex.withLock { memoryCache[key] = cached }
             return cached
         }
-        val result = api.fetchSeriesSeasonPage(authConfig, seriesId, seasonLabel, page, limit)
+        val result = api.fetchSeriesSeasonPage(authConfig, seriesId, seasonLabel, offset, limit)
         val pageData = result.getOrElse { throw it }
         if (pageData.items.isNotEmpty()) {
-            contentCache.writePage(cacheKey, authConfig, page, limit, pageData)
+            contentCache.writePage(cacheKey, authConfig, offset, limit, pageData)
         }
         memoryCacheMutex.withLock { memoryCache[key] = pageData }
         return pageData
@@ -413,10 +413,10 @@ class ContentRepository(
             return cached
         }
         val items = mutableListOf<ContentItem>()
-        var page = 0
+        var offset = 0
         val limit = 200
         while (true) {
-            val pageData = loadSeriesSeasonPage(seriesId, seasonLabel, page, limit, authConfig)
+            val pageData = loadSeriesSeasonPage(seriesId, seasonLabel, offset, limit, authConfig)
             if (pageData.items.isEmpty()) {
                 break
             }
@@ -424,7 +424,7 @@ class ContentRepository(
             if (pageData.endReached) {
                 break
             }
-            page++
+            offset += pageData.items.size
         }
         contentCache.writeSeasonFull(seriesId, seasonLabel, authConfig, items)
         seriesSeasonFullMutex.withLock { seriesSeasonFullCache[key] = items }
