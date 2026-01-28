@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.map
 private val Context.dataStore by preferencesDataStore(name = "settings")
 
 class SettingsRepository(private val context: Context) {
+    private val bootPrefs = context.getSharedPreferences("boot_settings", Context.MODE_PRIVATE)
     val settings: Flow<SettingsState> = context.dataStore.data.map { prefs ->
         val autoPlay = prefs[Keys.AUTO_PLAY_NEXT] ?: true
         val nextEpisodeThreshold = prefs[Keys.NEXT_EPISODE_THRESHOLD] ?: 60
@@ -28,6 +29,8 @@ class SettingsRepository(private val context: Context) {
         val fontScale = (prefs[Keys.FONT_SCALE] ?: 1.0f).coerceIn(0.7f, 1.4f)
         val openSubtitlesApiKey = prefs[Keys.OPENSUBTITLES_API_KEY] ?: ""
         val openSubtitlesUserAgent = prefs[Keys.OPENSUBTITLES_USER_AGENT] ?: ""
+
+        cacheBootSettings(appTheme, appFont, uiScale, fontScale)
 
         SettingsState(
             autoPlayNext = autoPlay,
@@ -42,6 +45,16 @@ class SettingsRepository(private val context: Context) {
             openSubtitlesApiKey = openSubtitlesApiKey,
             openSubtitlesUserAgent = openSubtitlesUserAgent
         )
+    }
+
+    fun cachedSettings(): SettingsState {
+        val base = SettingsState()
+        val theme = parseAppTheme(bootPrefs.getString(Keys.BOOT_APP_THEME, null))
+        val font = parseAppFont(bootPrefs.getString(Keys.BOOT_APP_FONT, null))
+        val uiScale = bootPrefs.getFloat(Keys.BOOT_UI_SCALE, base.uiScale).coerceIn(0.7f, 1.3f)
+        val fontScale =
+            bootPrefs.getFloat(Keys.BOOT_FONT_SCALE, base.fontScale).coerceIn(0.7f, 1.4f)
+        return base.copy(appTheme = theme, appFont = font, uiScale = uiScale, fontScale = fontScale)
     }
 
     suspend fun setAutoPlayNext(enabled: Boolean) {
@@ -78,24 +91,28 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { prefs ->
             prefs[Keys.APP_THEME] = theme.name
         }
+        cacheBootSettings(appTheme = theme)
     }
 
     suspend fun setAppFont(font: AppFont) {
         context.dataStore.edit { prefs ->
             prefs[Keys.APP_FONT] = font.name
         }
+        cacheBootSettings(appFont = font)
     }
 
     suspend fun setUiScale(scale: Float) {
         context.dataStore.edit { prefs ->
             prefs[Keys.UI_SCALE] = scale.coerceIn(0.7f, 1.3f)
         }
+        cacheBootSettings(uiScale = scale.coerceIn(0.7f, 1.3f))
     }
 
     suspend fun setFontScale(scale: Float) {
         context.dataStore.edit { prefs ->
             prefs[Keys.FONT_SCALE] = scale.coerceIn(0.7f, 1.4f)
         }
+        cacheBootSettings(fontScale = scale.coerceIn(0.7f, 1.4f))
     }
 
     suspend fun setOpenSubtitlesApiKey(apiKey: String) {
@@ -119,6 +136,20 @@ class SettingsRepository(private val context: Context) {
         return AppFont.values().firstOrNull { it.name == value } ?: AppFont.DEFAULT
     }
 
+    private fun cacheBootSettings(
+        appTheme: AppThemeOption? = null,
+        appFont: AppFont? = null,
+        uiScale: Float? = null,
+        fontScale: Float? = null
+    ) {
+        val editor = bootPrefs.edit()
+        if (appTheme != null) editor.putString(Keys.BOOT_APP_THEME, appTheme.name)
+        if (appFont != null) editor.putString(Keys.BOOT_APP_FONT, appFont.name)
+        if (uiScale != null) editor.putFloat(Keys.BOOT_UI_SCALE, uiScale)
+        if (fontScale != null) editor.putFloat(Keys.BOOT_FONT_SCALE, fontScale)
+        editor.apply()
+    }
+
     private object Keys {
         val AUTO_PLAY_NEXT = booleanPreferencesKey("auto_play_next")
         val NEXT_EPISODE_THRESHOLD = intPreferencesKey("next_episode_threshold")
@@ -131,6 +162,10 @@ class SettingsRepository(private val context: Context) {
         val FONT_SCALE = floatPreferencesKey("font_scale")
         val OPENSUBTITLES_API_KEY = stringPreferencesKey("opensubtitles_api_key")
         val OPENSUBTITLES_USER_AGENT = stringPreferencesKey("opensubtitles_user_agent")
+        const val BOOT_APP_THEME = "boot_app_theme"
+        const val BOOT_APP_FONT = "boot_app_font"
+        const val BOOT_UI_SCALE = "boot_ui_scale"
+        const val BOOT_FONT_SCALE = "boot_font_scale"
 
         // Progressive sync state keys
         val SYNC_PHASE = stringPreferencesKey("sync_phase")

@@ -188,6 +188,16 @@ class ContentCache(context: Context) {
         }
     }
 
+    suspend fun cacheSizeBytes(): Long {
+        return withContext(Dispatchers.IO) { directorySizeBytes(cacheDir) }
+    }
+
+    private fun directorySizeBytes(dir: File): Long {
+        if (!dir.exists()) return 0L
+        if (dir.isFile) return dir.length()
+        return dir.listFiles()?.sumOf { file -> directorySizeBytes(file) } ?: 0L
+    }
+
     suspend fun clearFor(config: AuthConfig) {
         val accountHash = accountHash(config)
         withContext(Dispatchers.IO) {

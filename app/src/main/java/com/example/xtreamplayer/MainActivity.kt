@@ -152,6 +152,7 @@ import com.example.xtreamplayer.ui.theme.AppColors
 import com.example.xtreamplayer.ui.theme.XtreamPlayerTheme
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -1189,6 +1190,26 @@ fun RootScreen(
                                                         }
                                                     }
                                                 }
+                                            }
+                                        },
+                                        onClearCache = {
+                                            coroutineScope.launch {
+                                                val bytes = contentRepository.diskCacheSizeBytes()
+                                                contentRepository.clearCache()
+                                                contentRepository.clearDiskCache()
+                                                val mb = bytes / (1024.0 * 1024.0)
+                                                val sizeLabel =
+                                                        if (mb < 0.1) {
+                                                            "<0.1 MB"
+                                                        } else {
+                                                            String.format(Locale.US, "%.1f MB", mb)
+                                                        }
+                                                Toast.makeText(
+                                                                context,
+                                                                "Cache cleared ($sizeLabel)",
+                                                                Toast.LENGTH_SHORT
+                                                )
+                                                        .show()
                                             }
                                         },
                                         onSignOut = {

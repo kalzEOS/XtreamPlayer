@@ -1335,6 +1335,10 @@ class ContentRepository(
         contentCache.clearAll()
     }
 
+    suspend fun diskCacheSizeBytes(): Long {
+        return contentCache.cacheSizeBytes()
+    }
+
     suspend fun clearDiskCacheFor(authConfig: AuthConfig) {
         contentCache.clearFor(authConfig)
     }
