@@ -11,15 +11,15 @@ class XtreamSeasonEpisodesPagingSource(
     private val repository: ContentRepository
 ) : PagingSource<Int, ContentItem>() {
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, ContentItem> {
-        val page = params.key ?: 0
+        val offset = params.key ?: 0
         val limit = params.loadSize
         return try {
-            val result = repository.loadSeriesSeasonPage(seriesId, seasonLabel, page, limit, authConfig)
+            val result = repository.loadSeriesSeasonPage(seriesId, seasonLabel, offset, limit, authConfig)
             val items = result.items
             LoadResult.Page(
                 data = items,
-                prevKey = if (page == 0) null else page - 1,
-                nextKey = if (result.endReached || items.isEmpty()) null else page + 1
+                prevKey = if (offset == 0) null else (offset - limit).coerceAtLeast(0),
+                nextKey = if (result.endReached || items.isEmpty()) null else offset + items.size
             )
         } catch (e: Exception) {
             LoadResult.Error(e)
@@ -29,6 +29,6 @@ class XtreamSeasonEpisodesPagingSource(
     override fun getRefreshKey(state: PagingState<Int, ContentItem>): Int? {
         val anchor = state.anchorPosition ?: return null
         val closest = state.closestPageToPosition(anchor)
-        return closest?.prevKey?.plus(1) ?: closest?.nextKey?.minus(1)
+        return closest?.prevKey?.plus(closest.data.size) ?: closest?.nextKey?.minus(closest.data.size)
     }
 }

@@ -396,12 +396,11 @@ class XtreamApi(
         config: AuthConfig,
         seriesId: String,
         seasonLabel: String,
-        page: Int,
+        offset: Int,
         limit: Int
     ): Result<ContentPage> {
         return withContext(Dispatchers.IO) {
             try {
-                val offset = page * limit
                 val url = buildApiUrl(
                     config,
                     "get_series_info",
