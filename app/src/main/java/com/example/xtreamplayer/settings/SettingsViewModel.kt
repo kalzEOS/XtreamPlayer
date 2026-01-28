@@ -17,7 +17,7 @@ class SettingsViewModel @Inject constructor(
     val settings: StateFlow<SettingsState> = repository.settings.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = SettingsState()
+        initialValue = repository.cachedSettings()
     )
 
     fun toggleAutoPlayNext() {

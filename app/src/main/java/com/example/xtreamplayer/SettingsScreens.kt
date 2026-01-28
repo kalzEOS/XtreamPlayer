@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -62,6 +63,7 @@ fun SettingsScreen(
     onOpenSubtitlesApiKey: () -> Unit,
     onManageLists: () -> Unit,
     onRefreshContent: () -> Unit,
+    onClearCache: () -> Unit,
     onSignOut: () -> Unit
 ) {
     val shape = RoundedCornerShape(18.dp)
@@ -78,8 +80,7 @@ fun SettingsScreen(
         SettingsAction("Remember login", flagLabel(settings.rememberLogin), onToggleRememberLogin),
         SettingsAction("Auto sign-in", flagLabel(settings.autoSignIn), onToggleAutoSignIn),
         SettingsAction("Manage lists", null, onManageLists),
-        SettingsAction("Sync library", null, onRefreshContent),
-        SettingsAction("Sign out", null, onSignOut)
+        SettingsAction("Sync library", null, onRefreshContent)
     )
 
     // Focus is managed by user navigation - no auto-focus on screen load
@@ -132,6 +133,23 @@ fun SettingsScreen(
                         fontFamily = settings.appFont.fontFamily
                     )
                 }
+                SettingsActionRow(
+                    label = "Clear cache",
+                    value = null,
+                    focusRequester = null,
+                    onMoveLeft = onMoveLeft,
+                    onActivate = onClearCache,
+                    fontFamily = settings.appFont.fontFamily,
+                    secondaryText = "If playback or syncing acts up, clear cached data here, then run Sync library above."
+                )
+                SettingsActionRow(
+                    label = "Sign out",
+                    value = null,
+                    focusRequester = null,
+                    onMoveLeft = onMoveLeft,
+                    onActivate = onSignOut,
+                    fontFamily = settings.appFont.fontFamily
+                )
             }
         }
     }
@@ -339,7 +357,8 @@ private fun SettingsActionRow(
     focusRequester: FocusRequester?,
     onMoveLeft: () -> Unit,
     onActivate: () -> Unit,
-    fontFamily: FontFamily = FontFamily.Serif
+    fontFamily: FontFamily = FontFamily.Serif,
+    secondaryText: String? = null
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -371,11 +390,13 @@ private fun SettingsActionRow(
     val borderColor = if (isFocused) colors.focus else colors.border
     val textColor = if (isFocused) colors.textOnAccent else colors.textPrimary
     val valueColor = if (isFocused) colors.textOnAccent else colors.textSecondary
+    val secondaryColor =
+        if (isFocused) colors.textOnAccent.copy(alpha = 0.85f) else colors.textSecondary
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(56.dp)
+            .heightIn(min = if (secondaryText != null) 72.dp else 56.dp)
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .bringIntoViewRequester(bringIntoViewRequester)
             .focusable(interactionSource = interactionSource)
@@ -403,7 +424,7 @@ private fun SettingsActionRow(
             )
             .background(backgroundBrush, shape)
             .border(1.dp, borderColor, shape)
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 16.dp, vertical = if (secondaryText != null) 8.dp else 0.dp),
         contentAlignment = Alignment.CenterStart
     ) {
         Row(
@@ -411,13 +432,26 @@ private fun SettingsActionRow(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = label,
-                color = textColor,
-                fontSize = 16.sp,
-                fontFamily = fontFamily,
-                fontWeight = FontWeight.SemiBold
-            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = label,
+                    color = textColor,
+                    fontSize = 16.sp,
+                    fontFamily = fontFamily,
+                    fontWeight = FontWeight.SemiBold
+                )
+                if (secondaryText != null) {
+                    Text(
+                        text = secondaryText,
+                        color = secondaryColor,
+                        fontSize = 12.sp,
+                        fontFamily = fontFamily
+                    )
+                }
+            }
             if (value != null) {
                 Text(
                     text = value,
