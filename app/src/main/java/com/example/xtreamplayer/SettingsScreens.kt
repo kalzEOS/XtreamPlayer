@@ -46,6 +46,7 @@ import com.example.xtreamplayer.auth.AuthConfig
 import com.example.xtreamplayer.settings.SettingsState
 import com.example.xtreamplayer.ui.theme.AppFont
 import com.example.xtreamplayer.ui.theme.AppTheme
+import com.example.xtreamplayer.settings.uiScaleDisplayPercent
 import kotlin.math.roundToInt
 
 @Composable
@@ -257,7 +258,7 @@ fun AppearanceScreen(
     val shape = RoundedCornerShape(18.dp)
     val scrollState = rememberScrollState()
     val colors = AppTheme.colors
-    val uiScaleLabel = "${(settings.uiScale * 100).roundToInt()}%"
+    val uiScaleLabel = "${uiScaleDisplayPercent(settings.uiScale)}%"
     val fontScaleLabel = "${(settings.fontScale * 100).roundToInt()}%"
     val actions = listOf(
         SettingsAction("Theme", settings.appTheme.label, onOpenThemeSelector),
