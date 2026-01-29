@@ -19,8 +19,8 @@ class SettingsRepository(private val context: Context) {
     private val bootPrefs = context.getSharedPreferences("boot_settings", Context.MODE_PRIVATE)
     val settings: Flow<SettingsState> = context.dataStore.data.map { prefs ->
         val autoPlay = prefs[Keys.AUTO_PLAY_NEXT] ?: true
-        val nextEpisodeThreshold = prefs[Keys.NEXT_EPISODE_THRESHOLD] ?: 60
-        val subtitles = prefs[Keys.SUBTITLES_ENABLED] ?: false
+        val nextEpisodeThreshold = prefs[Keys.NEXT_EPISODE_THRESHOLD] ?: 45
+        val subtitles = prefs[Keys.SUBTITLES_ENABLED] ?: true
         val rememberLogin = prefs[Keys.REMEMBER_LOGIN] ?: true
         val autoSignIn = prefs[Keys.AUTO_SIGN_IN] ?: true
         val appTheme = parseAppTheme(prefs[Keys.APP_THEME])

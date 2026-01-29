@@ -13,6 +13,9 @@ import java.security.MessageDigest
 
 class ContentCache(context: Context) {
     private val cacheDir = File(context.filesDir, "content_cache").apply { mkdirs() }
+    private companion object {
+        private const val VOD_INFO_MAX_AGE_MS = 15L * 24 * 60 * 60 * 1000
+    }
 
     suspend fun readPage(
         section: Section,
@@ -114,6 +117,56 @@ class ContentCache(context: Context) {
                 array.put(obj)
             }
             runCatching { file.writeText(array.toString()) }
+        }
+    }
+
+    suspend fun readVodInfo(
+        vodId: String,
+        config: AuthConfig
+    ): MovieInfo? {
+        return withContext(Dispatchers.IO) {
+            val file = vodInfoFile(vodId, config)
+            if (!file.exists()) return@withContext null
+            val text = runCatching { file.readText() }.getOrNull() ?: return@withContext null
+            if (text.isBlank()) return@withContext null
+            runCatching {
+                val obj = JSONObject(text)
+                val timestamp = obj.optLong("cachedAt", 0L)
+                if (timestamp == 0L || System.currentTimeMillis() - timestamp > VOD_INFO_MAX_AGE_MS) {
+                    return@withContext null
+                }
+                MovieInfo(
+                    director = obj.optString("director").ifBlank { null },
+                    releaseDate = obj.optString("releaseDate").ifBlank { null },
+                    duration = obj.optString("duration").ifBlank { null },
+                    genre = obj.optString("genre").ifBlank { null },
+                    cast = obj.optString("cast").ifBlank { null },
+                    rating = obj.optString("rating").ifBlank { null },
+                    description = obj.optString("description").ifBlank { null },
+                    year = obj.optString("year").ifBlank { null }
+                )
+            }.getOrNull()
+        }
+    }
+
+    suspend fun writeVodInfo(
+        vodId: String,
+        config: AuthConfig,
+        info: MovieInfo
+    ) {
+        withContext(Dispatchers.IO) {
+            val file = vodInfoFile(vodId, config)
+            val obj = JSONObject()
+            obj.put("director", info.director ?: "")
+            obj.put("releaseDate", info.releaseDate ?: "")
+            obj.put("duration", info.duration ?: "")
+            obj.put("genre", info.genre ?: "")
+            obj.put("cast", info.cast ?: "")
+            obj.put("rating", info.rating ?: "")
+            obj.put("description", info.description ?: "")
+            obj.put("year", info.year ?: "")
+            obj.put("cachedAt", System.currentTimeMillis())
+            runCatching { file.writeText(obj.toString()) }
         }
     }
 
@@ -324,6 +377,13 @@ class ContentCache(context: Context) {
         val key = accountHash(config)
         val safeCategory = hashKey(categoryId)
         val name = "category_thumb_${type.name.lowercase()}_${safeCategory}_$key.json"
+        return File(cacheDir, name)
+    }
+
+    private fun vodInfoFile(vodId: String, config: AuthConfig): File {
+        val key = accountHash(config)
+        val safeVod = hashKey(vodId)
+        val name = "vod_info_${safeVod}_$key.json"
         return File(cacheDir, name)
     }
 
