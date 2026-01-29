@@ -23,7 +23,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -73,7 +73,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -264,6 +266,7 @@ fun RootScreen(
 
     var selectedSection by remember { mutableStateOf(Section.ALL) }
     var navExpanded by remember { mutableStateOf(true) }
+    var navLayoutExpanded by remember { mutableStateOf(true) }
     var showManageLists by remember { mutableStateOf(false) }
     var showAppearance by remember { mutableStateOf(false) }
     var showApiKeyDialog by remember { mutableStateOf(false) }
@@ -286,6 +289,17 @@ fun RootScreen(
     var resumePositionMs by remember { mutableStateOf<Long?>(null) }
     var resumeFocusId by remember { mutableStateOf<String?>(null) }
     val resumeFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(navExpanded) {
+        if (navExpanded) {
+            navLayoutExpanded = true
+        } else {
+            delay(NAV_ANIM_DURATION_MS.toLong())
+            if (!navExpanded) {
+                navLayoutExpanded = false
+            }
+        }
+    }
 
     // Progressive sync coordinator
     val settingsRepository = remember { com.example.xtreamplayer.settings.SettingsRepository(context) }
@@ -1102,6 +1116,14 @@ fun RootScreen(
                     }
                 }
 
+                val navProgress by animateFloatAsState(
+                        targetValue = if (navExpanded) 1f else 0f,
+                        animationSpec = tween(durationMillis = NAV_ANIM_DURATION_MS),
+                        label = "navSlide"
+                )
+                val navWidthPx = with(LocalDensity.current) { NAV_WIDTH.toPx() }
+                val navOffsetPx = -navWidthPx * (1f - navProgress)
+
                 Row(modifier = Modifier.fillMaxSize()) {
                     SideNav(
                             selectedSection = selectedSection,
@@ -1123,6 +1145,7 @@ fun RootScreen(
                                 focusToContentTrigger++
                             },
                             expanded = navExpanded,
+                            layoutExpanded = navLayoutExpanded,
                             allNavItemFocusRequester = allNavItemFocusRequester,
                             continueWatchingNavItemFocusRequester =
                                     continueWatchingNavItemFocusRequester,
@@ -1132,7 +1155,10 @@ fun RootScreen(
                             liveNavItemFocusRequester = liveNavItemFocusRequester,
                             categoriesNavItemFocusRequester = categoriesNavItemFocusRequester,
                             localFilesNavItemFocusRequester = localFilesNavItemFocusRequester,
-                            settingsNavItemFocusRequester = settingsNavItemFocusRequester
+                            settingsNavItemFocusRequester = settingsNavItemFocusRequester,
+                            modifier =
+                                    Modifier.graphicsLayer { translationX = navOffsetPx }
+                                            .alpha(navProgress)
                     )
 
                     Box(modifier = Modifier.fillMaxHeight().weight(1f)) {
@@ -1312,6 +1338,7 @@ fun RootScreen(
                                                 contentRepository = contentRepository,
                                                 authConfig = activeConfig,
                                                 settings = settings,
+                                                navLayoutExpanded = navLayoutExpanded,
                                                 continueWatchingItems =
                                                         filteredContinueWatchingItems,
                                                 contentItemFocusRequester =
@@ -1345,6 +1372,7 @@ fun RootScreen(
                                                 contentRepository = contentRepository,
                                                 authConfig = activeConfig,
                                                 settings = settings,
+                                                navLayoutExpanded = navLayoutExpanded,
                                                 contentItemFocusRequester =
                                                         contentItemFocusRequester,
                                                 resumeFocusId = resumeFocusId,
@@ -1366,6 +1394,7 @@ fun RootScreen(
                                                 contentRepository = contentRepository,
                                                 authConfig = activeConfig,
                                                 settings = settings,
+                                                navLayoutExpanded = navLayoutExpanded,
                                                 favoriteContentItems = filteredFavoriteContentItems,
                                                 favoriteCategoryItems =
                                                         filteredFavoriteCategoryItems,
@@ -1489,6 +1518,7 @@ fun RootScreen(
                                                 contentRepository = contentRepository,
                                                 authConfig = activeConfig,
                                                 settings = settings,
+                                                navLayoutExpanded = navLayoutExpanded,
                                                 contentItemFocusRequester =
                                                         contentItemFocusRequester,
                                                 resumeFocusId = resumeFocusId,
@@ -2599,6 +2629,7 @@ fun SideNav(
         onSectionSelected: (Section) -> Unit,
         onMoveRight: () -> Unit,
         expanded: Boolean,
+        layoutExpanded: Boolean,
         allNavItemFocusRequester: FocusRequester,
         continueWatchingNavItemFocusRequester: FocusRequester,
         favoritesNavItemFocusRequester: FocusRequester,
@@ -2607,15 +2638,10 @@ fun SideNav(
         liveNavItemFocusRequester: FocusRequester,
         categoriesNavItemFocusRequester: FocusRequester,
         localFilesNavItemFocusRequester: FocusRequester,
-        settingsNavItemFocusRequester: FocusRequester
+        settingsNavItemFocusRequester: FocusRequester,
+        modifier: Modifier = Modifier
 ) {
     val colors = AppTheme.colors
-    val animatedNavWidth by
-            animateDpAsState(
-                    targetValue = if (expanded) 220.dp else 0.dp,
-                    animationSpec = tween(durationMillis = 200),
-                    label = "navWidth"
-            )
     val scrollState = rememberScrollState()
 
     val items = remember(
@@ -2650,11 +2676,12 @@ fun SideNav(
             )
     }
 
-    Box(modifier = Modifier.fillMaxHeight().width(animatedNavWidth).clipToBounds()) {
+    val navWidth = if (layoutExpanded) NAV_WIDTH else 0.dp
+    Box(modifier = modifier.fillMaxHeight().width(navWidth).clipToBounds()) {
         Column(
                 modifier =
                         Modifier.fillMaxHeight()
-                                .width(220.dp)
+                                .width(NAV_WIDTH)
                                 .verticalScroll(scrollState)
                                 .background(colors.panelBackground)
                                 .border(1.dp, colors.panelBorder)
@@ -2779,6 +2806,35 @@ private fun scaleTextSize(size: TextUnit, scale: Float): TextUnit {
 
 private const val POSTER_ASPECT_RATIO = 2f / 3f
 private const val LANDSCAPE_ASPECT_RATIO = 16f / 9f
+private val NAV_WIDTH = 220.dp
+private const val NAV_ANIM_DURATION_MS = 180
+private val CONTENT_HORIZONTAL_PADDING = 104.dp
+
+@Composable
+private fun rememberReflowColumns(
+        baseColumns: Int,
+        navLayoutExpanded: Boolean,
+        spacing: Dp = 16.dp,
+        horizontalPadding: Dp = CONTENT_HORIZONTAL_PADDING
+): Int {
+    val configuration = LocalConfiguration.current
+    if (baseColumns <= 1) return baseColumns
+    val density = LocalDensity.current
+    val spacingPx = with(density) { spacing.toPx() }
+    val paddingPx = with(density) { horizontalPadding.toPx() }
+    val fullWidthPx =
+            with(density) { configuration.screenWidthDp.dp.toPx() }.minus(paddingPx).coerceAtLeast(1f)
+    val navWidthPx = with(density) { NAV_WIDTH.toPx() }
+    val baseWidthPx = (fullWidthPx - navWidthPx).coerceAtLeast(1f)
+    val contentWidthPx = if (navLayoutExpanded) baseWidthPx else fullWidthPx
+    val minCardWidthPx =
+            (baseWidthPx - spacingPx * (baseColumns - 1)) / baseColumns.toFloat()
+    if (minCardWidthPx <= 0f) return baseColumns
+    val columns =
+            kotlin.math.floor((contentWidthPx + spacingPx) / (minCardWidthPx + spacingPx))
+                    .toInt()
+    return columns.coerceAtLeast(baseColumns)
+}
 
 
 @Composable
@@ -5562,6 +5618,7 @@ fun SectionScreen(
         contentRepository: ContentRepository,
         authConfig: AuthConfig,
         settings: SettingsState,
+        navLayoutExpanded: Boolean,
         contentItemFocusRequester: FocusRequester,
         resumeFocusId: String?,
         resumeFocusRequester: FocusRequester,
@@ -5574,13 +5631,14 @@ fun SectionScreen(
 ) {
     val shape = RoundedCornerShape(18.dp)
     // Live uses landscape cards (3 cols at 100%), Movies/Series use poster cards (4 cols at 100%)
-    val columns = remember(settings.uiScale, section) {
+    val baseColumns = remember(settings.uiScale, section) {
         if (section == Section.LIVE) {
             kotlin.math.ceil(3.0 / settings.uiScale).toInt().coerceIn(3, 6)
         } else {
             kotlin.math.ceil(4.0 / settings.uiScale).toInt().coerceIn(4, 8)
         }
     }
+    val columns = rememberReflowColumns(baseColumns, navLayoutExpanded)
     val posterFontScale = remember(columns, section) {
         if (section == Section.LIVE) 3f / columns.toFloat() else 4f / columns.toFloat()
     }
@@ -6336,6 +6394,7 @@ fun FavoritesScreen(
         contentRepository: ContentRepository,
         authConfig: AuthConfig,
         settings: SettingsState,
+        navLayoutExpanded: Boolean,
         favoriteContentItems: List<ContentItem>,
         favoriteCategoryItems: List<CategoryItem>,
         hasFavoriteContentKeys: Boolean,
@@ -6354,11 +6413,12 @@ fun FavoritesScreen(
 ) {
     val shape = RoundedCornerShape(18.dp)
     // Poster content scales with UI, categories stay fixed
-    val posterColumns = remember(settings.uiScale) {
+    val basePosterColumns = remember(settings.uiScale) {
         kotlin.math.ceil(4.0 / settings.uiScale).toInt().coerceIn(4, 8)
     }
+    val posterColumns = rememberReflowColumns(basePosterColumns, navLayoutExpanded)
     val posterFontScale = remember(posterColumns) { 4f / posterColumns.toFloat() }
-    val categoryColumns = 3
+    val categoryColumns = rememberReflowColumns(3, navLayoutExpanded)
     var activeView by remember { mutableStateOf(FavoritesView.MENU) }
     var selectedCategory by remember { mutableStateOf<CategoryItem?>(null) }
     var selectedSeries by remember { mutableStateOf<ContentItem?>(null) }
@@ -7065,6 +7125,7 @@ fun CategorySectionScreen(
         contentRepository: ContentRepository,
         authConfig: AuthConfig,
         settings: SettingsState,
+        navLayoutExpanded: Boolean,
         contentItemFocusRequester: FocusRequester,
         resumeFocusId: String?,
         resumeFocusRequester: FocusRequester,
@@ -7091,17 +7152,18 @@ fun CategorySectionScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val searchState = rememberDebouncedSearchState(key = activeType)
     // Live uses landscape cards (3 cols at 100%), Movies/Series use poster cards (4 cols at 100%)
-    val posterColumns = remember(settings.uiScale, activeType) {
+    val basePosterColumns = remember(settings.uiScale, activeType) {
         if (activeType == ContentType.LIVE) {
             kotlin.math.ceil(3.0 / settings.uiScale).toInt().coerceIn(3, 6)
         } else {
             kotlin.math.ceil(4.0 / settings.uiScale).toInt().coerceIn(4, 8)
         }
     }
+    val posterColumns = rememberReflowColumns(basePosterColumns, navLayoutExpanded)
     val posterFontScale = remember(posterColumns, activeType) {
         if (activeType == ContentType.LIVE) 3f / posterColumns.toFloat() else 4f / posterColumns.toFloat()
     }
-    val categoryColumns = 3  // Fixed for category cards
+    val categoryColumns = rememberReflowColumns(3, navLayoutExpanded)
     val categoryGridState = rememberLazyGridState()
     val contentGridState = rememberLazyGridState()
     val tabFocusRequesters = remember { ContentType.values().map { FocusRequester() } }
@@ -7713,6 +7775,7 @@ fun ContinueWatchingScreen(
         contentRepository: ContentRepository,
         authConfig: AuthConfig,
         settings: SettingsState,
+        navLayoutExpanded: Boolean,
         continueWatchingItems: List<ContinueWatchingEntry>,
         contentItemFocusRequester: FocusRequester,
         resumeFocusId: String?,
@@ -7726,9 +7789,10 @@ fun ContinueWatchingScreen(
 ) {
     val shape = RoundedCornerShape(18.dp)
     // Use 4 columns at 100% (poster sizing, since continue watching includes mixed content)
-    val columns = remember(settings.uiScale) {
+    val baseColumns = remember(settings.uiScale) {
         kotlin.math.ceil(4.0 / settings.uiScale).toInt().coerceIn(4, 8)
     }
+    val columns = rememberReflowColumns(baseColumns, navLayoutExpanded)
     val posterFontScale = remember(columns) { 4f / columns.toFloat() }
     val hasItems = continueWatchingItems.isNotEmpty()
 

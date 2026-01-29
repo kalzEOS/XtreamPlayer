@@ -25,7 +25,7 @@ class SettingsRepository(private val context: Context) {
         val autoSignIn = prefs[Keys.AUTO_SIGN_IN] ?: true
         val appTheme = parseAppTheme(prefs[Keys.APP_THEME])
         val appFont = parseAppFont(prefs[Keys.APP_FONT])
-        val uiScale = (prefs[Keys.UI_SCALE] ?: 1.0f).coerceIn(0.7f, 1.3f)
+        val uiScale = resolveUiScale(prefs)
         val fontScale = (prefs[Keys.FONT_SCALE] ?: 1.0f).coerceIn(0.7f, 1.4f)
         val openSubtitlesApiKey = prefs[Keys.OPENSUBTITLES_API_KEY] ?: ""
         val openSubtitlesUserAgent = prefs[Keys.OPENSUBTITLES_USER_AGENT] ?: ""
@@ -51,7 +51,8 @@ class SettingsRepository(private val context: Context) {
         val base = SettingsState()
         val theme = parseAppTheme(bootPrefs.getString(Keys.BOOT_APP_THEME, null))
         val font = parseAppFont(bootPrefs.getString(Keys.BOOT_APP_FONT, null))
-        val uiScale = bootPrefs.getFloat(Keys.BOOT_UI_SCALE, base.uiScale).coerceIn(0.7f, 1.3f)
+        val uiScale =
+            bootPrefs.getFloat(Keys.BOOT_UI_SCALE, base.uiScale).coerceIn(UI_SCALE_MIN, UI_SCALE_MAX)
         val fontScale =
             bootPrefs.getFloat(Keys.BOOT_FONT_SCALE, base.fontScale).coerceIn(0.7f, 1.4f)
         return base.copy(appTheme = theme, appFont = font, uiScale = uiScale, fontScale = fontScale)
@@ -102,10 +103,11 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun setUiScale(scale: Float) {
+        val clamped = scale.coerceIn(UI_SCALE_MIN, UI_SCALE_MAX)
         context.dataStore.edit { prefs ->
-            prefs[Keys.UI_SCALE] = scale.coerceIn(0.7f, 1.3f)
+            prefs[Keys.UI_SCALE] = clamped
         }
-        cacheBootSettings(uiScale = scale.coerceIn(0.7f, 1.3f))
+        cacheBootSettings(uiScale = clamped)
     }
 
     suspend fun setFontScale(scale: Float) {
@@ -148,6 +150,18 @@ class SettingsRepository(private val context: Context) {
         if (uiScale != null) editor.putFloat(Keys.BOOT_UI_SCALE, uiScale)
         if (fontScale != null) editor.putFloat(Keys.BOOT_FONT_SCALE, fontScale)
         editor.apply()
+    }
+
+    private fun resolveUiScale(prefs: androidx.datastore.preferences.core.Preferences): Float {
+        val stored = prefs[Keys.UI_SCALE]
+        val value =
+            when {
+                stored != null -> stored
+                bootPrefs.contains(Keys.BOOT_UI_SCALE) ->
+                    bootPrefs.getFloat(Keys.BOOT_UI_SCALE, UI_SCALE_BASE)
+                else -> UI_SCALE_BASE
+            }
+        return value.coerceIn(UI_SCALE_MIN, UI_SCALE_MAX)
     }
 
     private object Keys {

@@ -43,11 +43,14 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.xtreamplayer.ui.theme.AppTheme
+import com.example.xtreamplayer.settings.displayToUiScale
+import com.example.xtreamplayer.settings.uiScaleDisplayPercent
+import com.example.xtreamplayer.settings.uiScaleMaxDisplayPercent
+import com.example.xtreamplayer.settings.uiScaleMinDisplayPercent
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
 
 @Composable
 fun UiScaleDialog(
@@ -56,10 +59,10 @@ fun UiScaleDialog(
     onDismiss: () -> Unit
 ) {
     val colors = AppTheme.colors
-    val minPercent = 70
-    val maxPercent = 130
+    val minPercent = uiScaleMinDisplayPercent()
+    val maxPercent = uiScaleMaxDisplayPercent()
     var localPercent by remember {
-        mutableIntStateOf((currentScale * 100).roundToInt().coerceIn(minPercent, maxPercent))
+        mutableIntStateOf(uiScaleDisplayPercent(currentScale).coerceIn(minPercent, maxPercent))
     }
     val minusFocusRequester = remember { FocusRequester() }
     val plusFocusRequester = remember { FocusRequester() }
@@ -68,7 +71,7 @@ fun UiScaleDialog(
     var pendingFocus by remember { mutableStateOf<UiScaleFocusTarget?>(UiScaleFocusTarget.MINUS) }
 
     LaunchedEffect(currentScale) {
-        localPercent = (currentScale * 100).roundToInt().coerceIn(minPercent, maxPercent)
+        localPercent = uiScaleDisplayPercent(currentScale).coerceIn(minPercent, maxPercent)
     }
 
     LaunchedEffect(pendingFocus) {
@@ -119,7 +122,7 @@ fun UiScaleDialog(
                             val newPercent = (localPercent - 1).coerceAtLeast(minPercent)
                             if (newPercent == localPercent) return@RepeatableFocusableButton false
                             localPercent = newPercent
-                            onScaleChange(newPercent / 100f)
+                            onScaleChange(displayToUiScale(newPercent / 100f))
                             pendingFocus = UiScaleFocusTarget.MINUS
                             true
                         },
@@ -145,7 +148,7 @@ fun UiScaleDialog(
                             val newPercent = (localPercent + 1).coerceAtMost(maxPercent)
                             if (newPercent == localPercent) return@RepeatableFocusableButton false
                             localPercent = newPercent
-                            onScaleChange(newPercent / 100f)
+                            onScaleChange(displayToUiScale(newPercent / 100f))
                             pendingFocus = UiScaleFocusTarget.PLUS
                             true
                         },
@@ -168,7 +171,7 @@ fun UiScaleDialog(
                         focusRequester = resetFocusRequester,
                         onClick = {
                             localPercent = 100
-                            onScaleChange(1f)
+                            onScaleChange(displayToUiScale(1f))
                             pendingFocus = UiScaleFocusTarget.RESET
                         },
                         modifier = Modifier.weight(1f)
