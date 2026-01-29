@@ -50,7 +50,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -62,6 +65,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -70,6 +74,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -81,6 +86,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -90,6 +96,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -123,6 +131,7 @@ import com.example.xtreamplayer.content.FavoriteContentEntry
 import com.example.xtreamplayer.content.FavoritesRepository
 import com.example.xtreamplayer.content.HistoryEntry
 import com.example.xtreamplayer.content.HistoryRepository
+import com.example.xtreamplayer.content.MovieInfo
 import com.example.xtreamplayer.content.SearchNormalizer
 import com.example.xtreamplayer.content.SubtitleRepository
 import com.example.xtreamplayer.player.Media3PlaybackEngine
@@ -266,6 +275,8 @@ fun RootScreen(
     var activePlaybackTitle by remember { mutableStateOf<String?>(null) }
     var activePlaybackItem by remember { mutableStateOf<ContentItem?>(null) }
     var activePlaybackItems by remember { mutableStateOf<List<ContentItem>>(emptyList()) }
+    var movieInfoItem by remember { mutableStateOf<ContentItem?>(null) }
+    var movieInfoQueue by remember { mutableStateOf<List<ContentItem>>(emptyList()) }
     var playbackFallbackAttempts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var resumePositionMs by remember { mutableStateOf<Long?>(null) }
     var resumeFocusId by remember { mutableStateOf<String?>(null) }
@@ -652,6 +663,10 @@ fun RootScreen(
     BackHandler(enabled = showAppearance) { showAppearance = false }
 
     val handleItemFocused: (ContentItem) -> Unit = { item -> resumeFocusId = item.id }
+    val openMovieInfo: (ContentItem, List<ContentItem>) -> Unit = { item, items ->
+        movieInfoItem = item
+        movieInfoQueue = if (items.isEmpty()) listOf(item) else items
+    }
 
     val handlePlayItem: (ContentItem, List<ContentItem>) -> Unit = { item, items ->
         val config = authState.activeConfig
@@ -1305,6 +1320,7 @@ fun RootScreen(
                                                 resumeFocusRequester = resumeFocusRequester,
                                                 onItemFocused = handleItemFocused,
                                                 onPlay = handlePlayItem,
+                                                onMovieInfo = openMovieInfo,
                                                 onMoveLeft = handleMoveLeft,
                                                 onToggleFavorite = handleToggleFavorite,
                                                 onToggleCategoryFavorite =
@@ -1330,6 +1346,7 @@ fun RootScreen(
                                                 resumeFocusRequester = resumeFocusRequester,
                                                 onItemFocused = handleItemFocused,
                                                 onPlay = handlePlayItem,
+                                                onMovieInfo = openMovieInfo,
                                                 onMoveLeft = handleMoveLeft,
                                                 onToggleFavorite = handleToggleFavorite,
                                                 onToggleCategoryFavorite =
@@ -1447,6 +1464,7 @@ fun RootScreen(
                                                 resumeFocusRequester = resumeFocusRequester,
                                                 onItemFocused = handleItemFocused,
                                                 onPlay = handlePlayItem,
+                                                onMovieInfo = openMovieInfo,
                                                 onMoveLeft = handleMoveLeft,
                                                 onToggleFavorite = handleToggleFavorite,
                                                 isItemFavorite = isContentFavorite
@@ -1593,6 +1611,26 @@ fun RootScreen(
                     hasNextEpisode = hasNextEpisode,
                     onPlayNextEpisode = { playbackEngine.player.seekToNextMediaItem() }
             )
+        }
+
+        if (movieInfoItem != null) {
+            val item = movieInfoItem!!
+            val config = authState.activeConfig
+            if (config != null) {
+                MovieInfoDialog(
+                        item = item,
+                        queueItems = movieInfoQueue,
+                        authConfig = config,
+                        contentRepository = contentRepository,
+                        isFavorite = isContentFavorite(item),
+                        onToggleFavorite = { handleToggleFavorite(it) },
+                        onPlay = { selected, queue ->
+                            movieInfoItem = null
+                            handlePlayItem(selected, queue)
+                        },
+                        onDismiss = { movieInfoItem = null }
+                )
+            }
         }
     }
     }
@@ -2911,12 +2949,12 @@ private fun FavoriteIndicator(modifier: Modifier = Modifier) {
             modifier =
                     modifier.size(22.dp)
                             .background(colors.overlayStrong, shape)
-                            .border(1.dp, colors.warning, shape)
+                            .border(1.dp, Color(0xFFEF5350), shape)
     ) {
         Icon(
                 painter = painterResource(R.drawable.ic_favorite),
                 contentDescription = "Favorite",
-                tint = AppTheme.colors.warning,
+                tint = Color(0xFFEF5350),
                 modifier = Modifier.align(Alignment.Center).size(14.dp)
         )
     }
@@ -3808,6 +3846,314 @@ private fun RowScope.PreviewPanel(
             }
         }
     }
+}
+
+@Composable
+private fun MovieInfoDialog(
+        item: ContentItem,
+        queueItems: List<ContentItem>,
+        authConfig: AuthConfig,
+        contentRepository: ContentRepository,
+        isFavorite: Boolean,
+        onToggleFavorite: (ContentItem) -> Unit,
+        onPlay: (ContentItem, List<ContentItem>) -> Unit,
+        onDismiss: () -> Unit
+) {
+    BackHandler(enabled = true) { onDismiss() }
+    Dialog(
+            onDismissRequest = onDismiss,
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        val colors = AppTheme.colors
+        val info by produceState<MovieInfo?>(initialValue = null, key1 = item.id, key2 = authConfig) {
+            value = contentRepository.loadMovieInfo(item, authConfig)
+        }
+        val releaseLabel = formatReleaseYear(info?.releaseDate, info?.year)
+        val isLoadingInfo = info == null
+        val playFocusRequester = remember { FocusRequester() }
+        LaunchedEffect(Unit) { playFocusRequester.requestFocus() }
+        Box(
+                modifier =
+                        Modifier.fillMaxSize()
+                                .background(colors.surface)
+                                .padding(28.dp)
+        ) {
+            Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                            text = item.title,
+                            color = colors.textPrimary,
+                            fontSize = 22.sp,
+                            fontFamily = AppTheme.fontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f)
+                    )
+                    TopBarButton(label = "CLOSE", onActivate = onDismiss)
+                }
+
+                Row(
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(24.dp)
+                ) {
+                    val context = LocalContext.current
+                    val imageRequest =
+                            remember(item.imageUrl) {
+                                if (item.imageUrl.isNullOrBlank()) {
+                                    null
+                                } else {
+                                    ImageRequest.Builder(context)
+                                            .data(item.imageUrl)
+                                            .size(600)
+                                            .build()
+                                }
+                            }
+                    if (imageRequest != null) {
+                        AsyncImage(
+                                model = imageRequest,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                filterQuality = FilterQuality.Low,
+                                modifier =
+                                        Modifier.width(220.dp)
+                                                .fillMaxHeight()
+                                                .clip(RoundedCornerShape(14.dp))
+                        )
+                    } else {
+                        Box(
+                                modifier =
+                                        Modifier.width(220.dp)
+                                                .fillMaxHeight()
+                                                .clip(RoundedCornerShape(14.dp))
+                                                .background(colors.surfaceAlt)
+                        )
+                    }
+
+                    Column(
+                            modifier = Modifier.fillMaxHeight().weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (isLoadingInfo) {
+                            Text(
+                                    text = "Loading details...",
+                                    color = colors.textSecondary,
+                                    fontSize = 13.sp,
+                                    fontFamily = AppTheme.fontFamily
+                            )
+                        } else {
+                            MovieInfoRow(label = "Directed By:", value = info?.director)
+                            MovieInfoRow(label = "Release Date:", value = releaseLabel)
+                            MovieInfoRow(label = "Duration:", value = formatDuration(info?.duration))
+                            MovieInfoRow(label = "Genre:", value = info?.genre)
+                            MovieInfoRow(label = "Cast:", value = info?.cast)
+                            val ratingValue = ratingToStars(info?.rating)
+                            if (ratingValue != null) {
+                                RatingStarsRow(label = "Rating:", rating = ratingValue)
+                            } else {
+                                MovieInfoRow(label = "Rating:", value = null)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            FocusableButton(
+                                    onClick = { onPlay(item, queueItems) },
+                                    modifier = Modifier.width(180.dp).focusRequester(playFocusRequester),
+                                    colors =
+                                            ButtonDefaults.buttonColors(
+                                                    containerColor = colors.accent,
+                                                    contentColor = colors.textOnAccent
+                                            )
+                            ) {
+                                Text(
+                                        text = "Play",
+                                        fontSize = 14.sp,
+                                        fontFamily = AppTheme.fontFamily,
+                                        fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            FocusableButton(
+                                    onClick = { onToggleFavorite(item) },
+                                    modifier = Modifier.size(48.dp),
+                                    contentPadding = PaddingValues(0.dp),
+                                    colors =
+                                            ButtonDefaults.buttonColors(
+                                                    containerColor = colors.surfaceAlt,
+                                                    contentColor = colors.textPrimary
+                                            )
+                            ) {
+                                Icon(
+                                        imageVector =
+                                                if (isFavorite) {
+                                                    Icons.Filled.Favorite
+                                                } else {
+                                                    Icons.Outlined.FavoriteBorder
+                                                },
+                                        contentDescription = "Favorite",
+                                        tint = if (isFavorite) Color(0xFFEF5350) else colors.textPrimary,
+                                        modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                        if (!isLoadingInfo) {
+                            val description =
+                                    info?.description?.takeIf { it.isNotBlank() }
+                                            ?: "No description available."
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                    text = description,
+                                    color = colors.textPrimary,
+                                    fontSize = 13.sp,
+                                    fontFamily = AppTheme.fontFamily,
+                                    lineHeight = 18.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MovieInfoRow(label: String, value: String?) {
+    val displayValue = value?.takeIf { it.isNotBlank() } ?: "N/A"
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+                text = label,
+                color = AppTheme.colors.textSecondary,
+                fontSize = 13.sp,
+                fontFamily = AppTheme.fontFamily
+        )
+        Text(
+                text = displayValue,
+                color = AppTheme.colors.textPrimary,
+                fontSize = 13.sp,
+                fontFamily = AppTheme.fontFamily,
+                fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@Composable
+private fun RatingStarsRow(
+        label: String,
+        rating: Float
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+                text = label,
+                color = AppTheme.colors.textSecondary,
+                fontSize = 13.sp,
+                fontFamily = AppTheme.fontFamily
+        )
+        RatingStars(
+                rating = rating,
+                starSize = 16.dp,
+                spacing = 3.dp
+        )
+    }
+}
+
+@Composable
+private fun RatingStars(
+        rating: Float,
+        starSize: Dp,
+        spacing: Dp
+) {
+    val clamped = rating.coerceIn(0f, 5f)
+    Row(horizontalArrangement = Arrangement.spacedBy(spacing)) {
+        repeat(5) { index ->
+            val fill = (clamped - index).coerceIn(0f, 1f)
+            Box(modifier = Modifier.size(starSize)) {
+                Icon(
+                        imageVector = Icons.Filled.Star,
+                        contentDescription = null,
+                        tint = AppTheme.colors.textSecondary.copy(alpha = 0.35f),
+                        modifier = Modifier.fillMaxSize()
+                )
+                if (fill > 0f) {
+                    Icon(
+                            imageVector = Icons.Filled.Star,
+                            contentDescription = null,
+                            tint = Color(0xFFFFD54F),
+                            modifier =
+                                    Modifier.fillMaxSize()
+                                            .drawWithContent {
+                                                clipRect(right = size.width * fill) {
+                                                    this@drawWithContent.drawContent()
+                                                }
+                                            }
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun ratingToStars(rawRating: String?): Float? {
+    val raw = rawRating?.trim().orEmpty()
+    if (raw.isBlank()) return null
+    val match = Regex("(\\d+(?:\\.\\d+)?)").find(raw) ?: return null
+    val value = match.value.toFloatOrNull() ?: return null
+    if (value <= 0f) return null
+    return when {
+        value <= 5f -> value
+        value <= 10f -> value / 2f
+        value <= 100f -> value / 20f
+        else -> null
+    }
+}
+
+private fun formatDuration(raw: String?): String? {
+    val text = raw?.trim().orEmpty()
+    if (text.isBlank()) return null
+    val parts = text.split(":").map { it.trim() }
+    if (parts.size >= 2 && parts.all { it.matches(Regex("\\d+")) }) {
+        val numbers = parts.map { it.toInt() }
+        val hours: Int
+        val minutes: Int
+        if (parts.size >= 3) {
+            hours = numbers[0]
+            minutes = numbers[1]
+        } else {
+            val first = numbers[0]
+            val second = numbers[1]
+            if (first >= 60) {
+                hours = first / 60
+                minutes = first % 60
+            } else {
+                hours = first
+                minutes = second
+            }
+        }
+        if (hours <= 0 && minutes <= 0) return null
+        return if (hours > 0) "${hours}h ${minutes}m" else "${minutes}m"
+    }
+    val numeric = Regex("(\\d+)").find(text)?.value?.toIntOrNull()
+    if (numeric != null) {
+        if (numeric <= 0) return null
+        val hours = numeric / 60
+        val minutes = numeric % 60
+        return if (hours > 0) "${hours}h ${minutes}m" else "${minutes}m"
+    }
+    return text
+}
+
+private fun formatReleaseYear(releaseDate: String?, year: String?): String? {
+    val yearText = year?.trim().orEmpty()
+    if (yearText.isNotBlank()) return yearText
+    val raw = releaseDate?.trim().orEmpty()
+    if (raw.isBlank()) return null
+    val match = Regex("(\\d{4})").find(raw)
+    return match?.value ?: raw
 }
 
 @Composable
@@ -5191,6 +5537,7 @@ fun SectionScreen(
         resumeFocusRequester: FocusRequester,
         onItemFocused: (ContentItem) -> Unit,
         onPlay: (ContentItem, List<ContentItem>) -> Unit,
+        onMovieInfo: (ContentItem, List<ContentItem>) -> Unit,
         onMoveLeft: () -> Unit,
         onToggleFavorite: (ContentItem) -> Unit,
         isItemFavorite: (ContentItem) -> Boolean
@@ -5429,6 +5776,11 @@ fun SectionScreen(
                                                                             .isNullOrBlank()
                                                     ) {
                                                         selectedSeries = item
+                                                    } else if (item.contentType == ContentType.MOVIES) {
+                                                        onMovieInfo(
+                                                                item,
+                                                                lazyItems.itemSnapshotList.items
+                                                        )
                                                     } else {
                                                         onPlay(
                                                                 item,
@@ -5963,6 +6315,7 @@ fun FavoritesScreen(
         resumeFocusRequester: FocusRequester,
         onItemFocused: (ContentItem) -> Unit,
         onPlay: (ContentItem, List<ContentItem>) -> Unit,
+        onMovieInfo: (ContentItem, List<ContentItem>) -> Unit,
         onMoveLeft: () -> Unit,
         onToggleFavorite: (ContentItem) -> Unit,
         onToggleCategoryFavorite: (CategoryItem) -> Unit,
@@ -6303,6 +6656,8 @@ fun FavoritesScreen(
                                                         item.containerExtension.isNullOrBlank()
                                         ) {
                                             selectedSeries = item
+                                        } else if (item.contentType == ContentType.MOVIES) {
+                                            onMovieInfo(item, sortedContent)
                                         } else {
                                             onPlay(item, sortedContent)
                                         }
@@ -6508,6 +6863,13 @@ fun FavoritesScreen(
                                                                                     .isNullOrBlank()
                                                             ) {
                                                                 selectedSeries = item
+                                                            } else if (category.type == ContentType.MOVIES) {
+                                                                onMovieInfo(
+                                                                        item,
+                                                                        lazyItems
+                                                                                .itemSnapshotList
+                                                                                .items
+                                                                )
                                                             } else {
                                                                 onPlay(
                                                                         item,
@@ -6678,6 +7040,7 @@ fun CategorySectionScreen(
         resumeFocusRequester: FocusRequester,
         onItemFocused: (ContentItem) -> Unit,
         onPlay: (ContentItem, List<ContentItem>) -> Unit,
+        onMovieInfo: (ContentItem, List<ContentItem>) -> Unit,
         onMoveLeft: () -> Unit,
         onToggleFavorite: (ContentItem) -> Unit,
         onToggleCategoryFavorite: (CategoryItem) -> Unit,
@@ -7129,6 +7492,11 @@ fun CategorySectionScreen(
                                                                                     .isNullOrBlank()
                                                             ) {
                                                                 selectedSeries = item
+                                                            } else if (activeType == ContentType.MOVIES) {
+                                                                onMovieInfo(
+                                                                        item,
+                                                                        lazyItems.itemSnapshotList.items
+                                                                )
                                                             } else {
                                                                 onPlay(
                                                                         item,

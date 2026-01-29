@@ -8,6 +8,7 @@ import com.example.xtreamplayer.content.CategoryItem
 import com.example.xtreamplayer.content.ContentItem
 import com.example.xtreamplayer.content.ContentPage
 import com.example.xtreamplayer.content.ContentType
+import com.example.xtreamplayer.content.MovieInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -424,6 +425,68 @@ class XtreamApi(
                             parseSeriesSeasonPage(reader, seasonLabel, offset, limit)
                         Result.success(pageData)
                     }
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "API request failed")
+                Result.failure(e)
+            }
+        }
+    }
+
+    suspend fun fetchVodInfo(
+        config: AuthConfig,
+        vodId: String
+    ): Result<MovieInfo> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val url = buildApiUrl(
+                    config,
+                    "get_vod_info",
+                    mapOf("vod_id" to vodId)
+                ) ?: return@withContext Result.failure(
+                    IllegalArgumentException("Invalid service URL")
+                )
+                val request = Request.Builder().url(url).get().build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        return@withContext Result.failure(
+                            IllegalStateException("Request failed: ${response.code}")
+                        )
+                    }
+                    val body = response.body?.string()
+                        ?: return@withContext Result.failure(
+                            IllegalStateException("Empty response")
+                        )
+                    val json = JSONObject(body)
+                    val info = json.optJSONObject("info")
+                    val movieData = json.optJSONObject("movie_data")
+
+                    fun String?.nullIfBlank(): String? = this?.trim()?.takeIf { it.isNotEmpty() }
+
+                    val durationValue =
+                        info?.optString("duration").nullIfBlank()
+                            ?: info?.optString("duration_secs").nullIfBlank()?.toLongOrNull()?.let {
+                                val minutes = (it / 60).coerceAtLeast(1)
+                                "${minutes}m"
+                            }
+
+                    val releaseDateValue =
+                        info?.optString("releasedate").nullIfBlank()
+                            ?: movieData?.optString("release_date").nullIfBlank()
+                            ?: movieData?.optString("year").nullIfBlank()
+
+                    val movieInfo = MovieInfo(
+                        director = info?.optString("director").nullIfBlank(),
+                        releaseDate = releaseDateValue,
+                        duration = durationValue,
+                        genre = info?.optString("genre").nullIfBlank(),
+                        cast = info?.optString("cast").nullIfBlank(),
+                        rating = info?.optString("rating_5based").nullIfBlank()
+                            ?: info?.optString("rating").nullIfBlank(),
+                        description = info?.optString("plot").nullIfBlank(),
+                        year = movieData?.optString("year").nullIfBlank()
+                    )
+                    Result.success(movieInfo)
                 }
             } catch (e: Exception) {
                 Timber.e(e, "API request failed")

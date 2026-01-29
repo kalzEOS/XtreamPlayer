@@ -15,8 +15,8 @@ enum class AppThemeOption(val label: String) {
 
 data class SettingsState(
     val autoPlayNext: Boolean = true,
-    val nextEpisodeThresholdSeconds: Int = 60,
-    val subtitlesEnabled: Boolean = false,
+    val nextEpisodeThresholdSeconds: Int = 45,
+    val subtitlesEnabled: Boolean = true,
     val rememberLogin: Boolean = true,
     val autoSignIn: Boolean = true,
     val appTheme: AppThemeOption = AppThemeOption.DEFAULT,

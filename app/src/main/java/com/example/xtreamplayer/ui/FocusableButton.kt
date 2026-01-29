@@ -7,6 +7,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -38,6 +39,7 @@ fun FocusableButton(
     showFocusBorder: Boolean = true,
     focusBorderWidth: Dp = 2.dp,
     shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(50),
+    contentPadding: PaddingValues = ButtonDefaults.ContentPadding,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
     content: @Composable () -> Unit
 ) {
@@ -93,6 +95,7 @@ fun FocusableButton(
         colors = colors,
         interactionSource = interactionSource,
         shape = shape,
+        contentPadding = contentPadding,
         modifier = baseModifier
     ) {
         content()

@@ -60,6 +60,11 @@ class ContentRepository(
             return size > 200
         }
     }
+    private val movieInfoCache = object : LinkedHashMap<String, MovieInfo>(100, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MovieInfo>): Boolean {
+            return size > 100
+        }
+    }
     private val seriesSeasonFullCache =
         object : LinkedHashMap<String, List<ContentItem>>(20, 0.75f, true) {
             override fun removeEldestEntry(
@@ -81,6 +86,7 @@ class ContentRepository(
     private val memoryCacheMutex = Mutex()
     private val seriesEpisodesMutex = Mutex()
     private val seriesSeasonCountMutex = Mutex()
+    private val movieInfoMutex = Mutex()
     private val seriesSeasonFullMutex = Mutex()
     private val seriesSeasonsMutex = Mutex()
     private val categoryThumbnailMutex = Mutex()
@@ -371,6 +377,30 @@ class ContentRepository(
         val summaries = result.getOrElse { throw it }
         seriesSeasonsMutex.withLock { seriesSeasonsCache[key] = summaries }
         return summaries
+    }
+
+    suspend fun loadMovieInfo(
+        item: ContentItem,
+        authConfig: AuthConfig
+    ): MovieInfo? {
+        if (item.contentType != ContentType.MOVIES) {
+            return null
+        }
+        val vodId = item.streamId.ifBlank { item.id }
+        val key = "vod-info-${accountKey(authConfig)}-$vodId"
+        movieInfoMutex.withLock {
+            movieInfoCache[key]?.let { return it }
+        }
+        val cached = contentCache.readVodInfo(vodId, authConfig)
+        if (cached != null) {
+            movieInfoMutex.withLock { movieInfoCache[key] = cached }
+            return cached
+        }
+        val result = api.fetchVodInfo(authConfig, vodId)
+        val info = result.getOrNull() ?: return null
+        contentCache.writeVodInfo(vodId, authConfig, info)
+        movieInfoMutex.withLock { movieInfoCache[key] = info }
+        return info
     }
 
     fun peekSeriesSeasonFullCache(
@@ -1461,6 +1491,7 @@ class ContentRepository(
         sectionIndexMutex.withLock { sectionIndexCache.clear() }
         seriesEpisodesMutex.withLock { seriesEpisodesCache.clear() }
         seriesSeasonCountMutex.withLock { seriesSeasonCountCache.clear() }
+        movieInfoMutex.withLock { movieInfoCache.clear() }
         seriesSeasonFullMutex.withLock { seriesSeasonFullCache.clear() }
         seriesSeasonsMutex.withLock { seriesSeasonsCache.clear() }
         validationCacheMutex.withLock { validationCache.clear() }
