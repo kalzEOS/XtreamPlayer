@@ -3865,11 +3865,16 @@ private fun MovieInfoDialog(
             properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         val colors = AppTheme.colors
-        val info by produceState<MovieInfo?>(initialValue = null, key1 = item.id, key2 = authConfig) {
-            value = contentRepository.loadMovieInfo(item, authConfig)
+        val infoState by produceState<MovieInfoLoadState>(
+                initialValue = MovieInfoLoadState.Loading,
+                key1 = item.id,
+                key2 = authConfig
+        ) {
+            value = MovieInfoLoadState.Loaded(contentRepository.loadMovieInfo(item, authConfig))
         }
+        val info = (infoState as? MovieInfoLoadState.Loaded)?.info
         val releaseLabel = formatReleaseYear(info?.releaseDate, info?.year)
-        val isLoadingInfo = info == null
+        val isLoadingInfo = infoState is MovieInfoLoadState.Loading
         val playFocusRequester = remember { FocusRequester() }
         LaunchedEffect(Unit) { playFocusRequester.requestFocus() }
         Box(
@@ -4040,6 +4045,12 @@ private fun MovieInfoRow(label: String, value: String?) {
                 fontWeight = FontWeight.Medium
         )
     }
+}
+
+private sealed interface MovieInfoLoadState {
+    data object Loading : MovieInfoLoadState
+
+    data class Loaded(val info: MovieInfo?) : MovieInfoLoadState
 }
 
 @Composable
