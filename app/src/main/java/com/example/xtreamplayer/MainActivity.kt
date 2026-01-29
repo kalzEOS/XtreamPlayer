@@ -267,6 +267,7 @@ fun RootScreen(
     var selectedSection by remember { mutableStateOf(Section.ALL) }
     var navExpanded by remember { mutableStateOf(true) }
     var navLayoutExpanded by remember { mutableStateOf(true) }
+    var navSlideExpanded by remember { mutableStateOf(true) }
     var showManageLists by remember { mutableStateOf(false) }
     var showAppearance by remember { mutableStateOf(false) }
     var showApiKeyDialog by remember { mutableStateOf(false) }
@@ -293,7 +294,12 @@ fun RootScreen(
     LaunchedEffect(navExpanded) {
         if (navExpanded) {
             navLayoutExpanded = true
+            navSlideExpanded = false
+            withFrameNanos {}
+            delay(16)
+            navSlideExpanded = true
         } else {
+            navSlideExpanded = false
             delay(NAV_ANIM_DURATION_MS.toLong())
             if (!navExpanded) {
                 navLayoutExpanded = false
@@ -1117,7 +1123,7 @@ fun RootScreen(
                 }
 
                 val navProgress by animateFloatAsState(
-                        targetValue = if (navExpanded) 1f else 0f,
+                        targetValue = if (navSlideExpanded) 1f else 0f,
                         animationSpec = tween(durationMillis = NAV_ANIM_DURATION_MS),
                         label = "navSlide"
                 )
@@ -1144,7 +1150,7 @@ fun RootScreen(
                                 )
                                 focusToContentTrigger++
                             },
-                            expanded = navExpanded,
+                            expanded = navSlideExpanded,
                             layoutExpanded = navLayoutExpanded,
                             allNavItemFocusRequester = allNavItemFocusRequester,
                             continueWatchingNavItemFocusRequester =
