@@ -162,6 +162,7 @@ import com.example.xtreamplayer.ui.theme.XtreamPlayerTheme
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import java.util.Locale
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -258,6 +259,8 @@ fun RootScreen(
             continueWatchingRepository.continueWatchingEntries.collectAsStateWithLifecycle(
                     initialValue = emptyList()
             )
+    var pendingPlayerReset by remember { mutableStateOf(false) }
+    var playerResetNonce by remember { mutableStateOf(0) }
 
     var selectedSection by remember { mutableStateOf(Section.ALL) }
     var navExpanded by remember { mutableStateOf(true) }
@@ -277,6 +280,8 @@ fun RootScreen(
     var activePlaybackItems by remember { mutableStateOf<List<ContentItem>>(emptyList()) }
     var movieInfoItem by remember { mutableStateOf<ContentItem?>(null) }
     var movieInfoQueue by remember { mutableStateOf<List<ContentItem>>(emptyList()) }
+    var movieInfoInfo by remember { mutableStateOf<MovieInfo?>(null) }
+    var movieInfoLoadJob by remember { mutableStateOf<Job?>(null) }
     var playbackFallbackAttempts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var resumePositionMs by remember { mutableStateOf<Long?>(null) }
     var resumeFocusId by remember { mutableStateOf<String?>(null) }
@@ -664,8 +669,19 @@ fun RootScreen(
 
     val handleItemFocused: (ContentItem) -> Unit = { item -> resumeFocusId = item.id }
     val openMovieInfo: (ContentItem, List<ContentItem>) -> Unit = { item, items ->
-        movieInfoItem = item
-        movieInfoQueue = if (items.isEmpty()) listOf(item) else items
+        val config = authState.activeConfig
+        if (config != null) {
+            movieInfoLoadJob?.cancel()
+            movieInfoItem = null
+            movieInfoInfo = null
+            movieInfoQueue = if (items.isEmpty()) listOf(item) else items
+            movieInfoLoadJob =
+                    coroutineScope.launch {
+                        val info = contentRepository.loadMovieInfo(item, config)
+                        movieInfoInfo = info
+                        movieInfoItem = item
+                    }
+        }
     }
 
     val handlePlayItem: (ContentItem, List<ContentItem>) -> Unit = { item, items ->
@@ -825,7 +841,15 @@ fun RootScreen(
         }
     }
 
-    DisposableEffect(playbackEngine) {
+    LaunchedEffect(activePlaybackQueue, pendingPlayerReset) {
+        if (activePlaybackQueue == null && pendingPlayerReset) {
+            playbackEngine.reset()
+            playerResetNonce++
+            pendingPlayerReset = false
+        }
+    }
+
+    DisposableEffect(playbackEngine, playerResetNonce) {
         val listener =
                 object : Player.Listener {
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -847,6 +871,7 @@ fun RootScreen(
                     }
 
                     override fun onPlayerError(error: PlaybackException) {
+                        pendingPlayerReset = true
                         val currentFormat =
                                 playbackEngine.player.videoFormat
                         val isHevc =
@@ -1239,9 +1264,15 @@ fun RootScreen(
                                         },
                                         onClearCache = {
                                             coroutineScope.launch {
-                                                val bytes = contentRepository.diskCacheSizeBytes()
+                                                val contentBytes = contentRepository.diskCacheSizeBytes()
+                                                val cacheBytes = cacheDirSizeBytes(context.cacheDir)
+                                                val bytes = contentBytes + cacheBytes
                                                 contentRepository.clearCache()
                                                 contentRepository.clearDiskCache()
+                                                subtitleRepository.clearCache()
+                                                clearCacheDir(context.cacheDir)
+                                                playbackEngine.player.stop()
+                                                playbackEngine.player.clearMediaItems()
                                                 cacheClearNonce++
                                                 val mb = bytes / (1024.0 * 1024.0)
                                                 val sizeLabel =
@@ -1615,22 +1646,22 @@ fun RootScreen(
 
         if (movieInfoItem != null) {
             val item = movieInfoItem!!
-            val config = authState.activeConfig
-            if (config != null) {
-                MovieInfoDialog(
-                        item = item,
-                        queueItems = movieInfoQueue,
-                        authConfig = config,
-                        contentRepository = contentRepository,
-                        isFavorite = isContentFavorite(item),
-                        onToggleFavorite = { handleToggleFavorite(it) },
-                        onPlay = { selected, queue ->
-                            movieInfoItem = null
-                            handlePlayItem(selected, queue)
-                        },
-                        onDismiss = { movieInfoItem = null }
-                )
-            }
+            MovieInfoDialog(
+                    item = item,
+                    info = movieInfoInfo,
+                    queueItems = movieInfoQueue,
+                    isFavorite = isContentFavorite(item),
+                    onToggleFavorite = { handleToggleFavorite(it) },
+                    onPlay = { selected, queue ->
+                        movieInfoItem = null
+                        movieInfoInfo = null
+                        handlePlayItem(selected, queue)
+                    },
+                    onDismiss = {
+                        movieInfoItem = null
+                        movieInfoInfo = null
+                    }
+            )
         }
     }
     }
@@ -3851,9 +3882,8 @@ private fun RowScope.PreviewPanel(
 @Composable
 private fun MovieInfoDialog(
         item: ContentItem,
+        info: MovieInfo?,
         queueItems: List<ContentItem>,
-        authConfig: AuthConfig,
-        contentRepository: ContentRepository,
         isFavorite: Boolean,
         onToggleFavorite: (ContentItem) -> Unit,
         onPlay: (ContentItem, List<ContentItem>) -> Unit,
@@ -3865,16 +3895,7 @@ private fun MovieInfoDialog(
             properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         val colors = AppTheme.colors
-        val infoState by produceState<MovieInfoLoadState>(
-                initialValue = MovieInfoLoadState.Loading,
-                key1 = item.id,
-                key2 = authConfig
-        ) {
-            value = MovieInfoLoadState.Loaded(contentRepository.loadMovieInfo(item, authConfig))
-        }
-        val info = (infoState as? MovieInfoLoadState.Loaded)?.info
         val releaseLabel = formatReleaseYear(info?.releaseDate, info?.year)
-        val isLoadingInfo = infoState is MovieInfoLoadState.Loading
         val playFocusRequester = remember { FocusRequester() }
         LaunchedEffect(Unit) { playFocusRequester.requestFocus() }
         Box(
@@ -3943,26 +3964,31 @@ private fun MovieInfoDialog(
                             modifier = Modifier.fillMaxHeight().weight(1f),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        if (isLoadingInfo) {
-                            Text(
-                                    text = "Loading details...",
-                                    color = colors.textSecondary,
-                                    fontSize = 13.sp,
-                                    fontFamily = AppTheme.fontFamily
-                            )
+                        MovieInfoRow(label = "Directed By:", value = info?.director)
+                        MovieInfoRow(label = "Release Date:", value = releaseLabel)
+                        MovieInfoRow(
+                                label = "Duration:",
+                                value = formatDuration(info?.duration)
+                        )
+                        MovieInfoRow(label = "Genre:", value = info?.genre)
+                        MovieInfoRow(label = "Cast:", value = info?.cast)
+                        val ratingValue = ratingToStars(info?.rating)
+                        if (ratingValue != null) {
+                            RatingStarsRow(label = "Rating:", rating = ratingValue)
                         } else {
-                            MovieInfoRow(label = "Directed By:", value = info?.director)
-                            MovieInfoRow(label = "Release Date:", value = releaseLabel)
-                            MovieInfoRow(label = "Duration:", value = formatDuration(info?.duration))
-                            MovieInfoRow(label = "Genre:", value = info?.genre)
-                            MovieInfoRow(label = "Cast:", value = info?.cast)
-                            val ratingValue = ratingToStars(info?.rating)
-                            if (ratingValue != null) {
-                                RatingStarsRow(label = "Rating:", rating = ratingValue)
-                            } else {
-                                MovieInfoRow(label = "Rating:", value = null)
-                            }
+                            MovieInfoRow(label = "Rating:", value = null)
                         }
+                        val description =
+                                info?.description?.takeIf { it.isNotBlank() }
+                                        ?: "No description available."
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                                text = description,
+                                color = colors.textPrimary,
+                                fontSize = 13.sp,
+                                fontFamily = AppTheme.fontFamily,
+                                lineHeight = 18.sp
+                        )
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(
                                 horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -4007,19 +4033,6 @@ private fun MovieInfoDialog(
                                 )
                             }
                         }
-                        if (!isLoadingInfo) {
-                            val description =
-                                    info?.description?.takeIf { it.isNotBlank() }
-                                            ?: "No description available."
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
-                                    text = description,
-                                    color = colors.textPrimary,
-                                    fontSize = 13.sp,
-                                    fontFamily = AppTheme.fontFamily,
-                                    lineHeight = 18.sp
-                            )
-                        }
                     }
                 }
             }
@@ -4045,12 +4058,6 @@ private fun MovieInfoRow(label: String, value: String?) {
                 fontWeight = FontWeight.Medium
         )
     }
-}
-
-private sealed interface MovieInfoLoadState {
-    data object Loading : MovieInfoLoadState
-
-    data class Loaded(val info: MovieInfo?) : MovieInfoLoadState
 }
 
 @Composable
@@ -4165,6 +4172,18 @@ private fun formatReleaseYear(releaseDate: String?, year: String?): String? {
     if (raw.isBlank()) return null
     val match = Regex("(\\d{4})").find(raw)
     return match?.value ?: raw
+}
+
+private fun cacheDirSizeBytes(dir: File): Long {
+    if (!dir.exists()) return 0L
+    if (dir.isFile) return dir.length()
+    return dir.listFiles()?.sumOf { file -> cacheDirSizeBytes(file) } ?: 0L
+}
+
+private fun clearCacheDir(dir: File) {
+    dir.listFiles()?.forEach { file ->
+        runCatching { file.deleteRecursively() }
+    }
 }
 
 @Composable
