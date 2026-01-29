@@ -36,29 +36,24 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
         )
         .setPrioritizeTimeOverSizeThresholds(true)
         .build()
-    val player: ExoPlayer = ExoPlayer.Builder(appContext, renderersFactory)
-        .setLoadControl(loadControl)
+    private val audioAttributes = AudioAttributes.Builder()
+        .setUsage(C.USAGE_MEDIA)
+        .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
         .build()
-    private var currentMedia: Uri? = null
-    private var loudnessEnhancer: LoudnessEnhancer? = null
-    private var loudnessSessionId: Int = C.AUDIO_SESSION_ID_UNSET
-    private var boostDb: Float = 0f
     private val playerListener =
         object : Player.Listener {
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
                 updateLoudnessEnhancer(audioSessionId)
             }
         }
+    var player: ExoPlayer = buildPlayer()
+    private var currentMedia: Uri? = null
+    private var loudnessEnhancer: LoudnessEnhancer? = null
+    private var loudnessSessionId: Int = C.AUDIO_SESSION_ID_UNSET
+    private var boostDb: Float = 0f
+    private var lastSettings: SettingsState = SettingsState()
 
     init {
-        val audioAttributes = AudioAttributes.Builder()
-            .setUsage(C.USAGE_MEDIA)
-            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-            .build()
-        player.setAudioAttributes(audioAttributes, true)
-        player.setHandleAudioBecomingNoisy(true)
-        player.volume = 1f
-        player.addListener(playerListener)
         updateLoudnessEnhancer(player.audioSessionId)
     }
 
@@ -95,6 +90,7 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
 
     @OptIn(UnstableApi::class)
     override fun applySettings(settings: SettingsState) {
+        lastSettings = settings
         // Auto-play is handled manually in UI for series episodes only
         player.repeatMode = Player.REPEAT_MODE_OFF
 
@@ -116,6 +112,20 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
         loudnessEnhancer?.release()
         loudnessEnhancer = null
         player.release()
+    }
+
+    fun reset() {
+        val oldPlayer = player
+        oldPlayer.removeListener(playerListener)
+        oldPlayer.release()
+        loudnessEnhancer?.release()
+        loudnessEnhancer = null
+        loudnessSessionId = C.AUDIO_SESSION_ID_UNSET
+        currentMedia = null
+        player = buildPlayer()
+        updateLoudnessEnhancer(player.audioSessionId)
+        applySettings(lastSettings)
+        setAudioBoostDb(boostDb)
     }
 
     fun getAudioBoostDb(): Float = boostDb
@@ -147,6 +157,18 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
 
     companion object {
         private const val MAX_BOOST_DB = 12f
+    }
+
+    private fun buildPlayer(): ExoPlayer {
+        return ExoPlayer.Builder(appContext, renderersFactory)
+            .setLoadControl(loadControl)
+            .build()
+            .apply {
+                setAudioAttributes(audioAttributes, true)
+                setHandleAudioBecomingNoisy(true)
+                volume = 1f
+                addListener(playerListener)
+            }
     }
 
     private fun guessMimeType(uri: Uri): String? {
