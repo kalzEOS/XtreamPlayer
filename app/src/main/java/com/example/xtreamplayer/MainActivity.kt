@@ -23,6 +23,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -55,6 +56,8 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
@@ -95,6 +98,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -134,6 +138,7 @@ import com.example.xtreamplayer.content.FavoritesRepository
 import com.example.xtreamplayer.content.HistoryEntry
 import com.example.xtreamplayer.content.HistoryRepository
 import com.example.xtreamplayer.content.MovieInfo
+import com.example.xtreamplayer.content.SeriesInfo
 import com.example.xtreamplayer.content.SearchNormalizer
 import com.example.xtreamplayer.content.SubtitleRepository
 import com.example.xtreamplayer.player.Media3PlaybackEngine
@@ -1023,7 +1028,8 @@ fun RootScreen(
                             onToggle = {
                                 navExpanded = !navExpanded
                                 // Focus stays on menu button - user navigates manually
-                            }
+                            },
+                            onMoveRight = { focusToContentTrigger++ }
                     )
                     Spacer(modifier = Modifier.weight(1f))
                     Text(
@@ -1379,6 +1385,7 @@ fun RootScreen(
                                                 authConfig = activeConfig,
                                                 settings = settings,
                                                 navLayoutExpanded = navLayoutExpanded,
+                                                continueWatchingEntries = filteredContinueWatchingItems,
                                                 contentItemFocusRequester =
                                                         contentItemFocusRequester,
                                                 resumeFocusId = resumeFocusId,
@@ -1406,6 +1413,7 @@ fun RootScreen(
                                                         filteredFavoriteCategoryItems,
                                                 hasFavoriteContentKeys = hasFavoriteContentKeys,
                                                 hasFavoriteCategoryKeys = hasFavoriteCategoryKeys,
+                                                continueWatchingEntries = filteredContinueWatchingItems,
                                                 contentItemFocusRequester =
                                                         contentItemFocusRequester,
                                                 resumeFocusId = resumeFocusId,
@@ -1525,6 +1533,7 @@ fun RootScreen(
                                                 authConfig = activeConfig,
                                                 settings = settings,
                                                 navLayoutExpanded = navLayoutExpanded,
+                                                continueWatchingEntries = filteredContinueWatchingItems,
                                                 contentItemFocusRequester =
                                                         contentItemFocusRequester,
                                                 resumeFocusId = resumeFocusId,
@@ -2962,7 +2971,7 @@ fun NavItem(
 }
 
 @Composable
-fun MenuButton(expanded: Boolean, onToggle: () -> Unit) {
+fun MenuButton(expanded: Boolean, onToggle: () -> Unit, onMoveRight: (() -> Unit)? = null) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val label = if (expanded) "CLOSE" else "MENU"
@@ -2983,10 +2992,14 @@ fun MenuButton(expanded: Boolean, onToggle: () -> Unit) {
                             .height(46.dp)
                             .focusable(interactionSource = interactionSource)
                             .onKeyEvent {
-                                if (it.type == KeyEventType.KeyDown &&
-                                                (it.key == Key.Enter ||
-                                                        it.key == Key.NumPadEnter ||
-                                                        it.key == Key.DirectionCenter)
+                                if (it.type != KeyEventType.KeyDown) {
+                                    false
+                                } else if (it.key == Key.DirectionRight && onMoveRight != null) {
+                                    onMoveRight()
+                                    true
+                                } else if (it.key == Key.Enter ||
+                                                it.key == Key.NumPadEnter ||
+                                                it.key == Key.DirectionCenter
                                 ) {
                                     onToggle()
                                     true
@@ -3118,7 +3131,9 @@ private fun TopBarButton(
         label: String,
         onActivate: () -> Unit,
         modifier: Modifier = Modifier,
-        onMoveLeft: (() -> Unit)? = null
+        onMoveLeft: (() -> Unit)? = null,
+        onMoveDown: (() -> Unit)? = null,
+        onMoveUp: (() -> Unit)? = null
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -3140,6 +3155,12 @@ private fun TopBarButton(
                                     false
                                 } else if (it.key == Key.DirectionLeft && onMoveLeft != null) {
                                     onMoveLeft()
+                                    true
+                                } else if (it.key == Key.DirectionDown && onMoveDown != null) {
+                                    onMoveDown()
+                                    true
+                                } else if (it.key == Key.DirectionUp && onMoveUp != null) {
+                                    onMoveUp()
                                     true
                                 } else if (it.key == Key.Enter ||
                                                 it.key == Key.NumPadEnter ||
@@ -4640,7 +4661,8 @@ private fun ContentCard(
         forceDarkText: Boolean = false,
         useContrastText: Boolean = false,
         isPoster: Boolean = false,
-        fontScaleFactor: Float = 1f
+        fontScaleFactor: Float = 1f,
+        enabled: Boolean = true
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -4705,75 +4727,85 @@ private fun ContentCard(
                                         Modifier
                                     }
                             )
-                            .focusable(interactionSource = interactionSource)
-                            .onPreviewKeyEvent {
-                                if (it.type != KeyEventType.KeyDown || onMoveUp == null) {
-                                    false
-                                } else if (it.key == Key.DirectionUp) {
-                                    onMoveUp()
-                                    true
-                                } else {
-                                    false
-                                }
-                            }
-                            .onKeyEvent {
-                                val isSelectKey =
-                                        it.key == Key.Enter ||
-                                                it.key == Key.NumPadEnter ||
-                                                it.key == Key.DirectionCenter
-                                when (it.type) {
-                                    KeyEventType.KeyDown -> {
-                                        when {
-                                            isLeftEdge && it.key == Key.DirectionLeft -> {
-                                                onMoveLeft()
-                                                true
-                                            }
-                                            onMoveUp != null && it.key == Key.DirectionUp -> {
-                                                onMoveUp()
-                                                true
-                                            }
-                                            isSelectKey &&
-                                                    (onActivate != null || onLongClick != null) -> {
-                                                if (item != null &&
-                                                                onLongClick != null &&
-                                                                (it.nativeKeyEvent.isLongPress ||
-                                                                        it.nativeKeyEvent
-                                                                                .repeatCount > 0)
-                                                ) {
-                                                    if (!longPressTriggered) {
-                                                        onLongClick(item)
-                                                        longPressTriggered = true
-                                                    }
-                                                    true
-                                                } else {
-                                                    true
-                                                }
-                                            }
-                                            else -> false
-                                        }
-                                    }
-                                    KeyEventType.KeyUp -> {
-                                        if (isSelectKey &&
-                                                        (onActivate != null || onLongClick != null)
-                                        ) {
-                                            if (longPressTriggered) {
-                                                longPressTriggered = false
-                                                true
-                                            } else if (onActivate != null) {
-                                                onActivate()
-                                                true
-                                            } else {
-                                                false
-                                            }
-                                        } else {
-                                            false
-                                        }
-                                    }
-                                    else -> false
-                                }
-                            }
+                            .focusable(enabled = enabled, interactionSource = interactionSource)
                             .then(
-                                    if (onActivate != null) {
+                                    if (enabled) {
+                                        Modifier.onPreviewKeyEvent {
+                                                    if (it.type != KeyEventType.KeyDown || onMoveUp == null) {
+                                                        false
+                                                    } else if (it.key == Key.DirectionUp) {
+                                                        onMoveUp()
+                                                        true
+                                                    } else {
+                                                        false
+                                                    }
+                                                }
+                                                .onKeyEvent {
+                                                    val isSelectKey =
+                                                            it.key == Key.Enter ||
+                                                                    it.key == Key.NumPadEnter ||
+                                                                    it.key == Key.DirectionCenter
+                                                    when (it.type) {
+                                                        KeyEventType.KeyDown -> {
+                                                            when {
+                                                                isLeftEdge &&
+                                                                        it.key == Key.DirectionLeft -> {
+                                                                    onMoveLeft()
+                                                                    true
+                                                                }
+                                                                onMoveUp != null &&
+                                                                        it.key == Key.DirectionUp -> {
+                                                                    onMoveUp()
+                                                                    true
+                                                                }
+                                                                isSelectKey &&
+                                                                        (onActivate != null ||
+                                                                                onLongClick != null) -> {
+                                                                    if (item != null &&
+                                                                                    onLongClick != null &&
+                                                                                    (it.nativeKeyEvent.isLongPress ||
+                                                                                            it.nativeKeyEvent
+                                                                                                    .repeatCount > 0)
+                                                                    ) {
+                                                                        if (!longPressTriggered) {
+                                                                            onLongClick(item)
+                                                                            longPressTriggered = true
+                                                                        }
+                                                                        true
+                                                                    } else {
+                                                                        true
+                                                                    }
+                                                                }
+                                                                else -> false
+                                                            }
+                                                        }
+                                                        KeyEventType.KeyUp -> {
+                                                            if (isSelectKey &&
+                                                                            (onActivate != null ||
+                                                                                    onLongClick != null)
+                                                            ) {
+                                                                if (longPressTriggered) {
+                                                                    longPressTriggered = false
+                                                                    true
+                                                                } else if (onActivate != null) {
+                                                                    onActivate()
+                                                                    true
+                                                                } else {
+                                                                    false
+                                                                }
+                                                            } else {
+                                                                false
+                                                            }
+                                                        }
+                                                        else -> false
+                                                    }
+                                                }
+                                    } else {
+                                        Modifier
+                                    }
+                            )
+                            .then(
+                                    if (enabled && onActivate != null) {
                                         Modifier.combinedClickable(
                                                 interactionSource = interactionSource,
                                                 indication = null,
@@ -5307,6 +5339,7 @@ private fun CategoryTypeTab(
         label: String,
         selected: Boolean,
         focusRequester: FocusRequester?,
+        onFocused: (() -> Unit)? = null,
         onActivate: () -> Unit,
         onMoveLeft: (() -> Unit)? = null,
         onMoveRight: (() -> Unit)? = null,
@@ -5345,6 +5378,11 @@ private fun CategoryTypeTab(
                                             Modifier.focusRequester(focusRequester)
                                     else Modifier
                             )
+                            .onFocusChanged { state ->
+                                if (state.isFocused) {
+                                    onFocused?.invoke()
+                                }
+                            }
                             .focusable(interactionSource = interactionSource)
                             .onKeyEvent {
                                 val isSelectKey =
@@ -5625,6 +5663,7 @@ fun SectionScreen(
         authConfig: AuthConfig,
         settings: SettingsState,
         navLayoutExpanded: Boolean,
+        continueWatchingEntries: List<ContinueWatchingEntry>,
         contentItemFocusRequester: FocusRequester,
         resumeFocusId: String?,
         resumeFocusRequester: FocusRequester,
@@ -5731,6 +5770,7 @@ fun SectionScreen(
                         seriesItem = selectedSeries!!,
                         contentRepository = contentRepository,
                         authConfig = authConfig,
+                        continueWatchingEntries = continueWatchingEntries,
                         contentItemFocusRequester = contentItemFocusRequester,
                         resumeFocusId = resumeFocusId,
                         resumeFocusRequester = resumeFocusRequester,
@@ -5902,7 +5942,8 @@ fun SectionScreen(
                                     forceDarkText = forceDarkText,
                                     useContrastText = useContrastText,
                                     isPoster = posterHint,
-                                    fontScaleFactor = if (posterHint) posterFontScale else 1f
+                                    fontScaleFactor = if (posterHint) posterFontScale else 1f,
+                                    enabled = selectedSeries == null
                             )
                         }
                     }
@@ -6405,6 +6446,7 @@ fun FavoritesScreen(
         favoriteCategoryItems: List<CategoryItem>,
         hasFavoriteContentKeys: Boolean,
         hasFavoriteCategoryKeys: Boolean,
+        continueWatchingEntries: List<ContinueWatchingEntry>,
         contentItemFocusRequester: FocusRequester,
         resumeFocusId: String?,
         resumeFocusRequester: FocusRequester,
@@ -6621,6 +6663,7 @@ fun FavoritesScreen(
                         seriesItem = selectedSeries!!,
                         contentRepository = contentRepository,
                         authConfig = authConfig,
+                        continueWatchingEntries = continueWatchingEntries,
                         contentItemFocusRequester = contentItemFocusRequester,
                         resumeFocusId = resumeFocusId,
                         resumeFocusRequester = resumeFocusRequester,
@@ -6843,29 +6886,30 @@ fun FavoritesScreen(
                     }
 
                     if (selectedSeries != null) {
-                SeriesSeasonsScreen(
-                        seriesItem = selectedSeries!!,
-                        contentRepository = contentRepository,
-                        authConfig = authConfig,
-                        contentItemFocusRequester = contentItemFocusRequester,
-                        resumeFocusId = resumeFocusId,
-                        resumeFocusRequester = resumeFocusRequester,
-                        episodesFocusRequester = episodesFocusRequester,
-                        pendingEpisodeFocus = pendingEpisodeFocus,
-                        onEpisodeFocusHandled = { pendingEpisodeFocus = false },
-                        onItemFocused = onItemFocused,
-                        onPlay = onPlay,
-                        onMoveLeft = onMoveLeft,
-                        onBack = {
-                            onItemFocused(selectedSeries!!)
-                            runCatching { contentItemFocusRequester.requestFocus() }
-                            pendingSeriesReturnFocus = true
-                            selectedSeries = null
-                            pendingEpisodeFocus = false
-                        },
-                        onToggleFavorite = onToggleFavorite,
-                        isItemFavorite = isItemFavorite
-                )
+                        SeriesSeasonsScreen(
+                                seriesItem = selectedSeries!!,
+                                contentRepository = contentRepository,
+                                authConfig = authConfig,
+                                continueWatchingEntries = continueWatchingEntries,
+                                contentItemFocusRequester = contentItemFocusRequester,
+                                resumeFocusId = resumeFocusId,
+                                resumeFocusRequester = resumeFocusRequester,
+                                episodesFocusRequester = episodesFocusRequester,
+                                pendingEpisodeFocus = pendingEpisodeFocus,
+                                onEpisodeFocusHandled = { pendingEpisodeFocus = false },
+                                onItemFocused = onItemFocused,
+                                onPlay = onPlay,
+                                onMoveLeft = onMoveLeft,
+                                onBack = {
+                                    onItemFocused(selectedSeries!!)
+                                    runCatching { contentItemFocusRequester.requestFocus() }
+                                    pendingSeriesReturnFocus = true
+                                    selectedSeries = null
+                                    pendingEpisodeFocus = false
+                                },
+                                onToggleFavorite = onToggleFavorite,
+                                isItemFavorite = isItemFavorite
+                        )
                     } else {
                         // Focus is managed by user navigation - no auto-focus on content load
                         Text(
@@ -7132,6 +7176,7 @@ fun CategorySectionScreen(
         authConfig: AuthConfig,
         settings: SettingsState,
         navLayoutExpanded: Boolean,
+        continueWatchingEntries: List<ContinueWatchingEntry>,
         contentItemFocusRequester: FocusRequester,
         resumeFocusId: String?,
         resumeFocusRequester: FocusRequester,
@@ -7252,7 +7297,8 @@ fun CategorySectionScreen(
                                 .padding(20.dp)
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                val tabsContent: @Composable () -> Unit = {
+                val tabsContent: @Composable () -> Unit = tabs@{
+                    if (selectedSeries != null) return@tabs
                     if (selectedCategory != null) {
                         CategoryTypeTab(
                                 label = "Back",
@@ -7309,12 +7355,14 @@ fun CategorySectionScreen(
                             letterSpacing = 1.sp
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-                        Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            tabsContent()
+                    if (selectedSeries == null) {
+                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+                            Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                tabsContent()
+                            }
                         }
                     }
                 } else {
@@ -7331,43 +7379,47 @@ fun CategorySectionScreen(
                                 letterSpacing = 1.sp
                         )
                         Spacer(modifier = Modifier.weight(1f))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            tabsContent()
+                        if (selectedSeries == null) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                tabsContent()
+                            }
                         }
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    SearchInput(
-                            query = searchState.query,
-                            onQueryChange = { searchState.query = it },
-                            placeholder = "Search...",
-                            focusRequester = searchFocusRequester,
-                            modifier = Modifier.width(240.dp),
-                            onMoveLeft = onMoveLeft,
-                            onMoveRight = {
-                                if (selectedCategory != null) {
-                                    backTabFocusRequester.requestFocus()
-                                } else {
-                                    tabFocusRequesters.firstOrNull()?.requestFocus()
-                                }
-                            },
-                            onMoveUp = {
-                                if (selectedCategory != null) {
-                                    backTabFocusRequester.requestFocus()
-                                } else {
-                                    tabFocusRequesters.firstOrNull()?.requestFocus()
-                                }
-                            },
-                            onMoveDown = {
-                                if (selectedSeries != null) {
-                                    pendingEpisodeFocus = true
-                                } else {
-                                    contentItemFocusRequester.requestFocus()
-                                }
-                            },
-                            onSearch = { searchState.performSearch() }
-                    )
+                if (selectedSeries == null) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        SearchInput(
+                                query = searchState.query,
+                                onQueryChange = { searchState.query = it },
+                                placeholder = "Search...",
+                                focusRequester = searchFocusRequester,
+                                modifier = Modifier.width(240.dp),
+                                onMoveLeft = onMoveLeft,
+                                onMoveRight = {
+                                    if (selectedCategory != null) {
+                                        backTabFocusRequester.requestFocus()
+                                    } else {
+                                        tabFocusRequesters.firstOrNull()?.requestFocus()
+                                    }
+                                },
+                                onMoveUp = {
+                                    if (selectedCategory != null) {
+                                        backTabFocusRequester.requestFocus()
+                                    } else {
+                                        tabFocusRequesters.firstOrNull()?.requestFocus()
+                                    }
+                                },
+                                onMoveDown = {
+                                    if (selectedSeries != null) {
+                                        pendingEpisodeFocus = true
+                                    } else {
+                                        contentItemFocusRequester.requestFocus()
+                                    }
+                                },
+                                onSearch = { searchState.performSearch() }
+                        )
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
@@ -7645,6 +7697,7 @@ fun CategorySectionScreen(
                                 seriesItem = selectedSeries!!,
                                 contentRepository = contentRepository,
                                 authConfig = authConfig,
+                                continueWatchingEntries = continueWatchingEntries,
                                 contentItemFocusRequester = contentItemFocusRequester,
                                 resumeFocusId = resumeFocusId,
                                 resumeFocusRequester = resumeFocusRequester,
@@ -7892,6 +7945,8 @@ fun SeriesSeasonsScreen(
         seriesItem: ContentItem,
         contentRepository: ContentRepository,
         authConfig: AuthConfig,
+        continueWatchingEntries: List<ContinueWatchingEntry> = emptyList(),
+        topInsetDp: Dp = 0.dp,
         contentItemFocusRequester: FocusRequester,
         resumeFocusId: String?,
         resumeFocusRequester: FocusRequester,
@@ -7908,345 +7963,802 @@ fun SeriesSeasonsScreen(
         onMoveUpFromTop: (() -> Unit)? = null
 ) {
     BackHandler(enabled = true) { onBack() }
+    val colors = AppTheme.colors
     var seasonGroups by remember { mutableStateOf<List<SeasonGroup>>(emptyList()) }
     var selectedSeasonIndex by remember { mutableStateOf(0) }
-    var isLoading by remember { mutableStateOf(true) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var initialFocusSet by remember { mutableStateOf(false) }
-    var placeholderFocused by remember { mutableStateOf(false) }
-    var internalEpisodeFocus by remember { mutableStateOf(false) }
-    val backFocusRequester = remember { FocusRequester() }
+    var isSeasonLoading by remember { mutableStateOf(true) }
+    var seasonError by remember { mutableStateOf<String?>(null) }
+    var seriesInfo by remember { mutableStateOf<SeriesInfo?>(null) }
+    var seriesInfoLoading by remember { mutableStateOf(true) }
+    var seriesInfoError by remember { mutableStateOf<String?>(null) }
+    var allEpisodes by remember { mutableStateOf<List<ContentItem>>(emptyList()) }
+    var allEpisodesError by remember { mutableStateOf<String?>(null) }
+    var initialSeasonSet by remember { mutableStateOf(false) }
+    var showSeasonMenu by remember { mutableStateOf(false) }
+    var activeTab by remember { mutableStateOf(SeriesDetailTab.EPISODES) }
+    var episodesExpanded by remember { mutableStateOf(false) }
+    var internalEpisodeFocusRequested by remember { mutableStateOf(false) }
+    val closeFocusRequester = remember { FocusRequester() }
+    val tabFocusRequesters = remember { listOf(FocusRequester(), FocusRequester()) }
+
+    LaunchedEffect(seriesItem.streamId) {
+        withFrameNanos {}
+        episodesExpanded = false
+        contentItemFocusRequester.requestFocus()
+    }
 
     LaunchedEffect(seriesItem.streamId, authConfig) {
-        isLoading = true
-        errorMessage = null
-        initialFocusSet = false
-        placeholderFocused = false
+        seriesInfoLoading = true
+        seriesInfoError = null
+        seriesInfo = null
+        val result = runCatching { contentRepository.loadSeriesInfo(seriesItem, authConfig) }
+        seriesInfo = result.getOrNull()
+        seriesInfoError = result.exceptionOrNull()?.message
+        seriesInfoLoading = false
+    }
+
+    LaunchedEffect(seriesItem.streamId, authConfig) {
+        isSeasonLoading = true
+        seasonError = null
         selectedSeasonIndex = 0
-        internalEpisodeFocus = false
+        initialSeasonSet = false
         val result = runCatching {
             contentRepository.loadSeriesSeasons(seriesItem.streamId, authConfig)
         }
         result
-                .onSuccess { summaries ->
-                    val grouped =
-                            summaries
-                                    .map { summary ->
-                                        SeasonGroup(
-                                                label = summary.label,
-                                                displayLabel = buildSeasonLabel(summary.label),
-                                                seasonNumber = seasonNumberFromLabel(summary.label),
-                                                episodeCount = summary.episodeCount
-                                        )
-                                    }
-                                    .sortedWith(
-                                            compareBy<SeasonGroup> { it.seasonNumber }.thenBy {
-                                                it.displayLabel
-                                            }
-                                    )
-                    seasonGroups = grouped
-                    selectedSeasonIndex = 0
-                }
-                .onFailure { error -> errorMessage = error.message ?: "Failed to load seasons" }
-        isLoading = false
+            .onSuccess { summaries ->
+                val grouped =
+                    summaries
+                        .map { summary ->
+                            SeasonGroup(
+                                label = summary.label,
+                                displayLabel = buildSeasonLabel(summary.label),
+                                seasonNumber = seasonNumberFromLabel(summary.label),
+                                episodeCount = summary.episodeCount
+                            )
+                        }
+                        .sortedWith(
+                            compareBy<SeasonGroup> { it.seasonNumber }.thenBy { it.displayLabel }
+                        )
+                seasonGroups = grouped
+                selectedSeasonIndex = 0
+            }
+            .onFailure { error -> seasonError = error.message ?: "Failed to load seasons" }
+        isSeasonLoading = false
     }
 
-    val seasonFocusRequesters =
-            remember(seasonGroups.size) { List(seasonGroups.size) { FocusRequester() } }
-    val seasonPrimaryFocusRequester = remember { FocusRequester() }
-    fun seasonRequesterFor(index: Int): FocusRequester? {
-        return if (index == 0) {
-            seasonPrimaryFocusRequester
-        } else {
-            seasonFocusRequesters.getOrNull(index)
+    LaunchedEffect(seriesItem.streamId, authConfig) {
+        allEpisodesError = null
+        allEpisodes = emptyList()
+        val result = runCatching {
+            contentRepository.loadSeriesEpisodes(seriesItem.streamId, authConfig)
+        }
+        result
+            .onSuccess { episodes -> allEpisodes = episodes }
+            .onFailure { error -> allEpisodesError = error.message ?: "Failed to load episodes" }
+    }
+
+    val resumeEntry =
+        remember(allEpisodes, continueWatchingEntries) {
+            if (allEpisodes.isEmpty()) {
+                null
+            } else {
+                val episodeIds = allEpisodes.map { it.streamId }.toHashSet()
+                continueWatchingEntries.firstOrNull { entry ->
+                    entry.item.contentType == ContentType.SERIES &&
+                        episodeIds.contains(entry.item.streamId)
+                }
+            }
+        }
+    val resumeSeasonLabel = resumeEntry?.item?.seasonLabel
+        ?: extractSeasonLabel(resumeEntry?.item?.subtitle)
+    val resumeSeasonNumber =
+        resumeSeasonLabel?.let { seasonNumberFromLabel(it) }?.takeIf { it != Int.MAX_VALUE }
+
+    LaunchedEffect(seasonGroups, resumeSeasonNumber, initialSeasonSet) {
+        if (!initialSeasonSet && seasonGroups.isNotEmpty()) {
+            val targetIndex =
+                if (resumeSeasonNumber != null) {
+                    seasonGroups.indexOfFirst { it.seasonNumber == resumeSeasonNumber }
+                } else {
+                    -1
+                }
+            selectedSeasonIndex = if (targetIndex >= 0) targetIndex else 0
+            initialSeasonSet = true
         }
     }
 
-    // Keep focus inside the series view when the details screen opens.
-
     val selectedSeason = seasonGroups.getOrNull(selectedSeasonIndex)
     val selectedSeasonLabel = selectedSeason?.label
-    val pagerFlow =
-            remember(seriesItem.streamId, selectedSeasonLabel, authConfig) {
-                val label = selectedSeasonLabel
-                if (label.isNullOrBlank()) {
-                    flowOf(androidx.paging.PagingData.empty())
-                } else {
-                    contentRepository.seriesSeasonPager(seriesItem.streamId, label, authConfig).flow
+    val seasonEpisodes =
+        remember(allEpisodes, selectedSeasonLabel) {
+            if (selectedSeasonLabel.isNullOrBlank()) {
+                emptyList()
+            } else {
+                val selectedSeasonNumber = seasonNumberFromLabel(selectedSeasonLabel)
+                allEpisodes.filter { episode ->
+                    val episodeSeason =
+                        episode.seasonLabel
+                            ?: extractSeasonLabel(episode.subtitle)
+                    val episodeSeasonNumber =
+                        episodeSeason?.let(::seasonNumberFromLabel) ?: Int.MAX_VALUE
+                    if (selectedSeasonNumber != Int.MAX_VALUE && episodeSeasonNumber != Int.MAX_VALUE) {
+                        episodeSeasonNumber == selectedSeasonNumber
+                    } else {
+                        episodeSeason == selectedSeasonLabel
+                    }
                 }
             }
+        }
+    val pagerFlow =
+        remember(seriesItem.streamId, selectedSeasonLabel, authConfig) {
+            val label = selectedSeasonLabel
+            if (label.isNullOrBlank()) {
+                flowOf(androidx.paging.PagingData.empty())
+            } else {
+                contentRepository.seriesSeasonPager(seriesItem.streamId, label, authConfig).flow
+            }
+        }
     val lazyItems = pagerFlow.collectAsLazyPagingItems()
-    val columns = 1
-    val handleEpisodeFocused: (ContentItem) -> Unit = { item -> onItemFocused(item) }
-    val shouldRequestEpisodeFocus = pendingEpisodeFocus || internalEpisodeFocus
     LaunchedEffect(seriesItem.streamId, selectedSeasonLabel, authConfig) {
         val label = selectedSeasonLabel
         if (!label.isNullOrBlank()) {
             contentRepository.prefetchSeriesSeasonFull(seriesItem.streamId, label, authConfig)
         }
     }
-    LaunchedEffect(
-            isLoading,
-            errorMessage,
-            seasonGroups.size,
-            initialFocusSet,
-            placeholderFocused
-    ) {
-        if (!initialFocusSet && (isLoading || errorMessage != null || seasonGroups.isEmpty())) {
-            if (!placeholderFocused) {
-                withFrameNanos {}
-                contentItemFocusRequester.requestFocus()
-                placeholderFocused = true
-            }
-            if (!isLoading && (errorMessage != null || seasonGroups.isEmpty())) {
-                initialFocusSet = true
-            }
-        }
-        if (!initialFocusSet && seasonGroups.isNotEmpty()) {
-            withFrameNanos {}
-            contentItemFocusRequester.requestFocus()
-            initialFocusSet = true
-        }
-    }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            TopBarButton(
-                    label = "BACK",
-                    onActivate = onBack,
-                    modifier = Modifier.focusRequester(backFocusRequester),
-                    onMoveLeft = onMoveLeft
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                    text = seriesItem.title,
-                    color = AppTheme.colors.textPrimary,
-                    fontSize = 16.sp,
-                    fontFamily = AppTheme.fontFamily,
-                    fontWeight = FontWeight.Medium
+    val firstEpisode =
+        remember(allEpisodes) {
+            allEpisodes.minWithOrNull(
+                compareBy<ContentItem>(
+                    { it.seasonLabel?.let(::seasonNumberFromLabel) ?: Int.MAX_VALUE },
+                    { it.episodeNumber?.toIntOrNull() ?: Int.MAX_VALUE },
+                    { it.title }
+                )
             )
         }
-        Spacer(modifier = Modifier.height(8.dp))
-        if (isLoading) {
-            Text(
-                    text = "Loading seasons...",
-                    color = AppTheme.colors.textSecondary,
-                    fontSize = 14.sp,
-                    fontFamily = AppTheme.fontFamily,
-                    letterSpacing = 0.6.sp,
-                    modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
-            )
-        } else if (errorMessage != null) {
-            Text(
-                    text = errorMessage ?: "Failed to load seasons",
-                    color = AppTheme.colors.error,
-                    fontSize = 14.sp,
-                    fontFamily = AppTheme.fontFamily,
-                    letterSpacing = 0.6.sp,
-                    modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
-            )
-        } else if (seasonGroups.isEmpty()) {
-            Text(
-                    text = "No seasons yet",
-                    color = AppTheme.colors.textSecondary,
-                    fontSize = 14.sp,
-                    fontFamily = AppTheme.fontFamily,
-                    letterSpacing = 0.6.sp,
-                    modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
-            )
+    val fallbackEpisode =
+        lazyItems.itemSnapshotList.items.firstOrNull()
+    val playTarget = resumeEntry?.item ?: firstEpisode ?: fallbackEpisode
+    val playLabelSuffix =
+        resumeEntry?.item?.let { formatEpisodeLabel(it, separator = " - ") }
+            ?: playTarget?.let { formatEpisodeLabel(it, separator = ":") }
+    val playLabel =
+        if (resumeEntry != null && playLabelSuffix != null) {
+            "Resume $playLabelSuffix"
         } else {
+            "Play - ${playLabelSuffix ?: "S1:E1"}"
+        }
+
+    val episodesLabel =
+        if (seasonEpisodes.isNotEmpty()) {
+            seasonEpisodes.size
+        } else {
+            selectedSeason?.episodeCount ?: lazyItems.itemCount
+        }
+    val releaseLabel = formatReleaseYear(seriesInfo?.releaseDate, seriesInfo?.year)
+    val ratingValue = ratingToStars(seriesInfo?.rating)
+    val description =
+        seriesInfo?.description?.takeIf { it.isNotBlank() } ?: "No description available."
+
+    val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+    val availableHeight = (screenHeight - topInsetDp).coerceAtLeast(320.dp)
+    val headerExpandedHeight = (availableHeight * 0.28f).coerceIn(160.dp, 230.dp)
+    val headerCollapsedHeight = 0.dp
+    val headerHeight by animateDpAsState(
+        targetValue = if (episodesExpanded) headerCollapsedHeight else headerExpandedHeight,
+        animationSpec = tween(durationMillis = 180),
+        label = "seriesHeaderHeight"
+    )
+    val posterHeight = headerHeight
+    val posterWidth = posterHeight * 0.68f
+    val containerPadding = if (episodesExpanded) 14.dp else 20.dp
+    val headerSpacer = if (episodesExpanded) 0.dp else 10.dp
+
+    Column(
+        modifier =
+            Modifier.fillMaxSize()
+                .background(colors.surface)
+                .padding(containerPadding)
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = seriesItem.title,
+                color = colors.textPrimary,
+                fontSize = 22.sp,
+                fontFamily = AppTheme.fontFamily,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+            TopBarButton(
+                label = "CLOSE",
+                onActivate = onBack,
+                modifier =
+                    Modifier.focusRequester(closeFocusRequester)
+                        .onFocusChanged { if (it.isFocused) episodesExpanded = false },
+                onMoveLeft = onMoveLeft,
+                onMoveDown = { contentItemFocusRequester.requestFocus() }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(headerSpacer))
+
+        if (headerHeight > 0.dp) {
             Row(
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                modifier =
+                    Modifier.fillMaxWidth()
+                        .height(headerHeight)
+                        .clipToBounds(),
+                horizontalArrangement = Arrangement.spacedBy(24.dp)
             ) {
-                Column(
-                        modifier =
-                                Modifier.width(220.dp)
-                                        .fillMaxHeight()
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(AppTheme.colors.panelBackground)
-                                        .border(1.dp, AppTheme.colors.panelBorder, RoundedCornerShape(14.dp))
-                                        .padding(12.dp)
-                                        .focusRequester(contentItemFocusRequester)
-                                        .focusable()
-                                        .onFocusChanged { state ->
-                                            if (state.isFocused) {
-                                                // Reset resume focus to series (not episode) when entering seasons
-                                                onItemFocused(seriesItem)
-                                                seasonRequesterFor(selectedSeasonIndex)
-                                                        ?.requestFocus()
-                                            }
-                                        }
-                ) {
-                    Text(
-                            text = "SEASONS",
-                            color = AppTheme.colors.textTertiary,
-                            fontSize = 11.sp,
-                            fontFamily = AppTheme.fontFamily,
-                            letterSpacing = 1.sp
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    LazyColumn(
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                            modifier = Modifier.fillMaxSize()
-                    ) {
-                        items(
-                                count = seasonGroups.size,
-                                key = { index -> seasonGroups[index].displayLabel }
-                        ) { index ->
-                            val season = seasonGroups[index]
-                            val label = "${season.displayLabel} (${season.episodeCount})"
-                            CategoryTypeTab(
-                                    label = label,
-                                    selected = index == selectedSeasonIndex,
-                                    focusRequester = seasonRequesterFor(index),
-                                    onActivate = {
-                                        selectedSeasonIndex = index
-                                        // Don't auto-focus episodes - user must press Right to
-                                        // navigate there
-                                    },
-                                    onMoveLeft = onMoveLeft,
-                                    onMoveRight = { internalEpisodeFocus = true },
-                                    onMoveUp =
-                                            if (index == 0) {
-                                                { backFocusRequester.requestFocus() }
-                                            } else {
-                                                null
-                                            }
-                            )
-                        }
+            val context = LocalContext.current
+            val imageRequest =
+                remember(seriesItem.imageUrl) {
+                    if (seriesItem.imageUrl.isNullOrBlank()) {
+                        null
+                    } else {
+                        ImageRequest.Builder(context)
+                            .data(seriesItem.imageUrl)
+                            .size(600)
+                            .build()
                     }
                 }
+            if (imageRequest != null) {
+                AsyncImage(
+                    model = imageRequest,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    filterQuality = FilterQuality.Low,
+                    modifier =
+                        Modifier.width(posterWidth)
+                            .height(posterHeight)
+                            .clip(RoundedCornerShape(14.dp))
+                )
+            } else {
+                Box(
+                    modifier =
+                        Modifier.width(posterWidth)
+                            .height(posterHeight)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(colors.surfaceAlt)
+                )
+            }
 
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                MovieInfoRow(label = "Directed By:", value = seriesInfo?.director)
+                MovieInfoRow(label = "Release Date:", value = releaseLabel)
+                MovieInfoRow(label = "Duration:", value = formatDuration(seriesInfo?.duration))
+                MovieInfoRow(label = "Genre:", value = seriesInfo?.genre)
+                MovieInfoRow(label = "Cast:", value = seriesInfo?.cast)
+                if (ratingValue != null) {
+                    RatingStarsRow(label = "Rating:", rating = ratingValue)
+                } else {
+                    MovieInfoRow(label = "Rating:", value = null)
+                }
+
+                if (seriesInfoLoading && seriesInfo == null && seriesInfoError == null) {
                     Text(
-                            text = selectedSeason?.displayLabel ?: "Select a season",
-                            color = AppTheme.colors.textPrimary,
-                            fontSize = 16.sp,
-                            fontFamily = AppTheme.fontFamily,
-                            fontWeight = FontWeight.Medium
+                        text = "Loading series details...",
+                        color = colors.textSecondary,
+                        fontSize = 12.sp,
+                        fontFamily = AppTheme.fontFamily
                     )
+                } else if (seriesInfoError != null && seriesInfo == null) {
+                    Text(
+                        text = seriesInfoError ?: "Failed to load series details",
+                        color = colors.error,
+                        fontSize = 12.sp,
+                        fontFamily = AppTheme.fontFamily
+                    )
+                }
+
                     Spacer(modifier = Modifier.height(8.dp))
-                    if (lazyItems.loadState.refresh is LoadState.Loading &&
-                                    lazyItems.itemCount == 0
+                    Text(
+                        text = description,
+                        color = colors.textPrimary,
+                        fontSize = 13.sp,
+                        fontFamily = AppTheme.fontFamily,
+                        lineHeight = 18.sp,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                    FocusableButton(
+                        onClick = {
+                            val target = playTarget
+                            if (target != null) {
+                                val seasonLabel =
+                                    resumeSeasonLabel ?: target.seasonLabel ?: selectedSeasonLabel
+                                val cachedSeason =
+                                    if (!seasonLabel.isNullOrBlank()) {
+                                        contentRepository.peekSeriesSeasonFullCache(
+                                            seriesItem.streamId,
+                                            seasonLabel,
+                                            authConfig
+                                        )
+                                    } else {
+                                        null
+                                    }
+                                val fallbackEpisodes = lazyItems.itemSnapshotList.items
+                                val queueItems =
+                                    when {
+                                        seasonEpisodes.isNotEmpty() -> seasonEpisodes
+                                        cachedSeason != null -> cachedSeason
+                                        else -> fallbackEpisodes
+                                    }
+                                onPlay(target, queueItems)
+                            }
+                        },
+                modifier =
+                            Modifier.width(200.dp)
+                                .onFocusChanged { if (it.isFocused) episodesExpanded = false },
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                containerColor = colors.accent,
+                                contentColor = colors.textOnAccent
+                            )
                     ) {
                         Text(
-                                text = "Loading episodes...",
-                                color = AppTheme.colors.textSecondary,
-                                fontSize = 14.sp,
-                                fontFamily = AppTheme.fontFamily,
-                                letterSpacing = 0.6.sp
+                            text = playLabel,
+                            fontSize = 13.sp,
+                            fontFamily = AppTheme.fontFamily,
+                            fontWeight = FontWeight.SemiBold
                         )
-                    } else if (lazyItems.loadState.refresh is LoadState.Error) {
-                        Text(
-                                text = "Episodes failed to load",
-                                color = AppTheme.colors.error,
-                                fontSize = 14.sp,
-                                fontFamily = AppTheme.fontFamily,
-                                letterSpacing = 0.6.sp
-                        )
-                    } else if (lazyItems.itemCount == 0) {
-                        Text(
-                                text = "No episodes yet",
-                                color = AppTheme.colors.textSecondary,
-                                fontSize = 14.sp,
-                                fontFamily = AppTheme.fontFamily,
-                                letterSpacing = 0.6.sp
-                        )
-                    } else {
-                        LazyVerticalGrid(
-                                columns = GridCells.Fixed(columns),
-                                verticalArrangement = Arrangement.spacedBy(16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                modifier = Modifier.fillMaxSize()
+                    }
+                    Box {
+                        val seasonButtonLabel =
+                            selectedSeason?.label?.takeIf { it.isNotBlank() }?.let { "Season - $it" }
+                                ?: "Select season"
+                        FocusableButton(
+                            onClick = { showSeasonMenu = true },
+                            enabled = seasonGroups.isNotEmpty(),
+                            modifier =
+                                Modifier.width(180.dp)
+                                    .onFocusChanged { if (it.isFocused) episodesExpanded = false },
+                            colors =
+                                ButtonDefaults.buttonColors(
+                                    containerColor = colors.surfaceAlt,
+                                    contentColor = colors.textPrimary
+                                )
                         ) {
-                            items(
-                                    count = lazyItems.itemCount,
-                                    key = { index -> lazyItems[index]?.id ?: "episode-$index" }
-                            ) { index ->
-                                val item = lazyItems[index]
-                                val requester =
-                                        when {
-                                            item?.id != null && item.id == resumeFocusId ->
-                                                    resumeFocusRequester
-                                            index == 0 -> episodesFocusRequester
-                                            else -> null
-                                        }
-                                if (index == 0 && shouldRequestEpisodeFocus && requester != null) {
-                                    LaunchedEffect(shouldRequestEpisodeFocus, requester) {
-                                        withFrameNanos {}
-                                        requester.requestFocus()
-                                        if (pendingEpisodeFocus) {
-                                            onEpisodeFocusHandled()
-                                        }
-                                        internalEpisodeFocus = false
+                            Text(
+                                text = "$seasonButtonLabel \u25BE",
+                                fontSize = 12.sp,
+                                fontFamily = AppTheme.fontFamily,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showSeasonMenu,
+                            onDismissRequest = { showSeasonMenu = false }
+                        ) {
+                            seasonGroups.forEachIndexed { index, season ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = season.displayLabel,
+                                            fontSize = 12.sp,
+                                            fontFamily = AppTheme.fontFamily
+                                        )
+                                    },
+                                    onClick = {
+                                        selectedSeasonIndex = index
+                                        showSeasonMenu = false
                                     }
-                                }
-                                val isLeftEdge = index % columns == 0
-                                val isTopRow = index < columns
-                                ContentCard(
-                                        item = item,
-                                        focusRequester = requester,
-                                        isLeftEdge = isLeftEdge,
-                                        isFavorite = item != null && isItemFavorite(item),
-                                        onActivate =
-                                                if (item != null) {
-                                                    {
-                                                        val label = selectedSeasonLabel
-                                                        val cachedSeason =
-                                                                if (!label.isNullOrBlank()) {
-                                                                    contentRepository.peekSeriesSeasonFullCache(
-                                                                            seriesItem.streamId,
-                                                                            label,
-                                                                            authConfig
-                                                                    )
-                                                                } else {
-                                                                    null
-                                                                }
-                                                        onPlay(
-                                                                item,
-                                                                cachedSeason
-                                                                        ?: lazyItems.itemSnapshotList.items
-                                                        )
-                                                    }
-                                                } else {
-                                                    null
-                                                },
-                                        onFocused = handleEpisodeFocused,
-                                        onMoveLeft = {
-                                            seasonRequesterFor(selectedSeasonIndex)
-                                                    ?.requestFocus()
-                                                    ?: onMoveLeft()
-                                        },
-                                        onMoveUp =
-                                                if (isTopRow) {
-                                                    {
-                                                        if (onMoveUpFromTop != null) {
-                                                            onMoveUpFromTop()
-                                                        } else {
-                                                            contentItemFocusRequester.requestFocus()
-                                                        }
-                                                    }
-                                                } else {
-                                                    null
-                                        },
-                                        onLongClick =
-                                                if (item != null) {
-                                                    { onToggleFavorite(item) }
-                                                } else {
-                                                    null
-                                                },
-                                        titleFontSize = 13.sp,
-                                        subtitleFontSize = 10.sp,
-                                        forceDarkText = forceDarkText
                                 )
                             }
                         }
                     }
+                    FocusableButton(
+                        onClick = { onToggleFavorite(seriesItem) },
+                        modifier =
+                            Modifier.size(48.dp)
+                                .onFocusChanged { if (it.isFocused) episodesExpanded = false },
+                        contentPadding = PaddingValues(0.dp),
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                containerColor = colors.surfaceAlt,
+                                contentColor = colors.textPrimary
+                            )
+                    ) {
+                        Icon(
+                            imageVector =
+                                if (isItemFavorite(seriesItem)) {
+                                    Icons.Filled.Favorite
+                                } else {
+                                    Icons.Outlined.FavoriteBorder
+                                },
+                            contentDescription = "Favorite",
+                            tint = if (isItemFavorite(seriesItem)) Color(0xFFEF5350) else colors.textPrimary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(if (episodesExpanded) 8.dp else 12.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CategoryTypeTab(
+                label = "Episodes (${episodesLabel.coerceAtLeast(0)})",
+                selected = activeTab == SeriesDetailTab.EPISODES,
+                focusRequester = contentItemFocusRequester,
+                onFocused = { episodesExpanded = false },
+                onActivate = { activeTab = SeriesDetailTab.EPISODES },
+                onMoveDown = {
+                    episodesExpanded = true
+                    internalEpisodeFocusRequested = true
+                },
+                onMoveUp = { closeFocusRequester.requestFocus() }
+            )
+            CategoryTypeTab(
+                label = "Cast",
+                selected = activeTab == SeriesDetailTab.CAST,
+                focusRequester = tabFocusRequesters[1],
+                onFocused = { episodesExpanded = false },
+                onActivate = { activeTab = SeriesDetailTab.CAST },
+                onMoveUp = { closeFocusRequester.requestFocus() }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        when (activeTab) {
+            SeriesDetailTab.CAST -> {
+                val castText = seriesInfo?.cast?.takeIf { it.isNotBlank() }
+                if (castText.isNullOrBlank()) {
+                    Text(
+                        text = "No cast information available.",
+                        color = colors.textSecondary,
+                        fontSize = 13.sp,
+                        fontFamily = AppTheme.fontFamily
+                    )
+                } else {
+                    val castNames =
+                        castText.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        castNames.forEach { name ->
+                            Text(
+                                text = name,
+                                color = colors.textPrimary,
+                                fontSize = 13.sp,
+                                fontFamily = AppTheme.fontFamily
+                            )
+                        }
+                    }
+                }
+            }
+            SeriesDetailTab.EPISODES -> {
+                val fallbackEpisodes = lazyItems.itemSnapshotList.items
+                val displayEpisodes =
+                    if (seasonEpisodes.isNotEmpty()) seasonEpisodes else fallbackEpisodes
+                val shouldRequestEpisodeFocus = pendingEpisodeFocus || internalEpisodeFocusRequested
+                if (isSeasonLoading) {
+                    Text(
+                        text = "Loading seasons...",
+                        color = colors.textSecondary,
+                        fontSize = 13.sp,
+                        fontFamily = AppTheme.fontFamily
+                    )
+                } else if (seasonError != null) {
+                    Text(
+                        text = seasonError ?: "Failed to load seasons",
+                        color = colors.error,
+                        fontSize = 13.sp,
+                        fontFamily = AppTheme.fontFamily
+                    )
+                } else if (lazyItems.loadState.refresh is LoadState.Loading &&
+                    lazyItems.itemCount == 0
+                ) {
+                    Text(
+                        text = "Loading episodes...",
+                        color = colors.textSecondary,
+                        fontSize = 13.sp,
+                        fontFamily = AppTheme.fontFamily
+                    )
+                } else if (lazyItems.loadState.refresh is LoadState.Error) {
+                    Text(
+                        text = "Episodes failed to load",
+                        color = colors.error,
+                        fontSize = 13.sp,
+                        fontFamily = AppTheme.fontFamily
+                    )
+                } else if (displayEpisodes.isEmpty()) {
+                    val emptyText =
+                        if (allEpisodesError != null) {
+                            allEpisodesError ?: "No episodes yet"
+                        } else {
+                            "No episodes yet"
+                        }
+                    Text(
+                        text = emptyText,
+                        color = colors.textSecondary,
+                        fontSize = 13.sp,
+                        fontFamily = AppTheme.fontFamily
+                    )
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxWidth().weight(1f)
+                    ) {
+                        items(
+                            count = displayEpisodes.size,
+                            key = { index -> displayEpisodes[index].id }
+                        ) { index ->
+                            val item = displayEpisodes[index]
+                            val requester =
+                                when {
+                                    item.id == resumeFocusId -> resumeFocusRequester
+                                    index == 0 -> episodesFocusRequester
+                                    else -> null
+                                }
+                            if (index == 0 && shouldRequestEpisodeFocus && requester != null) {
+                                LaunchedEffect(shouldRequestEpisodeFocus, requester) {
+                                    withFrameNanos {}
+                                    requester.requestFocus()
+                                    if (pendingEpisodeFocus) {
+                                        onEpisodeFocusHandled()
+                                    }
+                                    internalEpisodeFocusRequested = false
+                                }
+                            }
+                            SeriesEpisodeRow(
+                                item = item,
+                                focusRequester = requester,
+                                forceDarkText = forceDarkText,
+                                onActivate = {
+                                    val label = selectedSeasonLabel
+                                    val cachedSeason =
+                                        if (!label.isNullOrBlank()) {
+                                            contentRepository.peekSeriesSeasonFullCache(
+                                                seriesItem.streamId,
+                                                label,
+                                                authConfig
+                                            )
+                                        } else {
+                                            null
+                                        }
+                                    val queueItems =
+                                        when {
+                                            seasonEpisodes.isNotEmpty() -> seasonEpisodes
+                                            cachedSeason != null -> cachedSeason
+                                            else -> fallbackEpisodes
+                                        }
+                                    onPlay(item, queueItems)
+                                },
+                                onFocused = {
+                                    episodesExpanded = true
+                                    onItemFocused(item)
+                                },
+                                onMoveLeft = onMoveLeft,
+                                onMoveUp =
+                                    if (index == 0) {
+                                        {
+                                            episodesExpanded = false
+                                            contentItemFocusRequester.requestFocus()
+                                        }
+                                    } else {
+                                        null
+                                    }
+                            )
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+private enum class SeriesDetailTab {
+    EPISODES,
+    CAST
+}
+
+@Composable
+private fun SeriesEpisodeRow(
+        item: ContentItem,
+        focusRequester: FocusRequester?,
+        forceDarkText: Boolean,
+        onActivate: () -> Unit,
+        onFocused: (() -> Unit)? = null,
+        onMoveLeft: (() -> Unit)? = null,
+        onMoveUp: (() -> Unit)? = null
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val shape = RoundedCornerShape(12.dp)
+    val colors = AppTheme.colors
+    val borderColor = if (isFocused) colors.focus else colors.border
+    val backgroundColor = if (isFocused) colors.surfaceAlt else colors.surfaceAlt
+    val titleColor = if (forceDarkText) colors.textPrimary else colors.textPrimary
+    val subtitleColor = if (forceDarkText) colors.textSecondary else colors.textSecondary
+    val ratingValue = ratingToStars(item.rating)
+    val durationLabel = formatDuration(item.duration)
+    val description =
+            item.description?.takeIf { it.isNotBlank() } ?: "No description available."
+    val context = LocalContext.current
+    val imageRequest =
+            remember(item.imageUrl) {
+                if (item.imageUrl.isNullOrBlank()) {
+                    null
+                } else {
+                    ImageRequest.Builder(context).data(item.imageUrl).size(400).build()
+                }
+            }
+    LaunchedEffect(isFocused) {
+        if (isFocused) {
+            onFocused?.invoke()
+        }
+    }
+
+    Box(
+            modifier =
+                    Modifier.fillMaxWidth()
+                            .then(
+                                    if (focusRequester != null) {
+                                        Modifier.focusRequester(focusRequester)
+                                    } else {
+                                        Modifier
+                                    }
+                            )
+                            .focusable(interactionSource = interactionSource)
+                            .onKeyEvent {
+                                if (it.type != KeyEventType.KeyDown) {
+                                    false
+                                } else if (it.key == Key.DirectionLeft && onMoveLeft != null) {
+                                    onMoveLeft()
+                                    true
+                                } else if (it.key == Key.DirectionUp && onMoveUp != null) {
+                                    onMoveUp()
+                                    true
+                                } else if (it.key == Key.Enter ||
+                                        it.key == Key.NumPadEnter ||
+                                        it.key == Key.DirectionCenter
+                                ) {
+                                    onActivate()
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                            .clickable(
+                                    interactionSource = interactionSource,
+                                    indication = null,
+                                    onClick = onActivate
+                            )
+                            .clip(shape)
+                            .background(backgroundColor)
+                            .border(1.dp, borderColor, shape)
+                            .padding(12.dp)
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (imageRequest != null) {
+                AsyncImage(
+                        model = imageRequest,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        filterQuality = FilterQuality.Low,
+                        modifier =
+                                Modifier.width(150.dp)
+                                        .height(90.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                )
+            } else {
+                Box(
+                        modifier =
+                                Modifier.width(150.dp)
+                                        .height(90.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(colors.surfaceAlt)
+                )
+            }
+            Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                        text = item.title,
+                        color = titleColor,
+                        fontSize = 14.sp,
+                        fontFamily = AppTheme.fontFamily,
+                        fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                        text = item.subtitle,
+                        color = subtitleColor,
+                        fontSize = 12.sp,
+                        fontFamily = AppTheme.fontFamily
+                )
+                Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (ratingValue != null) {
+                        RatingStars(
+                                rating = ratingValue,
+                                starSize = 14.dp,
+                                spacing = 2.dp
+                        )
+                    }
+                    if (!durationLabel.isNullOrBlank()) {
+                        EpisodeMetaChip(label = durationLabel)
+                    }
+                }
+                Text(
+                        text = description,
+                        color = subtitleColor,
+                        fontSize = 12.sp,
+                        fontFamily = AppTheme.fontFamily,
+                        lineHeight = 16.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EpisodeMetaChip(label: String) {
+    val colors = AppTheme.colors
+    Box(
+            modifier =
+                    Modifier.clip(RoundedCornerShape(6.dp))
+                            .background(colors.surfaceAlt)
+                            .border(1.dp, colors.border, RoundedCornerShape(6.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+    ) {
+        Text(
+                text = label,
+                color = colors.textPrimary,
+                fontSize = 11.sp,
+                fontFamily = AppTheme.fontFamily,
+                fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+private fun extractSeasonLabel(subtitle: String?): String? {
+    if (subtitle.isNullOrBlank()) return null
+    val match = Regex("S(\\d+)").find(subtitle)
+    return match?.groupValues?.getOrNull(1)
+}
+
+private fun extractEpisodeLabel(subtitle: String?): String? {
+    if (subtitle.isNullOrBlank()) return null
+    val match = Regex("E(\\d+)").find(subtitle)
+    return match?.groupValues?.getOrNull(1)
+}
+
+private fun formatEpisodeLabel(item: ContentItem, separator: String): String? {
+    val season = item.seasonLabel ?: extractSeasonLabel(item.subtitle)
+    val episode = item.episodeNumber ?: extractEpisodeLabel(item.subtitle)
+    return formatSeasonEpisodeLabel(season, episode, separator)
+}
+
+private fun formatSeasonEpisodeLabel(
+        season: String?,
+        episode: String?,
+        separator: String
+): String? {
+    val seasonText = season?.trim()?.takeIf { it.isNotEmpty() }
+    val episodeText = episode?.trim()?.takeIf { it.isNotEmpty() }
+    if (seasonText == null || episodeText == null) return null
+    return "S${seasonText}${separator}E${episodeText}"
 }
 
 private data class SeasonGroup(

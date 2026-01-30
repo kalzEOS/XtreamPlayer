@@ -9,6 +9,7 @@ import com.example.xtreamplayer.content.ContentItem
 import com.example.xtreamplayer.content.ContentPage
 import com.example.xtreamplayer.content.ContentType
 import com.example.xtreamplayer.content.MovieInfo
+import com.example.xtreamplayer.content.SeriesInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -495,6 +496,70 @@ class XtreamApi(
         }
     }
 
+    suspend fun fetchSeriesInfo(
+        config: AuthConfig,
+        seriesId: String
+    ): Result<SeriesInfo> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val url = buildApiUrl(
+                    config,
+                    "get_series_info",
+                    mapOf("series_id" to seriesId)
+                ) ?: return@withContext Result.failure(
+                    IllegalArgumentException("Invalid service URL")
+                )
+                val request = Request.Builder().url(url).get().build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        return@withContext Result.failure(
+                            IllegalStateException("Request failed: ${response.code}")
+                        )
+                    }
+                    val body = response.body?.string()
+                        ?: return@withContext Result.failure(
+                            IllegalStateException("Empty response")
+                        )
+                    val json = JSONObject(body)
+                    val info = json.optJSONObject("info")
+
+                    fun String?.nullIfBlank(): String? = this?.trim()?.takeIf { it.isNotEmpty() }
+
+                    val releaseDateValue =
+                        info?.optString("releaseDate").nullIfBlank()
+                            ?: info?.optString("releasedate").nullIfBlank()
+                            ?: info?.optString("year").nullIfBlank()
+
+                    val durationValue =
+                        info?.optString("episode_run_time").nullIfBlank()
+                            ?: info?.optString("duration").nullIfBlank()
+                            ?: info?.optString("duration_secs").nullIfBlank()?.toLongOrNull()?.let {
+                                val minutes = (it / 60).coerceAtLeast(1)
+                                "${minutes}m"
+                            }
+
+                    val seriesInfo = SeriesInfo(
+                        director = info?.optString("director").nullIfBlank()
+                            ?: info?.optString("created_by").nullIfBlank(),
+                        releaseDate = releaseDateValue,
+                        duration = durationValue,
+                        genre = info?.optString("genre").nullIfBlank(),
+                        cast = info?.optString("cast").nullIfBlank(),
+                        rating = info?.optString("rating_5based").nullIfBlank()
+                            ?: info?.optString("rating").nullIfBlank(),
+                        description = info?.optString("plot").nullIfBlank()
+                            ?: info?.optString("description").nullIfBlank(),
+                        year = info?.optString("year").nullIfBlank()
+                    )
+                    Result.success(seriesInfo)
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "API request failed")
+                Result.failure(e)
+            }
+        }
+    }
+
     private fun parsePage(
         reader: JsonReader,
         section: Section,
@@ -643,6 +708,13 @@ class XtreamApi(
         val item: ContentItem,
         val seasonNumber: Int,
         val episodeNumber: Int
+    )
+
+    private data class EpisodeInfo(
+        val image: String? = null,
+        val duration: String? = null,
+        val rating: String? = null,
+        val plot: String? = null
     )
 
     private fun parseSeriesSeasonCount(reader: JsonReader): Int {
@@ -858,14 +930,14 @@ class XtreamApi(
         var title: String? = null
         var container: String? = null
         var episodeNum: String? = null
-        var image: String? = null
+        var episodeInfo: EpisodeInfo? = null
         while (reader.hasNext()) {
             when (reader.nextName()) {
                 "id" -> id = readString(reader)
                 "title" -> title = readString(reader)
                 "container_extension" -> container = readString(reader)
                 "episode_num" -> episodeNum = readString(reader)
-                "info" -> image = parseEpisodeInfo(reader)
+                "info" -> episodeInfo = parseEpisodeInfo(reader)
                 else -> reader.skipValue()
             }
         }
@@ -888,11 +960,16 @@ class XtreamApi(
             id = "ep-$safeId",
             title = safeTitle,
             subtitle = subtitle,
-            imageUrl = image,
+            imageUrl = episodeInfo?.image,
             section = Section.SERIES,
             contentType = ContentType.SERIES,
             streamId = safeId,
-            containerExtension = container
+            containerExtension = container,
+            description = episodeInfo?.plot,
+            duration = episodeInfo?.duration,
+            rating = episodeInfo?.rating,
+            seasonLabel = seasonLabel,
+            episodeNumber = episodeNum
         )
         return EpisodeEntry(
             item = item,
@@ -906,23 +983,38 @@ class XtreamApi(
         return digits.toIntOrNull() ?: Int.MAX_VALUE
     }
 
-    private fun parseEpisodeInfo(reader: JsonReader): String? {
+    private fun parseEpisodeInfo(reader: JsonReader): EpisodeInfo? {
         if (reader.peek() != JsonToken.BEGIN_OBJECT) {
             reader.skipValue()
             return null
         }
         reader.beginObject()
         var image: String? = null
+        var duration: String? = null
+        var rating: String? = null
+        var plot: String? = null
         while (reader.hasNext()) {
             when (reader.nextName()) {
                 "movie_image" -> image = readString(reader)
                 "cover_big" -> if (image.isNullOrBlank()) image = readString(reader) else reader.skipValue()
                 "cover" -> if (image.isNullOrBlank()) image = readString(reader) else reader.skipValue()
+                "plot" -> plot = readString(reader)
+                "duration" -> duration = readString(reader)
+                "duration_secs" ->
+                    if (duration.isNullOrBlank()) duration = readString(reader) else reader.skipValue()
+                "rating_5based" ->
+                    if (rating.isNullOrBlank()) rating = readString(reader) else reader.skipValue()
+                "rating" -> rating = readString(reader)
                 else -> reader.skipValue()
             }
         }
         reader.endObject()
-        return image
+        return EpisodeInfo(
+            image = image,
+            duration = duration,
+            rating = rating,
+            plot = plot
+        )
     }
 
     private fun parseArrayPage(

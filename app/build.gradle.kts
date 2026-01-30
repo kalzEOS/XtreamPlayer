@@ -85,7 +85,7 @@ androidComponents {
             val outputFileName = runCatching {
                 output::class.java.getMethod("getOutputFileName").invoke(output) as Property<String>
             }.getOrNull()
-            outputFileName?.set("Xtream Playerv2.1.3.apk")
+            outputFileName?.set("Xtream Playerv2.1.4.apk")
         }
     }
 }
