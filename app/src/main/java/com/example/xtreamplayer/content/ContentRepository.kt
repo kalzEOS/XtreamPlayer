@@ -65,6 +65,11 @@ class ContentRepository(
             return size > 100
         }
     }
+    private val seriesInfoCache = object : LinkedHashMap<String, SeriesInfo>(100, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, SeriesInfo>): Boolean {
+            return size > 100
+        }
+    }
     private val seriesSeasonFullCache =
         object : LinkedHashMap<String, List<ContentItem>>(20, 0.75f, true) {
             override fun removeEldestEntry(
@@ -87,6 +92,7 @@ class ContentRepository(
     private val seriesEpisodesMutex = Mutex()
     private val seriesSeasonCountMutex = Mutex()
     private val movieInfoMutex = Mutex()
+    private val seriesInfoMutex = Mutex()
     private val seriesSeasonFullMutex = Mutex()
     private val seriesSeasonsMutex = Mutex()
     private val categoryThumbnailMutex = Mutex()
@@ -400,6 +406,30 @@ class ContentRepository(
         val info = result.getOrNull() ?: return null
         contentCache.writeVodInfo(vodId, authConfig, info)
         movieInfoMutex.withLock { movieInfoCache[key] = info }
+        return info
+    }
+
+    suspend fun loadSeriesInfo(
+        item: ContentItem,
+        authConfig: AuthConfig
+    ): SeriesInfo? {
+        if (item.contentType != ContentType.SERIES) {
+            return null
+        }
+        val seriesId = item.streamId.ifBlank { item.id }
+        val key = "series-info-${accountKey(authConfig)}-$seriesId"
+        seriesInfoMutex.withLock {
+            seriesInfoCache[key]?.let { return it }
+        }
+        val cached = contentCache.readSeriesInfo(seriesId, authConfig)
+        if (cached != null) {
+            seriesInfoMutex.withLock { seriesInfoCache[key] = cached }
+            return cached
+        }
+        val result = api.fetchSeriesInfo(authConfig, seriesId)
+        val info = result.getOrNull() ?: return null
+        contentCache.writeSeriesInfo(seriesId, authConfig, info)
+        seriesInfoMutex.withLock { seriesInfoCache[key] = info }
         return info
     }
 
@@ -1492,6 +1522,7 @@ class ContentRepository(
         seriesEpisodesMutex.withLock { seriesEpisodesCache.clear() }
         seriesSeasonCountMutex.withLock { seriesSeasonCountCache.clear() }
         movieInfoMutex.withLock { movieInfoCache.clear() }
+        seriesInfoMutex.withLock { seriesInfoCache.clear() }
         seriesSeasonFullMutex.withLock { seriesSeasonFullCache.clear() }
         seriesSeasonsMutex.withLock { seriesSeasonsCache.clear() }
         validationCacheMutex.withLock { validationCache.clear() }

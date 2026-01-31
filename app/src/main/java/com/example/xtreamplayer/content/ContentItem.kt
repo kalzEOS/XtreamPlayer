@@ -10,5 +10,10 @@ data class ContentItem(
     val section: Section,
     val contentType: ContentType,
     val streamId: String,
-    val containerExtension: String?
+    val containerExtension: String?,
+    val description: String? = null,
+    val duration: String? = null,
+    val rating: String? = null,
+    val seasonLabel: String? = null,
+    val episodeNumber: String? = null
 )

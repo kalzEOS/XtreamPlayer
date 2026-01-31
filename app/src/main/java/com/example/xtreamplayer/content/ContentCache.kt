@@ -15,6 +15,7 @@ class ContentCache(context: Context) {
     private val cacheDir = File(context.filesDir, "content_cache").apply { mkdirs() }
     private companion object {
         private const val VOD_INFO_MAX_AGE_MS = 15L * 24 * 60 * 60 * 1000
+        private const val SERIES_INFO_MAX_AGE_MS = 15L * 24 * 60 * 60 * 1000
     }
 
     suspend fun readPage(
@@ -156,6 +157,56 @@ class ContentCache(context: Context) {
     ) {
         withContext(Dispatchers.IO) {
             val file = vodInfoFile(vodId, config)
+            val obj = JSONObject()
+            obj.put("director", info.director ?: "")
+            obj.put("releaseDate", info.releaseDate ?: "")
+            obj.put("duration", info.duration ?: "")
+            obj.put("genre", info.genre ?: "")
+            obj.put("cast", info.cast ?: "")
+            obj.put("rating", info.rating ?: "")
+            obj.put("description", info.description ?: "")
+            obj.put("year", info.year ?: "")
+            obj.put("cachedAt", System.currentTimeMillis())
+            runCatching { file.writeText(obj.toString()) }
+        }
+    }
+
+    suspend fun readSeriesInfo(
+        seriesId: String,
+        config: AuthConfig
+    ): SeriesInfo? {
+        return withContext(Dispatchers.IO) {
+            val file = seriesInfoFile(seriesId, config)
+            if (!file.exists()) return@withContext null
+            val text = runCatching { file.readText() }.getOrNull() ?: return@withContext null
+            if (text.isBlank()) return@withContext null
+            runCatching {
+                val obj = JSONObject(text)
+                val timestamp = obj.optLong("cachedAt", 0L)
+                if (timestamp == 0L || System.currentTimeMillis() - timestamp > SERIES_INFO_MAX_AGE_MS) {
+                    return@withContext null
+                }
+                SeriesInfo(
+                    director = obj.optString("director").ifBlank { null },
+                    releaseDate = obj.optString("releaseDate").ifBlank { null },
+                    duration = obj.optString("duration").ifBlank { null },
+                    genre = obj.optString("genre").ifBlank { null },
+                    cast = obj.optString("cast").ifBlank { null },
+                    rating = obj.optString("rating").ifBlank { null },
+                    description = obj.optString("description").ifBlank { null },
+                    year = obj.optString("year").ifBlank { null }
+                )
+            }.getOrNull()
+        }
+    }
+
+    suspend fun writeSeriesInfo(
+        seriesId: String,
+        config: AuthConfig,
+        info: SeriesInfo
+    ) {
+        withContext(Dispatchers.IO) {
+            val file = seriesInfoFile(seriesId, config)
             val obj = JSONObject()
             obj.put("director", info.director ?: "")
             obj.put("releaseDate", info.releaseDate ?: "")
@@ -384,6 +435,13 @@ class ContentCache(context: Context) {
         val key = accountHash(config)
         val safeVod = hashKey(vodId)
         val name = "vod_info_${safeVod}_$key.json"
+        return File(cacheDir, name)
+    }
+
+    private fun seriesInfoFile(seriesId: String, config: AuthConfig): File {
+        val key = accountHash(config)
+        val safeSeries = hashKey(seriesId)
+        val name = "series_info_${safeSeries}_$key.json"
         return File(cacheDir, name)
     }
 
@@ -657,6 +715,11 @@ class ContentCache(context: Context) {
             obj.put("contentType", item.contentType.name)
             obj.put("streamId", item.streamId)
             obj.put("containerExtension", item.containerExtension)
+            obj.put("description", item.description)
+            obj.put("duration", item.duration)
+            obj.put("rating", item.rating)
+            obj.put("seasonLabel", item.seasonLabel)
+            obj.put("episodeNumber", item.episodeNumber)
             array.put(obj)
         }
         return array
@@ -703,7 +766,12 @@ class ContentCache(context: Context) {
                     section = section,
                     contentType = contentType,
                     streamId = itemObj.optString("streamId").ifBlank { itemObj.optString("id") },
-                    containerExtension = itemObj.optString("containerExtension").ifBlank { null }
+                    containerExtension = itemObj.optString("containerExtension").ifBlank { null },
+                    description = itemObj.optString("description").ifBlank { null },
+                    duration = itemObj.optString("duration").ifBlank { null },
+                    rating = itemObj.optString("rating").ifBlank { null },
+                    seasonLabel = itemObj.optString("seasonLabel").ifBlank { null },
+                    episodeNumber = itemObj.optString("episodeNumber").ifBlank { null }
                 )
             )
         }
