@@ -500,14 +500,14 @@ class XtreamApi(
                             }
                             return null
                         }
-                        val h = height.coerceAtLeast(width)
+                        val vertical = height.takeIf { it > 0 }
                         return when {
-                            h >= 2160 -> "4K"
-                            h >= 1440 -> "1440p"
-                            h >= 1080 -> "1080p"
-                            h >= 720 -> "720p"
-                            h > 0 -> "${h}p"
-                            else -> null
+                            vertical == null -> null
+                            vertical >= 2160 -> "4K"
+                            vertical >= 1440 -> "1440p"
+                            vertical >= 1080 -> "1080p"
+                            vertical >= 720 -> "720p"
+                            else -> "${vertical}p"
                         }
                     }
                     fun formatChannels(raw: String?): String? {
