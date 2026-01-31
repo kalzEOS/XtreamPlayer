@@ -8562,7 +8562,7 @@ fun SeriesSeasonsScreen(
                     },
                     onMoveLeft = {
                         episodesExpanded = false
-                        playFocusRequester.requestFocus()
+                        onMoveLeft()
                     },
                     onMoveRight = { castTabRequester.requestFocus() },
                     onMoveUp = {
@@ -8581,6 +8581,7 @@ fun SeriesSeasonsScreen(
                     onFocused = { episodesExpanded = false },
                     onActivate = { activeTab = SeriesDetailTab.CAST },
                     onMoveLeft = { episodesTabRequester.requestFocus() },
+                    onMoveRight = { playFocusRequester.requestFocus() },
                     onMoveUp = {
                         episodesExpanded = false
                         if (!episodesExpanded && showReadMore) {
