@@ -4160,6 +4160,23 @@ private fun MovieInfoDialog(
                                 )
                             }
                         }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                    text = "Video: ${formatVideoSummary(info)}",
+                                    color = colors.textSecondary,
+                                    fontSize = 9.sp,
+                                    fontFamily = AppTheme.fontFamily,
+                                    lineHeight = 13.sp
+                            )
+                            Text(
+                                    text = "Audio: ${formatAudioSummary(info)}",
+                                    color = colors.textSecondary,
+                                    fontSize = 9.sp,
+                                    fontFamily = AppTheme.fontFamily,
+                                    lineHeight = 13.sp
+                            )
+                        }
                     }
                 }
             }
@@ -4185,6 +4202,38 @@ private fun MovieInfoRow(label: String, value: String?) {
                 fontWeight = FontWeight.Medium
         )
     }
+}
+
+private fun formatVideoSummary(info: MovieInfo?): String {
+    if (info == null) return "N/A"
+    val hasAny =
+        !info.videoResolution.isNullOrBlank() ||
+            !info.videoCodec.isNullOrBlank() ||
+            !info.videoHdr.isNullOrBlank()
+    if (!hasAny) {
+        return "Resolution: N/A \u2022 Codec: N/A \u2022 Dynamic Range: N/A"
+    }
+    val resolution = info.videoResolution?.takeIf { it.isNotBlank() } ?: "N/A"
+    val codec = info.videoCodec?.takeIf { it.isNotBlank() } ?: "N/A"
+    val range = info.videoHdr?.takeIf { it.isNotBlank() } ?: "SDR"
+    return "Resolution: $resolution \u2022 Codec: $codec \u2022 Dynamic Range: $range"
+}
+
+private fun formatAudioSummary(info: MovieInfo?): String {
+    if (info == null) return "N/A"
+    val hasAny =
+        !info.audioCodec.isNullOrBlank() ||
+            !info.audioChannels.isNullOrBlank() ||
+            info.audioLanguages.any { it.isNotBlank() }
+    if (!hasAny) {
+        return "Codec: N/A \u2022 Channels: N/A \u2022 Language: N/A"
+    }
+    val codec = info.audioCodec?.takeIf { it.isNotBlank() } ?: "N/A"
+    val channels = info.audioChannels?.takeIf { it.isNotBlank() } ?: "N/A"
+    val languages =
+        info.audioLanguages.filter { it.isNotBlank() }.distinct().takeIf { it.isNotEmpty() }
+            ?: listOf("N/A")
+    return "Codec: $codec \u2022 Channels: $channels \u2022 Language: ${languages.joinToString(", ")}"
 }
 
 @Composable

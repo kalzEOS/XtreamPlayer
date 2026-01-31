@@ -8,5 +8,11 @@ data class MovieInfo(
     val cast: String? = null,
     val rating: String? = null,
     val description: String? = null,
-    val year: String? = null
+    val year: String? = null,
+    val videoCodec: String? = null,
+    val videoResolution: String? = null,
+    val videoHdr: String? = null,
+    val audioCodec: String? = null,
+    val audioChannels: String? = null,
+    val audioLanguages: List<String> = emptyList()
 )
