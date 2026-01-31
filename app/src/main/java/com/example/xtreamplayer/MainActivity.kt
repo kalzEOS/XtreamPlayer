@@ -121,9 +121,9 @@ import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
 import coil.compose.AsyncImage
@@ -5863,8 +5863,7 @@ fun SectionScreen(
                         },
                         onToggleFavorite = onToggleFavorite,
                         isItemFavorite = isItemFavorite,
-                        prefetchedInfo = pendingSeriesInfo,
-                        previewEnabled = !isPlaybackActive
+                        prefetchedInfo = pendingSeriesInfo
                 )
             } else {
                 Row(
@@ -6790,8 +6789,7 @@ fun FavoritesScreen(
                         },
                         onToggleFavorite = onToggleFavorite,
                         isItemFavorite = isItemFavorite,
-                        prefetchedInfo = pendingSeriesInfo,
-                        previewEnabled = !isPlaybackActive
+                        prefetchedInfo = pendingSeriesInfo
                 )
             } else if (activeView == FavoritesView.MENU) {
                 LazyVerticalGrid(
@@ -7864,7 +7862,6 @@ fun CategorySectionScreen(
                                 onToggleFavorite = onToggleFavorite,
                                 isItemFavorite = isItemFavorite,
                                 prefetchedInfo = pendingSeriesInfo,
-                                previewEnabled = !isPlaybackActive,
                                 forceDarkText = forceDarkText,
                                 onMoveUpFromTop = { searchFocusRequester.requestFocus() }
                         )
@@ -8113,8 +8110,7 @@ fun SeriesSeasonsScreen(
         isItemFavorite: (ContentItem) -> Boolean,
         forceDarkText: Boolean = false,
         onMoveUpFromTop: (() -> Unit)? = null,
-        prefetchedInfo: SeriesInfo? = null,
-        previewEnabled: Boolean = true
+        prefetchedInfo: SeriesInfo? = null
 ) {
     BackHandler(enabled = true) { onBack() }
     val colors = AppTheme.colors
@@ -8141,74 +8137,6 @@ fun SeriesSeasonsScreen(
     val episodesTabRequester = contentItemFocusRequester
     val castTabRequester = tabFocusRequesters[1]
     val context = LocalContext.current
-    val previewCoroutineScope = rememberCoroutineScope()
-    val previewPlayer =
-        remember {
-            ExoPlayer.Builder(context)
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(C.USAGE_MEDIA)
-                        .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-                        .build(),
-                    false
-                )
-                .build()
-                .apply {
-                    volume = 0f
-                    playWhenReady = false
-                    repeatMode = Player.REPEAT_MODE_OFF
-                }
-        }
-    var focusedEpisodeId by remember { mutableStateOf<String?>(null) }
-    var previewingEpisodeId by remember { mutableStateOf<String?>(null) }
-    var previewJob by remember { mutableStateOf<Job?>(null) }
-    var previewCandidates by remember { mutableStateOf<List<String>>(emptyList()) }
-    var previewCandidateIndex by remember { mutableIntStateOf(0) }
-    val stopPreviewState by rememberUpdatedState(newValue = {
-        previewJob?.cancel()
-        previewJob = null
-        previewCandidates = emptyList()
-        previewCandidateIndex = 0
-        previewingEpisodeId = null
-        previewPlayer.stop()
-        previewPlayer.clearMediaItems()
-    })
-
-    val stopPreview: () -> Unit = { stopPreviewState() }
-
-    DisposableEffect(previewPlayer) {
-        val listener =
-            object : Player.Listener {
-                override fun onPlayerError(error: PlaybackException) {
-                    val nextIndex = previewCandidateIndex + 1
-                    if (nextIndex < previewCandidates.size) {
-                        previewCandidateIndex = nextIndex
-                        val nextUrl = previewCandidates[nextIndex]
-                        previewPlayer.setMediaItem(MediaItem.fromUri(nextUrl))
-                        previewPlayer.prepare()
-                        previewPlayer.playWhenReady = true
-                    } else {
-                        stopPreviewState()
-                    }
-                }
-            }
-        previewPlayer.addListener(listener)
-        onDispose {
-            stopPreviewState()
-            previewPlayer.removeListener(listener)
-            previewPlayer.release()
-        }
-    }
-
-    LaunchedEffect(activeTab, episodesExpanded, previewEnabled) {
-        if (activeTab != SeriesDetailTab.EPISODES || !episodesExpanded) {
-            focusedEpisodeId = null
-            stopPreview()
-        } else if (!previewEnabled) {
-            focusedEpisodeId = null
-            stopPreview()
-        }
-    }
 
     LaunchedEffect(seriesItem.streamId) {
         withFrameNanos {}
@@ -8955,7 +8883,6 @@ fun SeriesSeasonsScreen(
                         fontFamily = AppTheme.fontFamily
                     )
                 } else {
-                    val previewDelayMs = 5500L
                     val listModifier =
                         if (episodesExpanded) {
                             Modifier.fillMaxWidth().weight(1f)
@@ -9013,48 +8940,9 @@ fun SeriesSeasonsScreen(
                                         resumePositionsById[item.id]?.takeIf { it > 0 }
                                     onPlayWithPosition(item, queueItems, resumePosition)
                                 },
-                                isPreviewing = previewingEpisodeId == item.id,
-                                previewPlayer =
-                                    if (previewingEpisodeId == item.id) previewPlayer else null,
                                 onFocused = {
                                     episodesExpanded = true
                                     onItemFocused(item)
-                                    focusedEpisodeId = item.id
-                                    stopPreview()
-                                    if (previewEnabled) {
-                                        previewJob =
-                                            previewCoroutineScope.launch {
-                                                delay(previewDelayMs)
-                                                if (!previewEnabled) return@launch
-                                                if (focusedEpisodeId != item.id) return@launch
-                                                if (activeTab != SeriesDetailTab.EPISODES ||
-                                                        episodesExpanded.not()
-                                                ) {
-                                                    return@launch
-                                                }
-                                                if (item.streamId.isBlank()) return@launch
-                                                val candidates =
-                                                    StreamUrlBuilder.buildCandidates(
-                                                        config = authConfig,
-                                                        type = ContentType.SERIES,
-                                                        streamId = item.streamId,
-                                                        extension = item.containerExtension
-                                                    )
-                                                if (candidates.isEmpty()) return@launch
-                                                previewCandidates = candidates
-                                                previewCandidateIndex = 0
-                                                previewingEpisodeId = item.id
-                                                previewPlayer.setMediaItem(MediaItem.fromUri(candidates[0]))
-                                                previewPlayer.prepare()
-                                                previewPlayer.playWhenReady = true
-                                            }
-                                    }
-                                },
-                                onFocusLost = {
-                                    if (focusedEpisodeId == item.id) {
-                                        focusedEpisodeId = null
-                                    }
-                                    stopPreview()
                                 },
                                 onMoveLeft = onMoveLeft,
                                 onMoveUp =
@@ -9086,8 +8974,6 @@ private fun SeriesEpisodeRow(
         focusRequester: FocusRequester?,
         forceDarkText: Boolean,
         onActivate: () -> Unit,
-        isPreviewing: Boolean = false,
-        previewPlayer: Player? = null,
         onFocused: (() -> Unit)? = null,
         onFocusLost: (() -> Unit)? = null,
         onMoveLeft: (() -> Unit)? = null,
@@ -9167,24 +9053,7 @@ private fun SeriesEpisodeRow(
                     Modifier.width(150.dp)
                             .height(90.dp)
                             .clip(RoundedCornerShape(10.dp))
-            if (isPreviewing && previewPlayer != null) {
-                AndroidView(
-                        factory = { context ->
-                            PlayerView(context).apply {
-                                player = previewPlayer
-                                useController = false
-                                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                                setShutterBackgroundColor(AndroidColor.TRANSPARENT)
-                                setBackgroundColor(AndroidColor.TRANSPARENT)
-                                isFocusable = false
-                                isFocusableInTouchMode = false
-                                descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                            }
-                        },
-                        update = { view -> view.player = previewPlayer },
-                        modifier = thumbModifier
-                )
-            } else if (imageRequest != null) {
+            if (imageRequest != null) {
                 AsyncImage(
                         model = imageRequest,
                         contentDescription = null,
