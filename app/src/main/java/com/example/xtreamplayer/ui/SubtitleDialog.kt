@@ -1176,6 +1176,7 @@ fun PlaybackSettingsDialog(
     audioLabel: String,
     speedLabel: String,
     resolutionLabel: String,
+    showSpeedOption: Boolean,
     onAudio: () -> Unit,
     onSpeed: () -> Unit,
     onResolution: () -> Unit,
@@ -1225,12 +1226,14 @@ fun PlaybackSettingsDialog(
                     focusRequester = audioFocusRequester,
                     onClick = onAudio
                 )
-                SettingsOptionRow(
-                    label = "Speed",
-                    value = speedLabel,
-                    focusRequester = speedFocusRequester,
-                    onClick = onSpeed
-                )
+                if (showSpeedOption) {
+                    SettingsOptionRow(
+                        label = "Speed",
+                        value = speedLabel,
+                        focusRequester = speedFocusRequester,
+                        onClick = onSpeed
+                    )
+                }
                 SettingsOptionRow(
                     label = "Resolution",
                     value = resolutionLabel,

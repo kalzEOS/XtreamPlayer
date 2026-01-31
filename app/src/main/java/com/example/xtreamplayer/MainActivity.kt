@@ -111,7 +111,10 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -145,6 +148,7 @@ import com.example.xtreamplayer.content.SeriesInfo
 import com.example.xtreamplayer.content.SearchNormalizer
 import com.example.xtreamplayer.content.SubtitleRepository
 import com.example.xtreamplayer.player.Media3PlaybackEngine
+import com.example.xtreamplayer.player.BufferProfile
 import com.example.xtreamplayer.player.XtreamPlayerView
 import com.example.xtreamplayer.settings.PlaybackSettingsController
 import com.example.xtreamplayer.settings.SettingsState
@@ -295,6 +299,10 @@ fun RootScreen(
     var movieInfoInfo by remember { mutableStateOf<MovieInfo?>(null) }
     var movieInfoLoadJob by remember { mutableStateOf<Job?>(null) }
     var playbackFallbackAttempts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    var liveReconnectAttempts by remember { mutableStateOf(0) }
+    var liveReconnectJob by remember { mutableStateOf<Job?>(null) }
+    var pendingResume by remember { mutableStateOf<PendingResume?>(null) }
+    var syncPausedForPlayback by remember { mutableStateOf(false) }
     var resumePositionMs by remember { mutableStateOf<Long?>(null) }
     var resumeFocusId by remember { mutableStateOf<String?>(null) }
     val resumeFocusRequester = remember { FocusRequester() }
@@ -509,11 +517,19 @@ fun RootScreen(
         val itemsIndexed: Int = 0,
         val isActive: Boolean = false
     )
+    data class LibrarySyncRequest(
+        val config: AuthConfig,
+        val reason: String,
+        val force: Boolean,
+        val sectionsToSync: List<Section>?
+    )
     var sectionSyncStates by remember {
         mutableStateOf(mapOf<Section, SectionSyncState>())
     }
     var librarySyncJob by remember { mutableStateOf<Job?>(null) }
     var librarySyncToken by remember { mutableStateOf(0) }
+    var pendingLibrarySync by remember { mutableStateOf<LibrarySyncRequest?>(null) }
+    var lastLibrarySyncRequest by remember { mutableStateOf<LibrarySyncRequest?>(null) }
 
     // Track which sections have been synced
     var syncedSections by remember { mutableStateOf(setOf<Section>()) }
@@ -522,6 +538,17 @@ fun RootScreen(
 
     fun triggerLibrarySync(config: AuthConfig, reason: String, force: Boolean, sectionsToSync: List<Section>? = null) {
         if (isLibrarySyncing) return
+        val request = LibrarySyncRequest(
+            config = config,
+            reason = reason,
+            force = force,
+            sectionsToSync = sectionsToSync
+        )
+        lastLibrarySyncRequest = request
+        if (activePlaybackQueue != null) {
+            pendingLibrarySync = request
+            return
+        }
 
         val sections = sectionsToSync ?: listOf(Section.SERIES, Section.MOVIES, Section.LIVE)
         // Mark sections as syncing
@@ -719,6 +746,13 @@ fun RootScreen(
             val playableItems = items.filter(::isPlayableContent)
             activePlaybackItems = playableItems
             activePlaybackItem = item
+            val profile =
+                    if (item.contentType == ContentType.LIVE) {
+                        BufferProfile.LIVE
+                    } else {
+                        BufferProfile.VOD
+                    }
+            playbackEngine.setBufferProfile(profile)
             val queue = buildPlaybackQueue(items, item, config)
             activePlaybackQueue = queue
             activePlaybackTitle = queue.items.getOrNull(queue.startIndex)?.title ?: item.title
@@ -726,11 +760,31 @@ fun RootScreen(
         }
     }
 
+    val switchLiveChannel: (Int) -> Boolean = switchLiveChannel@{ delta ->
+        val config = authState.activeConfig ?: return@switchLiveChannel false
+        val current = activePlaybackItem ?: return@switchLiveChannel false
+        if (current.contentType != ContentType.LIVE) return@switchLiveChannel false
+        val liveItems = activePlaybackItems.filter { it.contentType == ContentType.LIVE }
+        if (liveItems.isEmpty()) return@switchLiveChannel false
+        val currentIndex = liveItems.indexOfFirst { it.id == current.id }.takeIf { it >= 0 }
+            ?: return@switchLiveChannel false
+        val nextIndex = ((currentIndex + delta) % liveItems.size + liveItems.size) % liveItems.size
+        val nextItem = liveItems[nextIndex]
+
+        resumePositionMs = null
+        activePlaybackItem = nextItem
+        activePlaybackTitle = nextItem.title
+        val queue = buildPlaybackQueue(liveItems, nextItem, config)
+        activePlaybackQueue = queue
+        true
+    }
+
     val handlePlayLocalFile: (Int) -> Unit = { index ->
         if (index in localFiles.indices) {
             resumeFocusId = localFiles[index].uri.toString()
             activePlaybackItems = emptyList()
             activePlaybackItem = null
+            playbackEngine.setBufferProfile(BufferProfile.VOD)
             activePlaybackQueue = buildLocalPlaybackQueue(localFiles, index)
             activePlaybackTitle = localFiles[index].displayName
             resumePositionMs = null
@@ -746,6 +800,7 @@ fun RootScreen(
             activePlaybackItems = playableItems
             activePlaybackItem = item
             resumePositionMs = if (positionMs > 0) positionMs else null
+            playbackEngine.setBufferProfile(BufferProfile.VOD)
             val queue = buildPlaybackQueue(items, item, config)
             activePlaybackQueue = queue
             activePlaybackTitle = queue.items.getOrNull(queue.startIndex)?.title ?: item.title
@@ -762,6 +817,13 @@ fun RootScreen(
                     activePlaybackItems = playableItems
                     activePlaybackItem = item
                     resumePositionMs = positionMs?.takeIf { it > 0 }
+                    val profile =
+                            if (item.contentType == ContentType.LIVE) {
+                                BufferProfile.LIVE
+                            } else {
+                                BufferProfile.VOD
+                            }
+                    playbackEngine.setBufferProfile(profile)
                     val queue = buildPlaybackQueue(items, item, config)
                     activePlaybackQueue = queue
                     activePlaybackTitle = queue.items.getOrNull(queue.startIndex)?.title ?: item.title
@@ -877,6 +939,53 @@ fun RootScreen(
         }
     }
 
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val latestPlaybackItem by rememberUpdatedState(activePlaybackItem)
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> {
+                    val item = latestPlaybackItem
+                    if (item != null &&
+                                    (item.contentType == ContentType.MOVIES ||
+                                            item.contentType == ContentType.SERIES)
+                    ) {
+                        val position = playbackEngine.player.currentPosition
+                        val duration = playbackEngine.player.duration
+                        if (duration > 0 && position > 0) {
+                            pendingResume =
+                                    PendingResume(
+                                            mediaId = item.id,
+                                            positionMs = position,
+                                            shouldPlay = playbackEngine.player.isPlaying
+                                    )
+                        }
+                        savePlaybackProgress()
+                        playbackEngine.player.playWhenReady = false
+                    }
+                }
+                Lifecycle.Event.ON_START -> {
+                    val item = latestPlaybackItem
+                    val resume = pendingResume
+                    if (item != null &&
+                                    resume != null &&
+                                    resume.mediaId == item.id &&
+                                    (item.contentType == ContentType.MOVIES ||
+                                            item.contentType == ContentType.SERIES)
+                    ) {
+                        playbackEngine.player.seekTo(resume.positionMs)
+                        playbackEngine.player.playWhenReady = resume.shouldPlay
+                        pendingResume = null
+                    }
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     // Periodic playback tracking
     LaunchedEffect(activePlaybackQueue, activePlaybackItem) {
         while (activePlaybackQueue != null && activePlaybackItem != null) {
@@ -891,6 +1000,67 @@ fun RootScreen(
             playerResetNonce++
             pendingPlayerReset = false
         }
+    }
+
+    LaunchedEffect(activePlaybackQueue, syncState, progressiveSyncCoordinator) {
+        val coordinator = progressiveSyncCoordinator
+        if (activePlaybackQueue != null) {
+            val shouldPause =
+                    syncState.phase == com.example.xtreamplayer.content.SyncPhase.FAST_START ||
+                            syncState.phase == com.example.xtreamplayer.content.SyncPhase.BACKGROUND_FULL ||
+                            syncState.phase == com.example.xtreamplayer.content.SyncPhase.ON_DEMAND_BOOST
+            if (!syncPausedForPlayback && shouldPause) {
+                if (coordinator != null) {
+                    coordinator.pauseAllForPlayback()
+                }
+                syncPausedForPlayback = true
+            }
+            if (librarySyncJob?.isActive == true) {
+                pendingLibrarySync = lastLibrarySyncRequest
+                        ?: LibrarySyncRequest(
+                                config = authState.activeConfig ?: return@LaunchedEffect,
+                                reason = "Syncing library",
+                                force = false,
+                                sectionsToSync = null
+                        )
+                librarySyncJob?.cancel()
+                librarySyncJob = null
+                sectionSyncStates = emptyMap()
+            }
+        } else {
+            if (syncPausedForPlayback) {
+                syncPausedForPlayback = false
+                coordinator?.resumeAfterPlayback()
+            }
+            if (pendingLibrarySync != null) {
+                val request = pendingLibrarySync
+                pendingLibrarySync = null
+                if (request != null) {
+                    triggerLibrarySync(
+                            config = request.config,
+                            reason = "Resuming library sync",
+                            force = request.force,
+                            sectionsToSync = request.sectionsToSync
+                    )
+                }
+            }
+        }
+    }
+
+    fun attemptLiveReconnect(): Boolean {
+        val item = activePlaybackItem
+        if (item?.contentType != ContentType.LIVE) return false
+        if (liveReconnectAttempts >= LIVE_RECONNECT_MAX_ATTEMPTS) return false
+        if (liveReconnectJob?.isActive == true) return true
+        liveReconnectAttempts += 1
+        Toast.makeText(context, "Reconnecting...", Toast.LENGTH_SHORT).show()
+        liveReconnectJob =
+                coroutineScope.launch {
+                    delay(LIVE_RECONNECT_DELAY_MS)
+                    playbackEngine.player.prepare()
+                    playbackEngine.player.playWhenReady = true
+                }
+        return true
     }
 
     DisposableEffect(playbackEngine, playerResetNonce) {
@@ -912,9 +1082,19 @@ fun RootScreen(
                         ) {
                             savePlaybackProgress()
                         }
+                        if (playbackState == Player.STATE_READY &&
+                                        activePlaybackItem?.contentType == ContentType.LIVE
+                        ) {
+                            liveReconnectAttempts = 0
+                            liveReconnectJob?.cancel()
+                            liveReconnectJob = null
+                        }
                     }
 
                     override fun onPlayerError(error: PlaybackException) {
+                        if (attemptLiveReconnect()) {
+                            return
+                        }
                         pendingPlayerReset = true
                         val currentFormat =
                                 playbackEngine.player.videoFormat
@@ -1706,7 +1886,7 @@ fun RootScreen(
             val queueItems = activePlaybackQueue?.items ?: emptyList()
             val hasNextEpisode = currentIndex >= 0 && currentIndex < queueItems.size - 1
             val nextEpisodeTitle = queueItems.getOrNull(currentIndex + 1)?.title
-            val currentType = queueItems.getOrNull(currentIndex)?.type
+            val currentType = activePlaybackItem?.contentType ?: queueItems.getOrNull(currentIndex)?.type
 
             PlayerOverlay(
                     title = activePlaybackTitle ?: "",
@@ -1729,7 +1909,8 @@ fun RootScreen(
                     currentContentType = currentType,
                     nextEpisodeTitle = nextEpisodeTitle,
                     hasNextEpisode = hasNextEpisode,
-                    onPlayNextEpisode = { playbackEngine.player.seekToNextMediaItem() }
+                    onPlayNextEpisode = { playbackEngine.player.seekToNextMediaItem() },
+                    onLiveChannelSwitch = switchLiveChannel
             )
         }
 
@@ -1760,8 +1941,18 @@ fun RootScreen(
                 currentKey = settings.openSubtitlesApiKey,
                 currentUserAgent = settings.openSubtitlesUserAgent,
                 onSave = { apiKey, userAgent ->
-                    settingsViewModel.setOpenSubtitlesApiKey(apiKey.trim())
-                    settingsViewModel.setOpenSubtitlesUserAgent(userAgent.trim())
+                    val trimmedKey = apiKey.trim()
+                    val trimmedAgent = userAgent.trim()
+                    if (trimmedKey.isBlank() && trimmedAgent.isBlank()) {
+                        Toast.makeText(
+                                context,
+                                "Enter OpenSubtitles API key or User Agent",
+                                Toast.LENGTH_SHORT
+                        ).show()
+                        return@ApiKeyInputDialog
+                    }
+                    settingsViewModel.setOpenSubtitlesApiKey(trimmedKey)
+                    settingsViewModel.setOpenSubtitlesUserAgent(trimmedAgent)
                     showApiKeyDialog = false
                     Toast.makeText(context, "OpenSubtitles settings saved", Toast.LENGTH_SHORT)
                             .show()
@@ -1845,6 +2036,12 @@ private data class LocalFileItem(
         val mediaType: LocalMediaType = LocalMediaType.VIDEO
 )
 
+private data class PendingResume(
+        val mediaId: String,
+        val positionMs: Long,
+        val shouldPlay: Boolean
+)
+
 @OptIn(UnstableApi::class)
 @Composable
 private fun PlayerOverlay(
@@ -1862,7 +2059,8 @@ private fun PlayerOverlay(
         currentContentType: ContentType?,
         nextEpisodeTitle: String?,
         hasNextEpisode: Boolean,
-        onPlayNextEpisode: () -> Unit
+        onPlayNextEpisode: () -> Unit,
+        onLiveChannelSwitch: (Int) -> Boolean
 ) {
     val context = LocalContext.current
     val interactionSource = remember { MutableInteractionSource() }
@@ -1877,6 +2075,14 @@ private fun PlayerOverlay(
     var showPlaybackSettingsDialog by remember { mutableStateOf(false) }
     var showPlaybackSpeedDialog by remember { mutableStateOf(false) }
     var showResolutionDialog by remember { mutableStateOf(false) }
+    val hasModalOpen =
+            showPlaybackSettingsDialog ||
+                    showResolutionDialog ||
+                    showAudioTrackDialog ||
+                    showAudioBoostDialog ||
+                    showPlaybackSpeedDialog ||
+                    showSubtitleDialog ||
+                    showSubtitleOptionsDialog
     var subtitleDialogState by remember {
         mutableStateOf<SubtitleDialogState>(SubtitleDialogState.Idle)
     }
@@ -2105,11 +2311,13 @@ private fun PlayerOverlay(
                         useController = true
                         controllerAutoShow = false
                         setControllerShowTimeoutMs(3000)
+                        defaultControllerTimeoutMs = 3000
                         setShutterBackgroundColor(AndroidColor.BLACK)
                         setBackgroundColor(AndroidColor.BLACK)
                         this.resizeMode = resizeMode.resizeMode
                         forcedAspectRatio = resizeMode.forcedAspectRatio
                         setResizeModeLabel(resizeMode.label)
+                        titleText = title
                         onResizeModeClick = { resizeMode = nextResizeMode(resizeMode) }
                         onBackClick = onExit
                         onSubtitleDownloadClick = { showSubtitleDialog = true }
@@ -2117,6 +2325,34 @@ private fun PlayerOverlay(
                         onAudioTrackClick = { showAudioTrackDialog = true }
                         onAudioBoostClick = { showAudioBoostDialog = true }
                         onSettingsClick = { showPlaybackSettingsDialog = true }
+                        isLiveContent = currentContentType == ContentType.LIVE
+                        fastSeekEnabled = currentContentType != ContentType.LIVE
+                        onToggleControls = {
+                            if (hasModalOpen) {
+                                false
+                            } else {
+                                if (isControllerFullyVisible()) {
+                                    hideController()
+                                } else {
+                                    showController()
+                                }
+                                true
+                            }
+                        }
+                        onChannelUp = {
+                            if (!hasModalOpen && currentContentType == ContentType.LIVE) {
+                                onLiveChannelSwitch(1)
+                            } else {
+                                false
+                            }
+                        }
+                        onChannelDown = {
+                            if (!hasModalOpen && currentContentType == ContentType.LIVE) {
+                                onLiveChannelSwitch(-1)
+                            } else {
+                                false
+                            }
+                        }
                         isFocusable = true
                         isFocusableInTouchMode = true
                         setControllerVisibilityListener(
@@ -2134,6 +2370,15 @@ private fun PlayerOverlay(
                             if (event.action != KeyEvent.ACTION_DOWN) {
                                 return@setOnKeyListener false
                             }
+                            val hasModalOpen =
+                                    showPlaybackSettingsDialog ||
+                                            showResolutionDialog ||
+                                            showAudioTrackDialog ||
+                                            showAudioBoostDialog ||
+                                            showPlaybackSpeedDialog ||
+                                            showSubtitleDialog ||
+                                            showSubtitleOptionsDialog
+                            // Live channel switching is handled inside XtreamPlayerView based on controller visibility.
                             if (event.keyCode == KeyEvent.KEYCODE_BACK ||
                                             event.keyCode == KeyEvent.KEYCODE_ESCAPE
                             ) {
@@ -2161,6 +2406,7 @@ private fun PlayerOverlay(
                     view.resizeMode = resizeMode.resizeMode
                     view.forcedAspectRatio = resizeMode.forcedAspectRatio
                     view.setResizeModeLabel(resizeMode.label)
+                    view.titleText = title
                     view.onResizeModeClick = { resizeMode = nextResizeMode(resizeMode) }
                     view.onBackClick = onExit
                     view.onSubtitleDownloadClick = { showSubtitleDialog = true }
@@ -2168,27 +2414,40 @@ private fun PlayerOverlay(
                     view.onAudioTrackClick = { showAudioTrackDialog = true }
                     view.onAudioBoostClick = { showAudioBoostDialog = true }
                     view.onSettingsClick = { showPlaybackSettingsDialog = true }
+                    view.isLiveContent = currentContentType == ContentType.LIVE
+                    view.fastSeekEnabled = currentContentType != ContentType.LIVE
+                    view.defaultControllerTimeoutMs = 3000
+                    view.onToggleControls = {
+                        if (hasModalOpen) {
+                            false
+                        } else {
+                            if (view.isControllerFullyVisible()) {
+                                view.hideController()
+                            } else {
+                                view.showController()
+                            }
+                            true
+                        }
+                    }
+                    view.onChannelUp = {
+                        if (!hasModalOpen && currentContentType == ContentType.LIVE) {
+                            onLiveChannelSwitch(1)
+                        } else {
+                            false
+                        }
+                    }
+                    view.onChannelDown = {
+                        if (!hasModalOpen && currentContentType == ContentType.LIVE) {
+                            onLiveChannelSwitch(-1)
+                        } else {
+                            false
+                        }
+                    }
                     if (playerView != view) {
                         playerView = view
                     }
                 }
         )
-        if (controlsVisible) {
-            Row(
-                    modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                        text = title,
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontFamily = AppTheme.fontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        letterSpacing = 0.6.sp
-                )
-            }
-        }
-
         // Next Episode Overlay
         if (showNextEpisodeOverlay && nextEpisodeTitle != null) {
             NextEpisodeOverlay(
@@ -2335,11 +2594,20 @@ private fun PlayerOverlay(
                 videoTracks.firstOrNull { it.isSelected }?.label
                         ?: if (videoTracks.isEmpty()) "Unknown" else videoTracks.first().label
         val speedLabel = "${player.playbackParameters.speed}x"
+        val resolutionMode =
+                if (playbackEngine.isVideoOverrideActive()) {
+                    "Manual"
+                } else {
+                    "Auto"
+                }
+        val resolutionLabel = "$resolutionMode \u2022 $selectedResolution"
+        val showSpeedOption = currentContentType != ContentType.LIVE
 
         PlaybackSettingsDialog(
                 audioLabel = selectedAudio,
                 speedLabel = speedLabel,
-                resolutionLabel = selectedResolution,
+                resolutionLabel = resolutionLabel,
+                showSpeedOption = showSpeedOption,
                 onAudio = {
                     showPlaybackSettingsDialog = false
                     showAudioTrackDialog = true
@@ -2357,15 +2625,19 @@ private fun PlayerOverlay(
     }
 
     if (showPlaybackSpeedDialog) {
-        PlaybackSpeedDialog(
-                currentSpeed = player.playbackParameters.speed,
-                onSpeedSelected = { speed ->
-                    player.setPlaybackParameters(
-                            androidx.media3.common.PlaybackParameters(speed)
-                    )
-                },
-                onDismiss = { showPlaybackSpeedDialog = false }
-        )
+        if (currentContentType == ContentType.LIVE) {
+            showPlaybackSpeedDialog = false
+        } else {
+            PlaybackSpeedDialog(
+                    currentSpeed = player.playbackParameters.speed,
+                    onSpeedSelected = { speed ->
+                        player.setPlaybackParameters(
+                                androidx.media3.common.PlaybackParameters(speed)
+                        )
+                    },
+                    onDismiss = { showPlaybackSpeedDialog = false }
+            )
+        }
     }
 
     if (showResolutionDialog) {
@@ -2867,6 +3139,8 @@ private const val POSTER_ASPECT_RATIO = 2f / 3f
 private const val LANDSCAPE_ASPECT_RATIO = 16f / 9f
 private val NAV_WIDTH = 220.dp
 private const val NAV_ANIM_DURATION_MS = 180
+private const val LIVE_RECONNECT_MAX_ATTEMPTS = 3
+private const val LIVE_RECONNECT_DELAY_MS = 1_000L
 private val CONTENT_HORIZONTAL_PADDING = 104.dp
 
 @Composable

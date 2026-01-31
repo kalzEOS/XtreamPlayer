@@ -12,12 +12,16 @@ import com.example.xtreamplayer.content.MovieInfo
 import com.example.xtreamplayer.content.SeriesInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
+import java.net.SocketException
+import java.net.SocketTimeoutException
+import java.util.concurrent.TimeUnit
 
 class XtreamApi(
     private val client: OkHttpClient = OkHttpClient()
@@ -62,40 +66,55 @@ class XtreamApi(
             return Result.success(ContentPage(items = emptyList(), endReached = true))
         }
         return withContext(Dispatchers.IO) {
-            try {
-                val action = actionForSection(section)
-                val offset = page * limit
-                val url = buildApiUrl(
-                    config,
-                    action,
-                    mapOf(
-                        "start" to offset.toString(),
-                        "limit" to limit.toString()
-                    )
-                ) ?: return@withContext Result.failure(
-                    IllegalArgumentException("Invalid service URL")
+            val action = actionForSection(section)
+            val offset = page * limit
+            val url = buildApiUrl(
+                config,
+                action,
+                mapOf(
+                    "start" to offset.toString(),
+                    "limit" to limit.toString()
                 )
+            ) ?: return@withContext Result.failure(
+                IllegalArgumentException("Invalid service URL")
+            )
 
-                val request = Request.Builder().url(url).get().build()
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        return@withContext Result.failure(
-                            IllegalStateException("Request failed: ${response.code}")
+            val pageClient = client.newBuilder()
+                .readTimeout(60, TimeUnit.SECONDS)
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .build()
+
+            var lastError: Exception? = null
+            repeat(3) { attempt ->
+                try {
+                    val request = Request.Builder().url(url).get().build()
+                    pageClient.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            return@withContext Result.failure(
+                                IllegalStateException("Request failed: ${response.code}")
+                            )
+                        }
+                        val body = response.body ?: return@withContext Result.failure(
+                            IllegalStateException("Empty response")
                         )
+                        body.charStream().use { stream ->
+                            val reader = JsonReader(stream)
+                            val pageData = parsePage(reader, section, offset, limit)
+                            return@withContext Result.success(pageData)
+                        }
                     }
-                    val body = response.body ?: return@withContext Result.failure(
-                        IllegalStateException("Empty response")
-                    )
-                    body.charStream().use { stream ->
-                        val reader = JsonReader(stream)
-                        val pageData = parsePage(reader, section, offset, limit)
-                        Result.success(pageData)
+                } catch (e: Exception) {
+                    lastError = e
+                    val isTimeout = e is SocketTimeoutException || e is SocketException
+                    Timber.e(e, "Failed to fetch section page: section=$section, page=$page")
+                    if (isTimeout && attempt < 2) {
+                        delay(500L * (attempt + 1))
+                    } else {
+                        return@withContext Result.failure(e)
                     }
                 }
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to fetch section page: section=$section, page=$page")
-                Result.failure(e)
             }
+            Result.failure(lastError ?: IllegalStateException("Request failed"))
         }
     }
 

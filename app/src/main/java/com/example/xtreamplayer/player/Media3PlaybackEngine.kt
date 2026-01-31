@@ -27,15 +27,7 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
     private val renderersFactory = DefaultRenderersFactory(appContext)
         .setEnableDecoderFallback(true)
         .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
-    private val loadControl = DefaultLoadControl.Builder()
-        .setBufferDurationsMs(
-            MIN_BUFFER_MS,
-            MAX_BUFFER_MS,
-            BUFFER_FOR_PLAYBACK_MS,
-            BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS
-        )
-        .setPrioritizeTimeOverSizeThresholds(true)
-        .build()
+    private var bufferProfile: BufferProfile = BufferProfile.VOD
     private val audioAttributes = AudioAttributes.Builder()
         .setUsage(C.USAGE_MEDIA)
         .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -46,7 +38,7 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
                 updateLoudnessEnhancer(audioSessionId)
             }
         }
-    var player: ExoPlayer = buildPlayer()
+    var player: ExoPlayer = buildPlayer(buildLoadControl(bufferProfile))
     private var currentMedia: Uri? = null
     private var loudnessEnhancer: LoudnessEnhancer? = null
     private var loudnessSessionId: Int = C.AUDIO_SESSION_ID_UNSET
@@ -122,10 +114,16 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
         loudnessEnhancer = null
         loudnessSessionId = C.AUDIO_SESSION_ID_UNSET
         currentMedia = null
-        player = buildPlayer()
+        player = buildPlayer(buildLoadControl(bufferProfile))
         updateLoudnessEnhancer(player.audioSessionId)
         applySettings(lastSettings)
         setAudioBoostDb(boostDb)
+    }
+
+    fun setBufferProfile(profile: BufferProfile) {
+        if (bufferProfile == profile) return
+        bufferProfile = profile
+        rebuildPlayerPreservingState()
     }
 
     fun getAudioBoostDb(): Float = boostDb
@@ -159,9 +157,11 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
         private const val MAX_BOOST_DB = 12f
     }
 
-    private fun buildPlayer(): ExoPlayer {
+    private fun buildPlayer(loadControl: DefaultLoadControl): ExoPlayer {
         return ExoPlayer.Builder(appContext, renderersFactory)
             .setLoadControl(loadControl)
+            .setSeekBackIncrementMs(SEEK_BACK_INCREMENT_MS)
+            .setSeekForwardIncrementMs(SEEK_FORWARD_INCREMENT_MS)
             .build()
             .apply {
                 setAudioAttributes(audioAttributes, true)
@@ -169,6 +169,40 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
                 volume = 1f
                 addListener(playerListener)
             }
+    }
+
+    private fun rebuildPlayerPreservingState() {
+        val oldPlayer = player
+        val mediaItems =
+            if (oldPlayer.mediaItemCount > 0) {
+                (0 until oldPlayer.mediaItemCount).map { index ->
+                    oldPlayer.getMediaItemAt(index)
+                }
+            } else {
+                emptyList()
+            }
+        val currentIndex = oldPlayer.currentMediaItemIndex
+        val currentPosition = oldPlayer.currentPosition
+        val playWhenReady = oldPlayer.playWhenReady
+        val trackParameters = oldPlayer.trackSelectionParameters
+
+        oldPlayer.removeListener(playerListener)
+        oldPlayer.release()
+        loudnessEnhancer?.release()
+        loudnessEnhancer = null
+        loudnessSessionId = C.AUDIO_SESSION_ID_UNSET
+
+        player = buildPlayer(buildLoadControl(bufferProfile))
+        player.trackSelectionParameters = trackParameters
+        updateLoudnessEnhancer(player.audioSessionId)
+        setAudioBoostDb(boostDb)
+
+        if (mediaItems.isNotEmpty()) {
+            val safeIndex = currentIndex.coerceAtLeast(0)
+            player.setMediaItems(mediaItems, safeIndex, currentPosition)
+            player.prepare()
+            player.playWhenReady = playWhenReady
+        }
     }
 
     private fun guessMimeType(uri: Uri): String? {
@@ -191,7 +225,7 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
                     val format = trackGroup.getTrackFormat(i)
                     val languageCode = format.language ?: "und"
                     val languageName = getLanguageName(languageCode)
-                    val label = format.label ?: languageName
+                    val label = buildAudioTrackLabel(format, languageName)
                     val isSelected = trackGroup.isTrackSelected(i)
                     val isSupported = trackGroup.isTrackSupported(i)
                     tracks.add(
@@ -208,6 +242,14 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
             }
         }
         return tracks
+    }
+
+    fun isVideoOverrideActive(): Boolean {
+        val overrides = player.trackSelectionParameters.overrides
+        if (overrides.isEmpty()) return false
+        return player.currentTracks.groups.any { group ->
+            group.type == C.TRACK_TYPE_VIDEO && overrides.containsKey(group.mediaTrackGroup)
+        }
     }
 
     @OptIn(UnstableApi::class)
@@ -401,6 +443,59 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
         }
     }
 
+    private fun buildAudioTrackLabel(format: Format, languageName: String): String {
+        val parts = mutableListOf<String>()
+        val baseLabel =
+            format.label?.takeIf { it.isNotBlank() }
+                ?: languageName.takeIf { it != "Unknown" }
+                ?: "Audio"
+        parts.add(baseLabel)
+
+        val channels = formatChannelCount(format.channelCount)
+        if (channels != null) {
+            parts.add(channels)
+        }
+
+        val codec = formatAudioCodec(format)
+        if (codec != null) {
+            parts.add(codec)
+        }
+
+        return parts.joinToString(" \u2022 ")
+    }
+
+    private fun formatChannelCount(channelCount: Int): String? {
+        if (channelCount <= 0) return null
+        return when (channelCount) {
+            1 -> "1.0"
+            2 -> "2.0"
+            3 -> "2.1"
+            4 -> "4.0"
+            5 -> "5.0"
+            6 -> "5.1"
+            7 -> "6.1"
+            8 -> "7.1"
+            else -> "${channelCount}.0"
+        }
+    }
+
+    private fun formatAudioCodec(format: Format): String? {
+        val codec = format.codecs ?: format.sampleMimeType ?: return null
+        val normalized = codec.lowercase()
+        return when {
+            normalized.contains("ec-3") || normalized.contains("eac3") -> "E-AC3"
+            normalized.contains("ac-3") || normalized.contains("ac3") -> "AC-3"
+            normalized.contains("truehd") -> "TrueHD"
+            normalized.contains("dts") -> "DTS"
+            normalized.contains("flac") -> "FLAC"
+            normalized.contains("opus") -> "Opus"
+            normalized.contains("mp4a") || normalized.contains("aac") -> "AAC"
+            normalized.contains("mp3") -> "MP3"
+            normalized.contains("vorbis") -> "Vorbis"
+            else -> format.sampleMimeType?.uppercase()
+        }
+    }
+
     private fun buildVideoTrackLabel(format: Format): String {
         val parts = mutableListOf<String>()
         val height = format.height
@@ -442,7 +537,37 @@ data class VideoTrackInfo(
     val isSupported: Boolean
 )
 
-private const val MIN_BUFFER_MS = 20_000
-private const val MAX_BUFFER_MS = 90_000
-private const val BUFFER_FOR_PLAYBACK_MS = 2_500
-private const val BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 5_000
+enum class BufferProfile(
+    val minBufferMs: Int,
+    val maxBufferMs: Int,
+    val bufferForPlaybackMs: Int,
+    val bufferForPlaybackAfterRebufferMs: Int
+) {
+    LIVE(
+        minBufferMs = 5_000,
+        maxBufferMs = 25_000,
+        bufferForPlaybackMs = 1_000,
+        bufferForPlaybackAfterRebufferMs = 2_000
+    ),
+    VOD(
+        minBufferMs = 25_000,
+        maxBufferMs = 120_000,
+        bufferForPlaybackMs = 2_500,
+        bufferForPlaybackAfterRebufferMs = 5_000
+    )
+}
+
+private const val SEEK_BACK_INCREMENT_MS = 15_000L
+private const val SEEK_FORWARD_INCREMENT_MS = 30_000L
+
+private fun buildLoadControl(profile: BufferProfile): DefaultLoadControl {
+    return DefaultLoadControl.Builder()
+        .setBufferDurationsMs(
+            profile.minBufferMs,
+            profile.maxBufferMs,
+            profile.bufferForPlaybackMs,
+            profile.bufferForPlaybackAfterRebufferMs
+        )
+        .setPrioritizeTimeOverSizeThresholds(true)
+        .build()
+}

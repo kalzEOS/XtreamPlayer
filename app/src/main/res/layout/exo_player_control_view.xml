@@ -26,15 +26,35 @@
         android:layout_height="0dp"
         android:background="@color/exo_black_opacity_60" />
 
-    <ImageButton
-        android:id="@+id/exo_back"
-        style="@style/ExoStyledControls.Button.Bottom"
+    <LinearLayout
+        android:id="@+id/exo_top_bar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
         android:layout_gravity="top|start"
         android:layout_margin="@dimen/exo_styled_controls_padding"
-        android:src="@drawable/ic_back"
-        android:contentDescription="@string/exo_controls_back_description"
-        android:focusable="true"
-        android:clickable="true" />
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <ImageButton
+            android:id="@+id/exo_back"
+            style="@style/ExoStyledControls.Button.Bottom"
+            android:layout_margin="0dp"
+            android:src="@drawable/ic_back"
+            android:contentDescription="@string/exo_controls_back_description"
+            android:focusable="true"
+            android:clickable="true" />
+
+        <TextView
+            android:id="@+id/exo_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:textColor="@color/exo_white"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:maxLines="1"
+            android:ellipsize="end" />
+    </LinearLayout>
 
     <FrameLayout
         android:id="@id/exo_bottom_bar"

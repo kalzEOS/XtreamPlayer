@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="exo_icon_size">56dp</dimen>
+    <dimen name="exo_icon_padding">12dp</dimen>
+    <dimen name="exo_icon_horizontal_margin">6dp</dimen>
+    <!-- Use library defaults for rewind/ffwd label sizing to avoid clipping. -->
+
+    <dimen name="exo_small_icon_width">36dp</dimen>
+    <dimen name="exo_small_icon_height">36dp</dimen>
+    <dimen name="exo_small_icon_horizontal_margin">6dp</dimen>
+    <dimen name="exo_small_icon_padding_horizontal">8dp</dimen>
+    <dimen name="exo_small_icon_padding_vertical">8dp</dimen>
+
+    <dimen name="exo_styled_bottom_bar_height">64dp</dimen>
+    <dimen name="exo_styled_bottom_bar_time_padding">12dp</dimen>
+    <dimen name="exo_styled_controls_padding">16dp</dimen>
+
+    <dimen name="exo_styled_progress_layout_height">12dp</dimen>
+    <dimen name="exo_styled_progress_bar_height">4dp</dimen>
+</resources>
