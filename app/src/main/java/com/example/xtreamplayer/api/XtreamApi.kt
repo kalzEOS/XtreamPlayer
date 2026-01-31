@@ -15,6 +15,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
 
@@ -463,6 +464,90 @@ class XtreamApi(
                     val movieData = json.optJSONObject("movie_data")
 
                     fun String?.nullIfBlank(): String? = this?.trim()?.takeIf { it.isNotEmpty() }
+                    fun normalizeCodec(value: String?): String? {
+                        val raw = value?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+                        return when (raw.lowercase()) {
+                            "eac3", "ec-3", "e-ac3" -> "E-AC3"
+                            "ac3", "ac-3" -> "AC3"
+                            "aac" -> "AAC"
+                            "mp3" -> "MP3"
+                            "dts", "dts-hd" -> raw.uppercase()
+                            "truehd" -> "TrueHD"
+                            "flac" -> "FLAC"
+                            "opus" -> "Opus"
+                            "h265", "hevc" -> "HEVC"
+                            "h264", "avc" -> "H.264"
+                            "vp9" -> "VP9"
+                            "av1" -> "AV1"
+                            else -> raw.uppercase()
+                        }
+                    }
+                    fun parseInt(value: String?): Int? = value?.trim()?.toIntOrNull()
+                    fun formatResolution(width: Int?, height: Int?, fallback: String?): String? {
+                        val fallbackText = fallback?.trim()?.takeIf { it.isNotEmpty() }
+                        if (width == null || height == null) {
+                            if (fallbackText == null) return null
+                            val dims = fallbackText.lowercase()
+                            if (dims.contains("x")) {
+                                val parts = dims.split("x")
+                                val h = parts.getOrNull(1)?.filter { it.isDigit() }?.toIntOrNull()
+                                if (h != null) {
+                                    return formatResolution(null, h, null)
+                                }
+                            }
+                            if (dims.endsWith("p")) {
+                                return dims.uppercase()
+                            }
+                            return null
+                        }
+                        val h = height.coerceAtLeast(width)
+                        return when {
+                            h >= 2160 -> "4K"
+                            h >= 1440 -> "1440p"
+                            h >= 1080 -> "1080p"
+                            h >= 720 -> "720p"
+                            h > 0 -> "${h}p"
+                            else -> null
+                        }
+                    }
+                    fun formatChannels(raw: String?): String? {
+                        val value = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+                        val numeric = value.toIntOrNull()
+                        return when (numeric) {
+                            8 -> "7.1"
+                            6 -> "5.1"
+                            2 -> "2.0"
+                            1 -> "1.0"
+                            else -> if (value.contains(".")) value else null
+                        } ?: value
+                    }
+                    fun parseLanguages(vararg sources: Any?): List<String> {
+                        val languages = mutableListOf<String>()
+                        sources.forEach { source ->
+                            when (source) {
+                                is String -> {
+                                    val parts =
+                                        source.split(",", "/", "|", ";")
+                                            .map { it.trim() }
+                                            .filter { it.isNotEmpty() }
+                                    languages.addAll(parts)
+                                }
+                                is JSONArray -> {
+                                    for (index in 0 until source.length()) {
+                                        val value = source.optString(index).trim()
+                                        if (value.isNotEmpty()) languages.add(value)
+                                    }
+                                }
+                            }
+                        }
+                        return languages
+                            .map {
+                                if (it.length <= 3) it.uppercase() else it.replaceFirstChar { ch ->
+                                    ch.uppercase()
+                                }
+                            }
+                            .distinct()
+                    }
 
                     val durationValue =
                         info?.optString("duration").nullIfBlank()
@@ -476,6 +561,43 @@ class XtreamApi(
                             ?: movieData?.optString("release_date").nullIfBlank()
                             ?: movieData?.optString("year").nullIfBlank()
 
+                    val videoInfo = info?.optJSONObject("video")
+                    val audioInfo = info?.optJSONObject("audio")
+                    val videoResolution =
+                        formatResolution(
+                            parseInt(videoInfo?.optString("width")),
+                            parseInt(videoInfo?.optString("height")),
+                            videoInfo?.optString("resolution")
+                        )
+                    val rawHdr =
+                        videoInfo?.optString("hdr")
+                            ?: info?.optString("hdr")
+                            ?: videoInfo?.optString("hdr_format")
+                            ?: videoInfo?.optString("dolby_vision")
+                    val hdrValue =
+                        rawHdr?.trim()?.takeIf { it.isNotEmpty() }?.lowercase()?.let { hdr ->
+                            when {
+                                hdr.contains("dolby") -> "Dolby Vision"
+                                hdr.contains("hdr10+") -> "HDR10+"
+                                hdr.contains("hdr10") -> "HDR10"
+                                hdr.contains("hlg") -> "HLG"
+                                hdr == "true" || hdr == "1" -> "HDR"
+                                else -> hdr.uppercase()
+                            }
+                        }
+                    val videoCodec = normalizeCodec(videoInfo?.optString("codec"))
+                    val audioCodec = normalizeCodec(audioInfo?.optString("codec"))
+                    val audioChannels = formatChannels(audioInfo?.optString("channels"))
+                    val audioLanguages =
+                        parseLanguages(
+                            audioInfo?.opt("language"),
+                            audioInfo?.opt("languages"),
+                            audioInfo?.opt("lang"),
+                            info?.opt("audio_language"),
+                            info?.opt("audio_languages"),
+                            info?.opt("lang_audio")
+                        )
+
                     val movieInfo = MovieInfo(
                         director = info?.optString("director").nullIfBlank(),
                         releaseDate = releaseDateValue,
@@ -485,7 +607,13 @@ class XtreamApi(
                         rating = info?.optString("rating_5based").nullIfBlank()
                             ?: info?.optString("rating").nullIfBlank(),
                         description = info?.optString("plot").nullIfBlank(),
-                        year = movieData?.optString("year").nullIfBlank()
+                        year = movieData?.optString("year").nullIfBlank(),
+                        videoCodec = videoCodec,
+                        videoResolution = videoResolution,
+                        videoHdr = hdrValue,
+                        audioCodec = audioCodec,
+                        audioChannels = audioChannels,
+                        audioLanguages = audioLanguages
                     )
                     Result.success(movieInfo)
                 }

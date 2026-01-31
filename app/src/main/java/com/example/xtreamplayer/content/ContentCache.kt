@@ -144,7 +144,18 @@ class ContentCache(context: Context) {
                     cast = obj.optString("cast").ifBlank { null },
                     rating = obj.optString("rating").ifBlank { null },
                     description = obj.optString("description").ifBlank { null },
-                    year = obj.optString("year").ifBlank { null }
+                    year = obj.optString("year").ifBlank { null },
+                    videoCodec = obj.optString("videoCodec").ifBlank { null },
+                    videoResolution = obj.optString("videoResolution").ifBlank { null },
+                    videoHdr = obj.optString("videoHdr").ifBlank { null },
+                    audioCodec = obj.optString("audioCodec").ifBlank { null },
+                    audioChannels = obj.optString("audioChannels").ifBlank { null },
+                    audioLanguages =
+                        obj.optJSONArray("audioLanguages")?.let { array ->
+                            List(array.length()) { index ->
+                                array.optString(index)
+                            }.filter { it.isNotBlank() }
+                        } ?: emptyList()
                 )
             }.getOrNull()
         }
@@ -166,6 +177,14 @@ class ContentCache(context: Context) {
             obj.put("rating", info.rating ?: "")
             obj.put("description", info.description ?: "")
             obj.put("year", info.year ?: "")
+            obj.put("videoCodec", info.videoCodec ?: "")
+            obj.put("videoResolution", info.videoResolution ?: "")
+            obj.put("videoHdr", info.videoHdr ?: "")
+            obj.put("audioCodec", info.audioCodec ?: "")
+            obj.put("audioChannels", info.audioChannels ?: "")
+            val languageArray = JSONArray()
+            info.audioLanguages.forEach { languageArray.put(it) }
+            obj.put("audioLanguages", languageArray)
             obj.put("cachedAt", System.currentTimeMillis())
             runCatching { file.writeText(obj.toString()) }
         }
