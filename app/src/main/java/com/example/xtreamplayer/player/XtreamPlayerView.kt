@@ -2,9 +2,14 @@ package com.example.xtreamplayer.player
 
 import android.content.Context
 import android.util.AttributeSet
+import android.view.KeyEvent
 import android.view.View
 import android.widget.PopupWindow
 import android.widget.TextView
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.view.ViewTreeObserver
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerControlView
@@ -18,6 +23,7 @@ class XtreamPlayerView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0
 ) : PlayerView(context, attrs, defStyleAttr) {
+
     private var lastVideoAspectRatio = 0f
     private var resizeModeView: TextView? = null
     private var resizeModeLabel: String = "Fit"
@@ -27,6 +33,8 @@ class XtreamPlayerView @JvmOverloads constructor(
     private var audioTrackView: View? = null
     private var audioBoostView: View? = null
     private var settingsView: View? = null
+    private var titleView: TextView? = null
+    private var topBarView: View? = null
     var onResizeModeClick: (() -> Unit)? = null
         set(value) {
             field = value
@@ -62,11 +70,37 @@ class XtreamPlayerView @JvmOverloads constructor(
             field = value
             bindSettingsView()
         }
+    var onChannelUp: (() -> Boolean)? = null
+    var onChannelDown: (() -> Boolean)? = null
+    var onToggleControls: (() -> Boolean)? = null
+    var fastSeekEnabled: Boolean = true
+    var defaultControllerTimeoutMs: Int = 3000
+    var titleText: String? = null
+        set(value) {
+            field = value
+            bindTitleView()
+        }
+    var isLiveContent: Boolean = false
+        set(value) {
+            field = value
+            updateControlsForContentType()
+        }
     var forcedAspectRatio: Float? = null
         set(value) {
             field = value
             applyAspectRatio()
         }
+
+    private val keyHandler = Handler(Looper.getMainLooper())
+    private var pendingSeekKey: Int? = null
+    private var isLongSeekActive = false
+    private var longPressRunnable: Runnable? = null
+    private var repeatSeekRunnable: Runnable? = null
+    private var longSeekStartMs: Long = 0L
+    private val topBarSyncListener = ViewTreeObserver.OnPreDrawListener {
+        syncTopBarWithControlsBackground()
+        true
+    }
 
     fun setResizeModeLabel(label: String) {
         resizeModeLabel = label
@@ -99,7 +133,6 @@ class XtreamPlayerView @JvmOverloads constructor(
         }.getOrDefault(false)
     }
 
-
     override fun onContentAspectRatioChanged(
         contentFrame: AspectRatioFrameLayout?,
         aspectRatio: Float
@@ -127,6 +160,210 @@ class XtreamPlayerView @JvmOverloads constructor(
         bindAudioTrackView()
         bindAudioBoostView()
         bindSettingsView()
+        bindTitleView()
+        updateControlsForContentType()
+        updateFocusOrder()
+        viewTreeObserver.addOnPreDrawListener(topBarSyncListener)
+    }
+
+    override fun onDetachedFromWindow() {
+        viewTreeObserver.removeOnPreDrawListener(topBarSyncListener)
+        super.onDetachedFromWindow()
+    }
+
+    private fun syncTopBarWithControlsBackground() {
+        val background = findViewById<View>(Media3UiR.id.exo_controls_background) ?: return
+        val topBar = topBarView ?: findViewById<View>(R.id.exo_top_bar)?.also {
+            topBarView = it
+        } ?: return
+
+        topBar.visibility = background.visibility
+        topBar.alpha = background.alpha
+    }
+
+    private fun areControlsShowing(): Boolean {
+        val background = findViewById<View>(Media3UiR.id.exo_controls_background)
+        return background?.visibility == View.VISIBLE && background.alpha > 0.01f
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            if (event.keyCode == KeyEvent.KEYCODE_MENU ||
+                event.keyCode == KeyEvent.KEYCODE_INFO) {
+                val handled = onToggleControls?.invoke() ?: false
+                if (handled) return true
+            }
+            val controlsShowing = areControlsShowing()
+            if (fastSeekEnabled &&
+                !isLiveContent &&
+                (event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
+                    event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)
+            ) {
+                val focused = findFocus()
+                val canHandleSeek = if (controlsShowing) {
+                    focused?.id == Media3UiR.id.exo_progress
+                } else {
+                    true
+                }
+                if (canHandleSeek) {
+                    if (pendingSeekKey == null) {
+                        pendingSeekKey = event.keyCode
+                        isLongSeekActive = false
+                        longPressRunnable = Runnable {
+                            isLongSeekActive = true
+                            setControllerShowTimeoutMs(0)
+                            showController()
+                            longSeekStartMs = SystemClock.uptimeMillis()
+                            val direction = pendingSeekKey
+                            repeatSeekRunnable = object : Runnable {
+                                override fun run() {
+                                    val currentPlayer = player
+                                    if (currentPlayer != null && pendingSeekKey == direction) {
+                                        val elapsed = SystemClock.uptimeMillis() - longSeekStartMs
+                                        val stepMs = resolveLongSeekStepMs(elapsed)
+                                        val delta = if (direction == KeyEvent.KEYCODE_DPAD_LEFT) {
+                                            -stepMs
+                                        } else {
+                                            stepMs
+                                        }
+                                        val duration = currentPlayer.duration
+                                        val target = (currentPlayer.currentPosition + delta).let { next ->
+                                            if (duration > 0) {
+                                                next.coerceIn(0L, duration)
+                                            } else {
+                                                next.coerceAtLeast(0L)
+                                            }
+                                        }
+                                        currentPlayer.seekTo(target)
+                                        keyHandler.postDelayed(this, LONG_SEEK_REPEAT_MS)
+                                    }
+                                }
+                            }
+                            repeatSeekRunnable?.let { keyHandler.post(it) }
+                        }
+                        keyHandler.postDelayed(longPressRunnable!!, LONG_SEEK_DELAY_MS)
+                    }
+                    return true
+                }
+            }
+            val isSelect =
+                event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                    event.keyCode == KeyEvent.KEYCODE_ENTER ||
+                    event.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+
+            if (!controlsShowing) {
+                if (isSelect) {
+                    showController()
+                    return true
+                }
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_UP -> {
+                        if (isLiveContent) {
+                            return onChannelUp?.invoke() ?: false
+                        }
+                        showController()
+                        return true
+                    }
+                    KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        if (isLiveContent) {
+                            return onChannelDown?.invoke() ?: false
+                        }
+                        showController()
+                        return true
+                    }
+                }
+            }
+
+            if (controlsShowing) {
+                return super.dispatchKeyEvent(event)
+            }
+        } else if (event.action == KeyEvent.ACTION_UP) {
+            if (fastSeekEnabled &&
+                !isLiveContent &&
+                (event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
+                    event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)
+            ) {
+                if (pendingSeekKey == event.keyCode) {
+                    longPressRunnable?.let { keyHandler.removeCallbacks(it) }
+                    repeatSeekRunnable?.let { keyHandler.removeCallbacks(it) }
+                    longPressRunnable = null
+                    repeatSeekRunnable = null
+                    val wasLongSeek = isLongSeekActive
+                    isLongSeekActive = false
+                    pendingSeekKey = null
+                    longSeekStartMs = 0L
+                    setControllerShowTimeoutMs(defaultControllerTimeoutMs)
+                    if (!wasLongSeek) {
+                        val currentPlayer = player
+                        if (currentPlayer != null) {
+                            if (event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                                currentPlayer.seekBack()
+                            } else {
+                                currentPlayer.seekForward()
+                            }
+                            return true
+                        }
+                    } else {
+                        return true
+                    }
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    private fun updateControlsForContentType() {
+        val isLive = isLiveContent
+        setViewVisible(Media3UiR.id.exo_prev, !isLive)
+        setViewVisible(Media3UiR.id.exo_next, !isLive)
+        setViewVisible(Media3UiR.id.exo_rew_with_amount, !isLive)
+        setViewVisible(Media3UiR.id.exo_ffwd_with_amount, !isLive)
+        updateFocusOrder()
+    }
+
+    private fun setViewVisible(id: Int, visible: Boolean) {
+        val view = findViewById<View>(id) ?: return
+        view.visibility = if (visible) View.VISIBLE else View.GONE
+        view.isFocusable = visible
+    }
+
+    private fun updateFocusOrder() {
+        updateRowFocusOrder(
+            listOf(
+                Media3UiR.id.exo_vr,
+                Media3UiR.id.exo_shuffle,
+                Media3UiR.id.exo_repeat_toggle,
+                Media3UiR.id.exo_subtitle,
+                R.id.exo_subtitle_download,
+                R.id.exo_audio_track,
+                R.id.exo_audio_boost,
+                R.id.exo_resize_mode,
+                Media3UiR.id.exo_settings,
+                Media3UiR.id.exo_fullscreen,
+                Media3UiR.id.exo_overflow_show
+            )
+        )
+        updateRowFocusOrder(
+            listOf(
+                Media3UiR.id.exo_prev,
+                Media3UiR.id.exo_rew_with_amount,
+                Media3UiR.id.exo_play_pause,
+                Media3UiR.id.exo_ffwd_with_amount,
+                Media3UiR.id.exo_next
+            )
+        )
+    }
+
+    private fun updateRowFocusOrder(ids: List<Int>) {
+        val views = ids.mapNotNull { findViewById<View>(it) }
+            .filter { it.visibility == View.VISIBLE && it.isFocusable }
+        if (views.isEmpty()) return
+        views.forEachIndexed { index, view ->
+            val left = views.getOrNull(index - 1)
+            val right = views.getOrNull(index + 1)
+            view.nextFocusLeftId = left?.id ?: View.NO_ID
+            view.nextFocusRightId = right?.id ?: View.NO_ID
+        }
     }
 
     private fun bindSubtitleDownloadView() {
@@ -182,4 +419,24 @@ class XtreamPlayerView @JvmOverloads constructor(
         view?.setOnClickListener { onSettingsClick?.invoke() }
     }
 
+    private fun bindTitleView() {
+        val view = titleView ?: findViewById<TextView>(R.id.exo_title).also {
+            titleView = it
+        }
+        view?.text = titleText.orEmpty()
+    }
+
 }
+
+private fun resolveLongSeekStepMs(elapsedMs: Long): Long {
+    return when {
+        elapsedMs < 2_000L -> 1_000L
+        elapsedMs < 5_000L -> 2_000L
+        elapsedMs < 8_000L -> 5_000L
+        elapsedMs < 12_000L -> 10_000L
+        else -> 20_000L
+    }
+}
+
+private const val LONG_SEEK_DELAY_MS = 350L
+private const val LONG_SEEK_REPEAT_MS = 250L

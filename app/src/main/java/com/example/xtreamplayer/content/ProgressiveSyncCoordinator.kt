@@ -317,6 +317,46 @@ class ProgressiveSyncCoordinator(
     }
 
     /**
+     * Pause all sync activity for playback.
+     * Returns true if any sync work was active and is now paused.
+     */
+    suspend fun pauseAllForPlayback(): Boolean {
+        var wasActive = false
+        syncMutex.withLock {
+            val phase = _syncState.value.phase
+            val hasActivePhase =
+                phase == SyncPhase.FAST_START ||
+                        phase == SyncPhase.BACKGROUND_FULL ||
+                        phase == SyncPhase.ON_DEMAND_BOOST
+            val hasJobs =
+                (fastStartJob?.isActive == true) ||
+                        (backgroundSyncJob?.isActive == true) ||
+                        onDemandJobs.values.any { it.isActive }
+            wasActive = hasActivePhase || hasJobs
+            if (!wasActive) {
+                return@withLock
+            }
+
+            Timber.i("Pausing all sync activity for playback")
+
+            // Let background sync notice pause and save checkpoints.
+            fastStartJob?.cancel()
+            onDemandJobs.values.forEach { it.cancel() }
+            onDemandJobs.clear()
+
+            _syncState.value = _syncState.value.copy(
+                isPaused = true,
+                phase = SyncPhase.PAUSED,
+                currentSection = null,
+                lastSyncTimestamp = System.currentTimeMillis()
+            )
+            settingsRepository.saveSyncState(_syncState.value, accountKey())
+        }
+        activeSyncMutex.withLock { activeSyncSections.clear() }
+        return wasActive
+    }
+
+    /**
      * Resume background sync
      */
     suspend fun resumeBackgroundSync() {
@@ -340,6 +380,30 @@ class ProgressiveSyncCoordinator(
         }
 
         if (shouldResume) {
+            startBackgroundFullSync(force = false, throttleMs = null, fullReindex = false)
+        }
+    }
+
+    /**
+     * Resume sync after playback. Restarts fast start if needed, otherwise background full.
+     */
+    suspend fun resumeAfterPlayback() {
+        syncMutex.withLock {
+            if (!_syncState.value.isPaused) {
+                return
+            }
+            _syncState.value = _syncState.value.copy(
+                isPaused = false,
+                phase = SyncPhase.IDLE,
+                currentSection = null,
+                lastSyncTimestamp = System.currentTimeMillis()
+            )
+            settingsRepository.saveSyncState(_syncState.value, accountKey())
+        }
+
+        if (!_syncState.value.fastStartReady) {
+            startFastStartSync()
+        } else if (!_syncState.value.fullIndexComplete) {
             startBackgroundFullSync(force = false, throttleMs = null, fullReindex = false)
         }
     }
