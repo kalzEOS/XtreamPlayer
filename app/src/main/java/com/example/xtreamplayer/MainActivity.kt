@@ -9844,7 +9844,7 @@ private fun UpdatePromptDialog(
     Dialog(onDismissRequest = onLater) {
         Column(
             modifier = Modifier
-                .fillMaxWidth(0.48f)
+                .fillMaxWidth(0.42f)
                 .clip(shape)
                 .background(
                     Brush.verticalGradient(
@@ -9852,27 +9852,27 @@ private fun UpdatePromptDialog(
                     )
                 )
                 .border(1.dp, colors.border, shape)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
                 text = "Update available",
                 color = colors.textPrimary,
-                fontSize = 18.sp,
+                fontSize = 16.sp,
                 fontFamily = AppTheme.fontFamily,
                 fontWeight = FontWeight.Bold
             )
             Text(
                 text = "Latest: v${release.versionName}",
                 color = colors.textSecondary,
-                fontSize = 13.sp,
+                fontSize = 12.sp,
                 fontFamily = AppTheme.fontFamily
             )
             if (isDownloading) {
                 Text(
                     text = "Downloading update...",
                     color = colors.textSecondary,
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     fontFamily = AppTheme.fontFamily
                 )
             }
@@ -9883,17 +9883,18 @@ private fun UpdatePromptDialog(
                 FocusableButton(
                     onClick = onUpdate,
                     enabled = !isDownloading,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).height(36.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = colors.accent,
                         contentColor = colors.textOnAccent
-                    )
+                    ),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = if (isDownloading) "Updating..." else "Update",
+                        text = if (isDownloading) "Updating" else "Update",
                         fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -9901,17 +9902,18 @@ private fun UpdatePromptDialog(
                 FocusableButton(
                     onClick = onLater,
                     enabled = !isDownloading,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).height(36.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = colors.surfaceAlt,
                         contentColor = colors.textPrimary
-                    )
+                    ),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                 ) {
                     Text(
                         text = "Later",
                         fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
