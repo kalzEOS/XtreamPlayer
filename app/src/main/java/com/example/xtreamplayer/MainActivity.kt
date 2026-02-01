@@ -7013,7 +7013,11 @@ fun FavoritesScreen(
     val basePosterColumns = remember(settings.uiScale) {
         kotlin.math.ceil(4.0 / settings.uiScale).toInt().coerceIn(4, 8)
     }
+    val baseLiveColumns = remember(settings.uiScale) {
+        kotlin.math.ceil(3.0 / settings.uiScale).toInt().coerceIn(3, 6)
+    }
     val posterColumns = rememberReflowColumns(basePosterColumns, navLayoutExpanded)
+    val liveColumns = rememberReflowColumns(baseLiveColumns, navLayoutExpanded)
     val posterFontScale = remember(posterColumns) { 4f / posterColumns.toFloat() }
     val categoryColumns = rememberReflowColumns(3, navLayoutExpanded)
     var activeView by remember { mutableStateOf(FavoritesView.MENU) }
@@ -7536,8 +7540,14 @@ fun FavoritesScreen(
                                                     .focusable()
                             )
                         } else {
+                            val contentColumns =
+                                    if (category.type == ContentType.LIVE) {
+                                        liveColumns
+                                    } else {
+                                        posterColumns
+                                    }
                             LazyVerticalGrid(
-                                    columns = GridCells.Fixed(posterColumns),
+                                    columns = GridCells.Fixed(contentColumns),
                                     verticalArrangement = Arrangement.spacedBy(16.dp),
                                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                                     modifier = Modifier.fillMaxWidth().weight(1f),
@@ -7557,8 +7567,8 @@ fun FavoritesScreen(
                                                 index == 0 -> contentItemFocusRequester
                                                 else -> null
                                             }
-                                    val isLeftEdge = index % posterColumns == 0
-                                    val isTopRow = index < posterColumns
+                                    val isLeftEdge = index % contentColumns == 0
+                                    val isTopRow = index < contentColumns
                                     val subtitleOverride =
                                             rememberSeriesSubtitle(
                                                     item,
