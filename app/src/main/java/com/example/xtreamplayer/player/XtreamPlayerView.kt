@@ -73,7 +73,6 @@ class XtreamPlayerView @JvmOverloads constructor(
     var onChannelUp: (() -> Boolean)? = null
     var onChannelDown: (() -> Boolean)? = null
     var onToggleControls: (() -> Boolean)? = null
-    var onSeekPreviewChanged: ((Boolean) -> Unit)? = null
     var fastSeekEnabled: Boolean = true
     var defaultControllerTimeoutMs: Int = 3000
     var titleText: String? = null
@@ -98,8 +97,6 @@ class XtreamPlayerView @JvmOverloads constructor(
     private var longPressRunnable: Runnable? = null
     private var repeatSeekRunnable: Runnable? = null
     private var longSeekStartMs: Long = 0L
-    private var seekPreviewActive = false
-    private var pendingSeekFromHidden = false
     private var suppressSeekKeyUp = false
     private val topBarSyncListener = ViewTreeObserver.OnPreDrawListener {
         syncTopBarWithControlsBackground()
@@ -207,25 +204,16 @@ class XtreamPlayerView @JvmOverloads constructor(
                     return super.dispatchKeyEvent(event)
                 }
                 val focused = findFocus()
-                val canHandleSeek = if (controlsShowing) {
-                    focused?.id == Media3UiR.id.exo_progress
-                } else {
-                    true
-                }
+                val canHandleSeek =
+                    controlsShowing && focused?.id == Media3UiR.id.exo_progress
                 if (canHandleSeek) {
                     if (pendingSeekKey == null) {
                         pendingSeekKey = event.keyCode
                         isLongSeekActive = false
-                        pendingSeekFromHidden = !controlsShowing
-                        if (pendingSeekFromHidden) {
-                            setSeekPreviewVisible(true)
-                        }
                         longPressRunnable = Runnable {
                             isLongSeekActive = true
-                            if (!pendingSeekFromHidden) {
-                                setControllerShowTimeoutMs(0)
-                                showController()
-                            }
+                            setControllerShowTimeoutMs(0)
+                            showController()
                             longSeekStartMs = SystemClock.uptimeMillis()
                             val direction = pendingSeekKey
                             repeatSeekRunnable = object : Runnable {
@@ -319,12 +307,6 @@ class XtreamPlayerView @JvmOverloads constructor(
         return super.onKeyUp(keyCode, event)
     }
 
-    private fun setSeekPreviewVisible(visible: Boolean) {
-        if (seekPreviewActive == visible) return
-        seekPreviewActive = visible
-        onSeekPreviewChanged?.invoke(visible)
-    }
-
     private fun stopSeekRepeat() {
         longPressRunnable?.let { keyHandler.removeCallbacks(it) }
         repeatSeekRunnable?.let { keyHandler.removeCallbacks(it) }
@@ -333,12 +315,7 @@ class XtreamPlayerView @JvmOverloads constructor(
         isLongSeekActive = false
         pendingSeekKey = null
         longSeekStartMs = 0L
-        if (!pendingSeekFromHidden) {
-            setControllerShowTimeoutMs(defaultControllerTimeoutMs)
-        } else {
-            setSeekPreviewVisible(false)
-            pendingSeekFromHidden = false
-        }
+        setControllerShowTimeoutMs(defaultControllerTimeoutMs)
     }
 
     private fun handleSeekKeyUp(keyCode: Int): Boolean {
