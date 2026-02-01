@@ -9851,7 +9851,7 @@ private fun UpdatePromptDialog(
     Dialog(onDismissRequest = onLater) {
         Column(
             modifier = Modifier
-                .fillMaxWidth(0.6f)
+                .fillMaxWidth(0.7f)
                 .clip(shape)
                 .background(
                     Brush.verticalGradient(
@@ -9892,7 +9892,7 @@ private fun UpdatePromptDialog(
                     enabled = !isDownloading,
                     modifier = Modifier
                         .weight(1f)
-                        .height(40.dp)
+                        .height(44.dp)
                         .focusRequester(updateFocusRequester),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = colors.accent,
@@ -9904,7 +9904,7 @@ private fun UpdatePromptDialog(
                         text = if (isDownloading) "Updating" else "Update",
                         fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 10.sp,
+                        fontSize = 9.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -9914,7 +9914,7 @@ private fun UpdatePromptDialog(
                     enabled = !isDownloading,
                     modifier = Modifier
                         .weight(1f)
-                        .height(40.dp),
+                        .height(44.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = colors.surfaceAlt,
                         contentColor = colors.textPrimary
@@ -9925,7 +9925,7 @@ private fun UpdatePromptDialog(
                         text = "Later",
                         fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 10.sp,
+                        fontSize = 9.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )

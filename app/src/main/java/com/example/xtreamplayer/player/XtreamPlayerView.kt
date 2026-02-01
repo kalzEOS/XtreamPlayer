@@ -33,6 +33,8 @@ class XtreamPlayerView @JvmOverloads constructor(
     private var audioTrackView: View? = null
     private var audioBoostView: View? = null
     private var settingsView: View? = null
+    private var prevButtonView: View? = null
+    private var nextButtonView: View? = null
     private var titleView: TextView? = null
     private var topBarView: View? = null
     var onResizeModeClick: (() -> Unit)? = null
@@ -71,7 +73,15 @@ class XtreamPlayerView @JvmOverloads constructor(
             bindSettingsView()
         }
     var onChannelUp: (() -> Boolean)? = null
+        set(value) {
+            field = value
+            bindPrevNextView()
+        }
     var onChannelDown: (() -> Boolean)? = null
+        set(value) {
+            field = value
+            bindPrevNextView()
+        }
     var onToggleControls: (() -> Boolean)? = null
     var fastSeekEnabled: Boolean = true
     var defaultControllerTimeoutMs: Int = 3000
@@ -346,10 +356,11 @@ class XtreamPlayerView @JvmOverloads constructor(
 
     private fun updateControlsForContentType() {
         val isLive = isLiveContent
-        setViewVisible(Media3UiR.id.exo_prev, !isLive)
-        setViewVisible(Media3UiR.id.exo_next, !isLive)
+        setViewVisible(Media3UiR.id.exo_prev, true)
+        setViewVisible(Media3UiR.id.exo_next, true)
         setViewVisible(Media3UiR.id.exo_rew_with_amount, !isLive)
         setViewVisible(Media3UiR.id.exo_ffwd_with_amount, !isLive)
+        bindPrevNextView()
         updateFocusOrder()
     }
 
@@ -449,6 +460,29 @@ class XtreamPlayerView @JvmOverloads constructor(
             settingsView = it
         }
         view?.setOnClickListener { onSettingsClick?.invoke() }
+    }
+
+    private fun bindPrevNextView() {
+        val prev = prevButtonView ?: findViewById<View>(Media3UiR.id.exo_prev).also {
+            prevButtonView = it
+        }
+        val next = nextButtonView ?: findViewById<View>(Media3UiR.id.exo_next).also {
+            nextButtonView = it
+        }
+        prev?.setOnClickListener {
+            if (isLiveContent) {
+                onChannelDown?.invoke()
+            } else {
+                player?.seekToPreviousMediaItem()
+            }
+        }
+        next?.setOnClickListener {
+            if (isLiveContent) {
+                onChannelUp?.invoke()
+            } else {
+                player?.seekToNextMediaItem()
+            }
+        }
     }
 
     private fun bindTitleView() {
