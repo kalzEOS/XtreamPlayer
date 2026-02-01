@@ -9,6 +9,7 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 
+// GitHub releases endpoint for update checks.
 private const val LATEST_RELEASE_URL =
     "https://api.github.com/repos/kalzEOS/XtreamPlayer/releases/latest"
 
