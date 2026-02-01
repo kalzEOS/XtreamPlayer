@@ -9841,6 +9841,13 @@ private fun UpdatePromptDialog(
 ) {
     val colors = AppTheme.colors
     val shape = RoundedCornerShape(18.dp)
+    val updateFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(isDownloading) {
+        if (!isDownloading) {
+            updateFocusRequester.requestFocus()
+        }
+    }
     Dialog(onDismissRequest = onLater) {
         Column(
             modifier = Modifier
@@ -9885,7 +9892,8 @@ private fun UpdatePromptDialog(
                     enabled = !isDownloading,
                     modifier = Modifier
                         .weight(1f)
-                        .height(40.dp),
+                        .height(40.dp)
+                        .focusRequester(updateFocusRequester),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = colors.accent,
                         contentColor = colors.textOnAccent
