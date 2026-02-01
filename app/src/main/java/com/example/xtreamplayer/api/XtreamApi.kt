@@ -482,7 +482,6 @@ class XtreamApi(
                     val info = json.optJSONObject("info")
                     val movieData = json.optJSONObject("movie_data")
 
-                    fun String?.nullIfBlank(): String? = this?.trim()?.takeIf { it.isNotEmpty() }
                     fun normalizeCodec(value: String?): String? {
                         val raw = value?.trim()?.takeIf { it.isNotEmpty() } ?: return null
                         return when (raw.lowercase()) {
@@ -568,17 +567,14 @@ class XtreamApi(
                             .distinct()
                     }
 
-                    val durationValue =
-                        info?.optString("duration").nullIfBlank()
-                            ?: info?.optString("duration_secs").nullIfBlank()?.toLongOrNull()?.let {
-                                val minutes = (it / 60).coerceAtLeast(1)
-                                "${minutes}m"
-                            }
+                    val durationValue = parseDuration(info, "duration")
 
                     val releaseDateValue =
-                        info?.optString("releasedate").nullIfBlank()
-                            ?: movieData?.optString("release_date").nullIfBlank()
-                            ?: movieData?.optString("year").nullIfBlank()
+                        firstNonBlank(
+                            info?.optString("releasedate"),
+                            movieData?.optString("release_date"),
+                            movieData?.optString("year")
+                        )
 
                     val videoInfo = info?.optJSONObject("video")
                     val audioInfo = info?.optJSONObject("audio")
@@ -623,8 +619,11 @@ class XtreamApi(
                         duration = durationValue,
                         genre = info?.optString("genre").nullIfBlank(),
                         cast = info?.optString("cast").nullIfBlank(),
-                        rating = info?.optString("rating_5based").nullIfBlank()
-                            ?: info?.optString("rating").nullIfBlank(),
+                        rating =
+                            firstNonBlank(
+                                info?.optString("rating_5based"),
+                                info?.optString("rating")
+                            ),
                         description = info?.optString("plot").nullIfBlank(),
                         year = movieData?.optString("year").nullIfBlank(),
                         videoCodec = videoCodec,
@@ -670,32 +669,35 @@ class XtreamApi(
                     val json = JSONObject(body)
                     val info = json.optJSONObject("info")
 
-                    fun String?.nullIfBlank(): String? = this?.trim()?.takeIf { it.isNotEmpty() }
-
                     val releaseDateValue =
-                        info?.optString("releaseDate").nullIfBlank()
-                            ?: info?.optString("releasedate").nullIfBlank()
-                            ?: info?.optString("year").nullIfBlank()
+                        firstNonBlank(
+                            info?.optString("releaseDate"),
+                            info?.optString("releasedate"),
+                            info?.optString("year")
+                        )
 
-                    val durationValue =
-                        info?.optString("episode_run_time").nullIfBlank()
-                            ?: info?.optString("duration").nullIfBlank()
-                            ?: info?.optString("duration_secs").nullIfBlank()?.toLongOrNull()?.let {
-                                val minutes = (it / 60).coerceAtLeast(1)
-                                "${minutes}m"
-                            }
+                    val durationValue = parseDuration(info, "episode_run_time", "duration")
 
                     val seriesInfo = SeriesInfo(
-                        director = info?.optString("director").nullIfBlank()
-                            ?: info?.optString("created_by").nullIfBlank(),
+                        director =
+                            firstNonBlank(
+                                info?.optString("director"),
+                                info?.optString("created_by")
+                            ),
                         releaseDate = releaseDateValue,
                         duration = durationValue,
                         genre = info?.optString("genre").nullIfBlank(),
                         cast = info?.optString("cast").nullIfBlank(),
-                        rating = info?.optString("rating_5based").nullIfBlank()
-                            ?: info?.optString("rating").nullIfBlank(),
-                        description = info?.optString("plot").nullIfBlank()
-                            ?: info?.optString("description").nullIfBlank(),
+                        rating =
+                            firstNonBlank(
+                                info?.optString("rating_5based"),
+                                info?.optString("rating")
+                            ),
+                        description =
+                            firstNonBlank(
+                                info?.optString("plot"),
+                                info?.optString("description")
+                            ),
                         year = info?.optString("year").nullIfBlank()
                     )
                     Result.success(seriesInfo)
@@ -704,6 +706,18 @@ class XtreamApi(
                 Timber.e(e, "API request failed")
                 Result.failure(e)
             }
+        }
+    }
+
+    private fun String?.nullIfBlank(): String? = this?.trim()?.takeIf { it.isNotEmpty() }
+
+    private fun parseDuration(info: JSONObject?, vararg keys: String): String? {
+        keys.forEach { key ->
+            info?.optString(key).nullIfBlank()?.let { return it }
+        }
+        return info?.optString("duration_secs").nullIfBlank()?.toLongOrNull()?.let {
+            val minutes = (it / 60).coerceAtLeast(1)
+            "${minutes}m"
         }
     }
 

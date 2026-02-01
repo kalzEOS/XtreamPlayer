@@ -455,15 +455,17 @@ fun RootScreen(
                     false
                 }
             }
-            requesters.forEach { requester ->
-                if (tryRequestFocus(requester, 1)) {
-                    return@LaunchedEffect
+            suspend fun requestWithFrameRetries(requester: FocusRequester): Boolean {
+                if (tryRequestFocus(requester, 1)) return true
+                repeat(2) { attempt ->
+                    withFrameNanos {}
+                    if (tryRequestFocus(requester, attempt + 2)) return true
                 }
-                repeat(4) { attempt ->
-                    delay(16)
-                    if (tryRequestFocus(requester, attempt + 2)) {
-                        return@LaunchedEffect
-                    }
+                return false
+            }
+            requesters.forEach { requester ->
+                if (requestWithFrameRetries(requester)) {
+                    return@LaunchedEffect
                 }
             }
         }
@@ -2097,7 +2099,6 @@ private fun PlayerOverlay(
     val interactionSource = remember { MutableInteractionSource() }
     val focusRequester = remember { FocusRequester() }
     var controlsVisible by remember { mutableStateOf(false) }
-    var seekPreviewVisible by remember { mutableStateOf(false) }
     var resizeMode by remember { mutableStateOf(PlayerResizeMode.FIT) }
     var playerView by remember { mutableStateOf<XtreamPlayerView?>(null) }
     var showSubtitleDialog by remember { mutableStateOf(false) }
@@ -2294,9 +2295,6 @@ private fun PlayerOverlay(
             playerView?.resetControllerFocus()
             focusRequester.requestFocus()
         }
-        if (controlsVisible && seekPreviewVisible) {
-            seekPreviewVisible = false
-        }
     }
 
     LaunchedEffect(showAudioBoostDialog) {
@@ -2360,7 +2358,6 @@ private fun PlayerOverlay(
                         onAudioTrackClick = { showAudioTrackDialog = true }
                         onAudioBoostClick = { showAudioBoostDialog = true }
                         onSettingsClick = { showPlaybackSettingsDialog = true }
-                        onSeekPreviewChanged = { visible -> seekPreviewVisible = visible }
                         isLiveContent = currentContentType == ContentType.LIVE
                         fastSeekEnabled = currentContentType != ContentType.LIVE
                         onToggleControls = {
@@ -2450,7 +2447,6 @@ private fun PlayerOverlay(
                     view.onAudioTrackClick = { showAudioTrackDialog = true }
                     view.onAudioBoostClick = { showAudioBoostDialog = true }
                     view.onSettingsClick = { showPlaybackSettingsDialog = true }
-                    view.onSeekPreviewChanged = { visible -> seekPreviewVisible = visible }
                     view.isLiveContent = currentContentType == ContentType.LIVE
                     view.fastSeekEnabled = currentContentType != ContentType.LIVE
                     view.defaultControllerTimeoutMs = 3000
@@ -2500,12 +2496,6 @@ private fun PlayerOverlay(
             )
         }
 
-        if (seekPreviewVisible && currentContentType != ContentType.LIVE) {
-            SeekPreviewBar(
-                player = player,
-                modifier = Modifier.align(Alignment.BottomCenter)
-            )
-        }
     }
 
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
@@ -3551,62 +3541,6 @@ private fun TopBarButton(
                 fontWeight = FontWeight.SemiBold,
                 letterSpacing = 0.8.sp
         )
-    }
-}
-
-@Composable
-private fun SeekPreviewBar(player: Player, modifier: Modifier = Modifier) {
-    var progress by remember { mutableFloatStateOf(0f) }
-    var positionLabel by remember { mutableStateOf("0:00") }
-    var durationLabel by remember { mutableStateOf("0:00") }
-    LaunchedEffect(player) {
-        while (true) {
-            val duration = player.duration
-            val position = player.currentPosition
-            progress =
-                    if (duration > 0) {
-                        (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
-                    } else {
-                        0f
-                    }
-            positionLabel = formatPlaybackTime(position)
-            durationLabel = if (duration > 0) formatPlaybackTime(duration) else "0:00"
-            delay(200)
-        }
-    }
-
-    Box(
-            modifier =
-                    modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 24.dp, vertical = 16.dp)
-    ) {
-        Column {
-            Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                        text = positionLabel,
-                        color = AppTheme.colors.textPrimary,
-                        fontSize = 12.sp,
-                        fontFamily = AppTheme.fontFamily
-                )
-                Text(
-                        text = durationLabel,
-                        color = AppTheme.colors.textPrimary,
-                        fontSize = 12.sp,
-                        fontFamily = AppTheme.fontFamily
-                )
-            }
-            Spacer(modifier = Modifier.height(6.dp))
-            LinearProgressIndicator(
-                    progress = progress,
-                    color = AppTheme.colors.accentAlt,
-                    trackColor = AppTheme.colors.surfaceAlt,
-                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50))
-            )
-        }
     }
 }
 
