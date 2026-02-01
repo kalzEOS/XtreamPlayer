@@ -523,8 +523,8 @@ fun RootScreen(
         val force: Boolean,
         val sectionsToSync: List<Section>?
     )
-    var sectionSyncStates by remember {
-        mutableStateOf(mapOf<Section, SectionSyncState>())
+    val sectionSyncStates = remember {
+        mutableStateMapOf<Section, SectionSyncState>()
     }
     var librarySyncJob by remember { mutableStateOf<Job?>(null) }
     var librarySyncToken by remember { mutableStateOf(0) }
@@ -553,7 +553,7 @@ fun RootScreen(
         val sections = sectionsToSync ?: listOf(Section.SERIES, Section.MOVIES, Section.LIVE)
         // Mark sections as syncing
         sections.forEach { section ->
-            sectionSyncStates = sectionSyncStates + (section to SectionSyncState(isActive = true))
+            sectionSyncStates[section] = SectionSyncState(isActive = true)
         }
 
         Toast.makeText(context, reason, Toast.LENGTH_SHORT).show()
@@ -563,17 +563,17 @@ fun RootScreen(
             val result = runCatching {
                 contentRepository.syncSearchIndex(config, force, sectionsToSync) { progress ->
                     // Update progress for specific section
-                    sectionSyncStates = sectionSyncStates + (progress.section to SectionSyncState(
+                    sectionSyncStates[progress.section] = SectionSyncState(
                         progress = progress.progress,
                         itemsIndexed = progress.itemsIndexed,
                         isActive = true
-                    ))
+                    )
                 }
             }
             if (token != librarySyncToken || accountKey != configKey) {
                 // Clear syncing state
                 sections.forEach { section ->
-                    sectionSyncStates = sectionSyncStates - section
+                    sectionSyncStates.remove(section)
                 }
                 return@launch
             }
@@ -581,7 +581,7 @@ fun RootScreen(
                     if (result.isSuccess) {
                         // Mark sections as synced and clear syncing state
                         sections.forEach { section ->
-                            sectionSyncStates = sectionSyncStates - section
+                            sectionSyncStates.remove(section)
                         }
                         syncedSections = syncedSections + sections
                         hasSearchIndex = contentRepository.hasSearchIndex(config)
@@ -589,7 +589,7 @@ fun RootScreen(
                     } else {
                         // Clear syncing state on error
                         sections.forEach { section ->
-                            sectionSyncStates = sectionSyncStates - section
+                            sectionSyncStates.remove(section)
                         }
                         val detail = result.exceptionOrNull()?.message ?: "Unknown error"
                         "Search library failed: $detail"
@@ -673,7 +673,7 @@ fun RootScreen(
             refreshJob = null
             librarySyncJob = null
             isRefreshing = false
-            sectionSyncStates = emptyMap()
+            sectionSyncStates.clear()
             syncedSections = emptySet()
             lastRefreshedAccountKey = null
             hasCacheForAccount = null
@@ -702,17 +702,19 @@ fun RootScreen(
     LaunchedEffect(activePlaybackQueue) {
         val queue = activePlaybackQueue
         playbackFallbackAttempts = queue?.fallbackUris?.mapValues { 0 } ?: emptyMap()
+        val player: ExoPlayer? = playbackEngine.player
         if (queue != null) {
+            if (player == null) return@LaunchedEffect
             playbackEngine.setQueue(queue.items, queue.startIndex)
             val seekPosition = resumePositionMs
             if (seekPosition != null && seekPosition > 0) {
-                playbackEngine.player.seekTo(seekPosition)
+                player.seekTo(seekPosition)
                 resumePositionMs = null
             }
-            playbackEngine.player.playWhenReady = true
+            player.playWhenReady = true
         } else {
-            playbackEngine.player.stop()
-            playbackEngine.player.clearMediaItems()
+            player?.stop()
+            player?.clearMediaItems()
             if (resumeFocusId != null) {
                 resumeFocusRequester.requestFocus()
             }
@@ -732,7 +734,17 @@ fun RootScreen(
             movieInfoQueue = if (items.isEmpty()) listOf(item) else items
             movieInfoLoadJob =
                     coroutineScope.launch {
-                        val info = contentRepository.loadMovieInfo(item, config)
+                        val infoResult = runCatching { contentRepository.loadMovieInfo(item, config) }
+                        val info = infoResult.getOrNull()
+                        if (info == null) {
+                            val message =
+                                    if (infoResult.exceptionOrNull() != null) {
+                                        "Failed to load content info"
+                                    } else {
+                                        "No details available"
+                                    }
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        }
                         movieInfoInfo = info
                         movieInfoItem = item
                     }
@@ -925,8 +937,10 @@ fun RootScreen(
                         (item.contentType == ContentType.MOVIES ||
                                 item.contentType == ContentType.SERIES)
         ) {
-            val position = playbackEngine.player.currentPosition
-            val duration = playbackEngine.player.duration
+            val player: ExoPlayer? = playbackEngine.player
+            val safePlayer = player ?: return
+            val position = safePlayer.currentPosition
+            val duration = safePlayer.duration
             if (duration > 0 && position > 0) {
                 val progressPercent = (position * 100) / duration
                 coroutineScope.launch {
@@ -945,6 +959,7 @@ fun RootScreen(
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
+            val player: ExoPlayer? = playbackEngine.player
             when (event) {
                 Lifecycle.Event.ON_STOP -> {
                     val item = latestPlaybackItem
@@ -952,18 +967,19 @@ fun RootScreen(
                                     (item.contentType == ContentType.MOVIES ||
                                             item.contentType == ContentType.SERIES)
                     ) {
-                        val position = playbackEngine.player.currentPosition
-                        val duration = playbackEngine.player.duration
+                        if (player == null) return@LifecycleEventObserver
+                        val position = player.currentPosition
+                        val duration = player.duration
                         if (duration > 0 && position > 0) {
                             pendingResume =
                                     PendingResume(
                                             mediaId = item.id,
                                             positionMs = position,
-                                            shouldPlay = playbackEngine.player.isPlaying
+                                            shouldPlay = player.isPlaying
                                     )
                         }
                         savePlaybackProgress()
-                        playbackEngine.player.playWhenReady = false
+                        player.playWhenReady = false
                     }
                 }
                 Lifecycle.Event.ON_START -> {
@@ -975,8 +991,9 @@ fun RootScreen(
                                     (item.contentType == ContentType.MOVIES ||
                                             item.contentType == ContentType.SERIES)
                     ) {
-                        playbackEngine.player.seekTo(resume.positionMs)
-                        playbackEngine.player.playWhenReady = resume.shouldPlay
+                        if (player == null) return@LifecycleEventObserver
+                        player.seekTo(resume.positionMs)
+                        player.playWhenReady = resume.shouldPlay
                         pendingResume = null
                     }
                 }
@@ -997,8 +1014,10 @@ fun RootScreen(
 
     LaunchedEffect(activePlaybackQueue, pendingPlayerReset) {
         if (activePlaybackQueue == null && pendingPlayerReset) {
-            playbackEngine.reset()
-            playerResetNonce++
+            if (activePlaybackQueue == null && pendingPlayerReset) {
+                playbackEngine.reset()
+                playerResetNonce++
+            }
             pendingPlayerReset = false
         }
     }
@@ -1026,7 +1045,7 @@ fun RootScreen(
                         )
                 librarySyncJob?.cancel()
                 librarySyncJob = null
-                sectionSyncStates = emptyMap()
+                sectionSyncStates.clear()
             }
         } else {
             if (syncPausedForPlayback) {
@@ -1058,8 +1077,9 @@ fun RootScreen(
         liveReconnectJob =
                 coroutineScope.launch {
                     delay(LIVE_RECONNECT_DELAY_MS)
-                    playbackEngine.player.prepare()
-                    playbackEngine.player.playWhenReady = true
+                    val player: ExoPlayer? = playbackEngine.player
+                    player?.prepare()
+                    player?.playWhenReady = true
                 }
         return true
     }
@@ -1073,13 +1093,19 @@ fun RootScreen(
                             activePlaybackTitle = title
                         }
                         val currentIndex = playbackEngine.player.currentMediaItemIndex
+                        if (currentIndex < 0 || activePlaybackItems.isEmpty()) return
                         val queueItems = activePlaybackQueue?.items
-                        if (currentIndex >= 0 &&
-                                currentIndex < activePlaybackItems.size &&
-                                (queueItems == null || queueItems.size == activePlaybackItems.size)
-                        ) {
-                            activePlaybackItem = activePlaybackItems[currentIndex]
+                        if (queueItems != null && queueItems.size != activePlaybackItems.size) {
+                            Timber.w(
+                                    "Playback queue mismatch: queue=${queueItems.size} items=${activePlaybackItems.size} index=$currentIndex"
+                            )
+                            return
                         }
+                        val safeIndex = currentIndex.coerceIn(0, activePlaybackItems.lastIndex)
+                        if (safeIndex != currentIndex) {
+                            Timber.w("Clamped playback index $currentIndex to $safeIndex")
+                        }
+                        activePlaybackItem = activePlaybackItems[safeIndex]
                     }
 
                     override fun onPlaybackStateChanged(playbackState: Int) {
@@ -6167,7 +6193,7 @@ fun SectionScreen(
         if (info == null) {
             val message =
                 if (infoResult.exceptionOrNull() != null) {
-                    "Failed to pull details"
+                    "Failed to load content info"
                 } else {
                     "No details available"
                 }
@@ -6999,7 +7025,7 @@ fun FavoritesScreen(
         if (info == null) {
             val message =
                 if (infoResult.exceptionOrNull() != null) {
-                    "Failed to pull details"
+                    "Failed to load content info"
                 } else {
                     "No details available"
                 }
@@ -7786,7 +7812,7 @@ fun CategorySectionScreen(
         if (info == null) {
             val message =
                 if (infoResult.exceptionOrNull() != null) {
-                    "Failed to pull details"
+                    "Failed to load content info"
                 } else {
                     "No details available"
                 }

@@ -203,6 +203,9 @@ class XtreamPlayerView @JvmOverloads constructor(
                 (event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
                     event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)
             ) {
+                if (player == null) {
+                    return super.dispatchKeyEvent(event)
+                }
                 val focused = findFocus()
                 val canHandleSeek = if (controlsShowing) {
                     focused?.id == Media3UiR.id.exo_progress
@@ -228,7 +231,11 @@ class XtreamPlayerView @JvmOverloads constructor(
                             repeatSeekRunnable = object : Runnable {
                                 override fun run() {
                                     val currentPlayer = player
-                                    if (currentPlayer != null && pendingSeekKey == direction) {
+                                    if (currentPlayer == null) {
+                                        stopSeekRepeat()
+                                        return
+                                    }
+                                    if (pendingSeekKey == direction) {
                                         val elapsed = SystemClock.uptimeMillis() - longSeekStartMs
                                         val stepMs = resolveLongSeekStepMs(elapsed)
                                         val delta = if (direction == KeyEvent.KEYCODE_DPAD_LEFT) {
@@ -346,7 +353,11 @@ class XtreamPlayerView @JvmOverloads constructor(
         val wasLongSeek = isLongSeekActive
         stopSeekRepeat()
         if (!wasLongSeek) {
-            val currentPlayer = player ?: return true
+            val currentPlayer = player
+            if (currentPlayer == null) {
+                stopSeekRepeat()
+                return true
+            }
             if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
                 currentPlayer.seekBack()
             } else {
