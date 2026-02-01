@@ -9844,7 +9844,7 @@ private fun UpdatePromptDialog(
     Dialog(onDismissRequest = onLater) {
         Column(
             modifier = Modifier
-                .fillMaxWidth(0.6f)
+                .fillMaxWidth(0.48f)
                 .clip(shape)
                 .background(
                     Brush.verticalGradient(
@@ -9852,27 +9852,27 @@ private fun UpdatePromptDialog(
                     )
                 )
                 .border(1.dp, colors.border, shape)
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
                 text = "Update available",
                 color = colors.textPrimary,
-                fontSize = 20.sp,
+                fontSize = 18.sp,
                 fontFamily = AppTheme.fontFamily,
                 fontWeight = FontWeight.Bold
             )
             Text(
                 text = "Latest: v${release.versionName}",
                 color = colors.textSecondary,
-                fontSize = 14.sp,
+                fontSize = 13.sp,
                 fontFamily = AppTheme.fontFamily
             )
             if (isDownloading) {
                 Text(
                     text = "Downloading update...",
                     color = colors.textSecondary,
-                    fontSize = 13.sp,
+                    fontSize = 12.sp,
                     fontFamily = AppTheme.fontFamily
                 )
             }
@@ -9892,7 +9892,10 @@ private fun UpdatePromptDialog(
                     Text(
                         text = if (isDownloading) "Updating..." else "Update",
                         fontFamily = AppTheme.fontFamily,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 FocusableButton(
@@ -9907,7 +9910,10 @@ private fun UpdatePromptDialog(
                     Text(
                         text = "Later",
                         fontFamily = AppTheme.fontFamily,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
