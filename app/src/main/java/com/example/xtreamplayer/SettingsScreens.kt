@@ -53,6 +53,7 @@ import kotlin.math.roundToInt
 fun SettingsScreen(
     settings: SettingsState,
     activeListName: String,
+    appVersionLabel: String,
     contentItemFocusRequester: FocusRequester,
     onMoveLeft: () -> Unit,
     onToggleAutoPlay: () -> Unit,
@@ -64,6 +65,7 @@ fun SettingsScreen(
     onOpenSubtitlesApiKey: () -> Unit,
     onManageLists: () -> Unit,
     onRefreshContent: () -> Unit,
+    onCheckForUpdates: () -> Unit,
     onClearCache: () -> Unit,
     onSignOut: () -> Unit
 ) {
@@ -81,7 +83,8 @@ fun SettingsScreen(
         SettingsAction("Remember login", flagLabel(settings.rememberLogin), onToggleRememberLogin),
         SettingsAction("Auto sign-in", flagLabel(settings.autoSignIn), onToggleAutoSignIn),
         SettingsAction("Manage lists", null, onManageLists),
-        SettingsAction("Sync library", null, onRefreshContent)
+        SettingsAction("Sync library", null, onRefreshContent),
+        SettingsAction("Check for updates", appVersionLabel, onCheckForUpdates)
     )
 
     // Focus is managed by user navigation - no auto-focus on screen load

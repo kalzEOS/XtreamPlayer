@@ -153,6 +153,11 @@ import com.example.xtreamplayer.player.XtreamPlayerView
 import com.example.xtreamplayer.settings.PlaybackSettingsController
 import com.example.xtreamplayer.settings.SettingsState
 import com.example.xtreamplayer.settings.SettingsViewModel
+import com.example.xtreamplayer.update.UpdateRelease
+import com.example.xtreamplayer.update.compareVersions
+import com.example.xtreamplayer.update.downloadUpdateApk
+import com.example.xtreamplayer.update.fetchLatestRelease
+import com.example.xtreamplayer.update.parseVersionParts
 import com.example.xtreamplayer.ui.ApiKeyInputDialog
 import com.example.xtreamplayer.ui.AudioBoostDialog
 import com.example.xtreamplayer.ui.AudioTrackDialog
@@ -177,6 +182,9 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import java.util.Locale
 import java.io.File
+import android.provider.Settings
+import androidx.core.content.FileProvider
+import okhttp3.OkHttpClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -244,6 +252,12 @@ fun RootScreen(
         subtitleRepository: SubtitleRepository
 ) {
     val context = LocalContext.current
+    val appVersionName = remember {
+        runCatching {
+            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            info.versionName ?: ""
+        }.getOrDefault("")
+    }
     val settingsViewModel: SettingsViewModel = hiltViewModel()
     val settings by settingsViewModel.settings.collectAsStateWithLifecycle()
     val coroutineScope = rememberCoroutineScope()
@@ -282,6 +296,10 @@ fun RootScreen(
     var navSlideExpanded by remember { mutableStateOf(true) }
     var showManageLists by remember { mutableStateOf(false) }
     var showAppearance by remember { mutableStateOf(false) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var updateInProgress by remember { mutableStateOf(false) }
+    var pendingUpdate by remember { mutableStateOf<UpdateRelease?>(null) }
+    var updateCheckJob by remember { mutableStateOf<Job?>(null) }
     var showApiKeyDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
     var showFontDialog by remember { mutableStateOf(false) }
@@ -512,6 +530,7 @@ fun RootScreen(
     var refreshToken by remember { mutableStateOf(0) }
     var hasCacheForAccount by remember { mutableStateOf<Boolean?>(null) }
     var hasSearchIndex by remember { mutableStateOf<Boolean?>(null) }
+    val updateHttpClient = remember { OkHttpClient() }
 
     // Per-section sync state
     data class SectionSyncState(
@@ -638,6 +657,77 @@ fun RootScreen(
                     }
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
             isRefreshing = false
+        }
+    }
+
+    fun launchApkInstall(file: File) {
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    }
+
+    fun ensureInstallPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+        if (context.packageManager.canRequestPackageInstalls()) return true
+        val intent = Intent(
+            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.parse("package:${context.packageName}")
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+        Toast.makeText(
+            context,
+            "Allow installs from this app to continue",
+            Toast.LENGTH_LONG
+        ).show()
+        return false
+    }
+
+    fun checkForUpdates() {
+        if (updateCheckJob?.isActive == true) return
+        updateCheckJob = coroutineScope.launch {
+            val result = runCatching { fetchLatestRelease(updateHttpClient) }
+            val latest = result.getOrNull()
+            if (latest == null) {
+                Toast.makeText(context, "Update check failed", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val localParts = parseVersionParts(appVersionName)
+            if (localParts.isEmpty() || latest.versionParts.isEmpty()) {
+                Toast.makeText(context, "Update info unavailable", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            if (compareVersions(localParts, latest.versionParts) >= 0) {
+                Toast.makeText(context, "Already up to date", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            pendingUpdate = latest
+            showUpdateDialog = true
+        }
+    }
+
+    fun startUpdateDownload(release: UpdateRelease) {
+        if (updateInProgress) return
+        updateInProgress = true
+        coroutineScope.launch {
+            val file = runCatching {
+                downloadUpdateApk(context, release, updateHttpClient)
+            }.getOrNull()
+            updateInProgress = false
+            if (file == null) {
+                Toast.makeText(context, "Update download failed", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            if (!ensureInstallPermission()) {
+                return@launch
+            }
+            showUpdateDialog = false
+            launchApkInstall(file)
         }
     }
     LaunchedEffect(accountKey) {
@@ -1500,6 +1590,7 @@ fun RootScreen(
                                 SettingsScreen(
                                         settings = settings,
                                         activeListName = activeListName,
+                                        appVersionLabel = "v${appVersionName}",
                                         contentItemFocusRequester = contentItemFocusRequester,
                                         onMoveLeft = handleMoveLeft,
                                         onToggleAutoPlay = settingsViewModel::toggleAutoPlayNext,
@@ -1551,6 +1642,7 @@ fun RootScreen(
                                                 }
                                             }
                                         },
+                                        onCheckForUpdates = { checkForUpdates() },
                                         onClearCache = {
                                             coroutineScope.launch {
                                                 val contentBytes = contentRepository.diskCacheSizeBytes()
@@ -2027,6 +2119,14 @@ fun RootScreen(
                 currentScale = settings.fontScale,
                 onScaleChange = { scale -> settingsViewModel.setFontScale(scale) },
                 onDismiss = { showFontScaleDialog = false }
+        )
+    }
+    if (showUpdateDialog && pendingUpdate != null) {
+        UpdatePromptDialog(
+                release = pendingUpdate!!,
+                isDownloading = updateInProgress,
+                onUpdate = { startUpdateDownload(pendingUpdate!!) },
+                onLater = { showUpdateDialog = false }
         )
     }
     if (showNextEpisodeThresholdDialog) {
@@ -9723,6 +9823,89 @@ private fun PlotDialog(
                     Text(
                         text = "Close",
                         fontSize = 14.sp,
+                        fontFamily = AppTheme.fontFamily,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UpdatePromptDialog(
+    release: UpdateRelease,
+    isDownloading: Boolean,
+    onUpdate: () -> Unit,
+    onLater: () -> Unit
+) {
+    val colors = AppTheme.colors
+    val shape = RoundedCornerShape(18.dp)
+    Dialog(onDismissRequest = onLater) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth(0.6f)
+                .clip(shape)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(colors.background, colors.backgroundAlt)
+                    )
+                )
+                .border(1.dp, colors.border, shape)
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "Update available",
+                color = colors.textPrimary,
+                fontSize = 20.sp,
+                fontFamily = AppTheme.fontFamily,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Latest: v${release.versionName}",
+                color = colors.textSecondary,
+                fontSize = 14.sp,
+                fontFamily = AppTheme.fontFamily
+            )
+            if (isDownloading) {
+                Text(
+                    text = "Downloading update...",
+                    color = colors.textSecondary,
+                    fontSize = 13.sp,
+                    fontFamily = AppTheme.fontFamily
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                FocusableButton(
+                    onClick = onUpdate,
+                    enabled = !isDownloading,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = colors.accent,
+                        contentColor = colors.textOnAccent
+                    )
+                ) {
+                    Text(
+                        text = if (isDownloading) "Updating..." else "Update",
+                        fontFamily = AppTheme.fontFamily,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                FocusableButton(
+                    onClick = onLater,
+                    enabled = !isDownloading,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = colors.surfaceAlt,
+                        contentColor = colors.textPrimary
+                    )
+                ) {
+                    Text(
+                        text = "Later",
                         fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold
                     )
