@@ -473,14 +473,14 @@ class XtreamPlayerView @JvmOverloads constructor(
             if (isLiveContent) {
                 onChannelDown?.invoke()
             } else {
-                player?.seekToPreviousMediaItem()
+                player?.seekToPrevious()
             }
         }
         next?.setOnClickListener {
             if (isLiveContent) {
                 onChannelUp?.invoke()
             } else {
-                player?.seekToNextMediaItem()
+                player?.seekToNext()
             }
         }
     }
