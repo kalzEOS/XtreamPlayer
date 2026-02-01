@@ -9844,7 +9844,7 @@ private fun UpdatePromptDialog(
     Dialog(onDismissRequest = onLater) {
         Column(
             modifier = Modifier
-                .fillMaxWidth(0.42f)
+                .fillMaxWidth(0.6f)
                 .clip(shape)
                 .background(
                     Brush.verticalGradient(
@@ -9878,23 +9878,25 @@ private fun UpdatePromptDialog(
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 FocusableButton(
                     onClick = onUpdate,
                     enabled = !isDownloading,
-                    modifier = Modifier.weight(1f).height(36.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(40.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = colors.accent,
                         contentColor = colors.textOnAccent
                     ),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Text(
                         text = if (isDownloading) "Updating" else "Update",
                         fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -9902,18 +9904,20 @@ private fun UpdatePromptDialog(
                 FocusableButton(
                     onClick = onLater,
                     enabled = !isDownloading,
-                    modifier = Modifier.weight(1f).height(36.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(40.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = colors.surfaceAlt,
                         contentColor = colors.textPrimary
                     ),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Text(
                         text = "Later",
                         fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
