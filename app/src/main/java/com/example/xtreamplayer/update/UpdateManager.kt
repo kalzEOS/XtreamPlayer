@@ -22,10 +22,11 @@ data class UpdateRelease(
 
 suspend fun fetchLatestRelease(client: OkHttpClient): UpdateRelease? {
     return withContext(Dispatchers.IO) {
-        val request = Request.Builder()
-            .url(LATEST_RELEASE_URL)
-            .get()
-            .build()
+    val request = Request.Builder()
+        .url(LATEST_RELEASE_URL)
+        .header("User-Agent", "XtreamPlayer")
+        .get()
+        .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return@withContext null
             val body = response.body?.string()?.trim().orEmpty()
