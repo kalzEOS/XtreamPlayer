@@ -73,6 +73,7 @@ class XtreamPlayerView @JvmOverloads constructor(
     var onChannelUp: (() -> Boolean)? = null
     var onChannelDown: (() -> Boolean)? = null
     var onToggleControls: (() -> Boolean)? = null
+    var onSeekPreviewChanged: ((Boolean) -> Unit)? = null
     var fastSeekEnabled: Boolean = true
     var defaultControllerTimeoutMs: Int = 3000
     var titleText: String? = null
@@ -97,6 +98,9 @@ class XtreamPlayerView @JvmOverloads constructor(
     private var longPressRunnable: Runnable? = null
     private var repeatSeekRunnable: Runnable? = null
     private var longSeekStartMs: Long = 0L
+    private var seekPreviewActive = false
+    private var pendingSeekFromHidden = false
+    private var suppressSeekKeyUp = false
     private val topBarSyncListener = ViewTreeObserver.OnPreDrawListener {
         syncTopBarWithControlsBackground()
         true
@@ -209,10 +213,16 @@ class XtreamPlayerView @JvmOverloads constructor(
                     if (pendingSeekKey == null) {
                         pendingSeekKey = event.keyCode
                         isLongSeekActive = false
+                        pendingSeekFromHidden = !controlsShowing
+                        if (pendingSeekFromHidden) {
+                            setSeekPreviewVisible(true)
+                        }
                         longPressRunnable = Runnable {
                             isLongSeekActive = true
-                            setControllerShowTimeoutMs(0)
-                            showController()
+                            if (!pendingSeekFromHidden) {
+                                setControllerShowTimeoutMs(0)
+                                showController()
+                            }
                             longSeekStartMs = SystemClock.uptimeMillis()
                             val direction = pendingSeekKey
                             repeatSeekRunnable = object : Runnable {
@@ -278,38 +288,72 @@ class XtreamPlayerView @JvmOverloads constructor(
                 return super.dispatchKeyEvent(event)
             }
         } else if (event.action == KeyEvent.ACTION_UP) {
-            if (fastSeekEnabled &&
-                !isLiveContent &&
-                (event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
-                    event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)
-            ) {
-                if (pendingSeekKey == event.keyCode) {
-                    longPressRunnable?.let { keyHandler.removeCallbacks(it) }
-                    repeatSeekRunnable?.let { keyHandler.removeCallbacks(it) }
-                    longPressRunnable = null
-                    repeatSeekRunnable = null
-                    val wasLongSeek = isLongSeekActive
-                    isLongSeekActive = false
-                    pendingSeekKey = null
-                    longSeekStartMs = 0L
-                    setControllerShowTimeoutMs(defaultControllerTimeoutMs)
-                    if (!wasLongSeek) {
-                        val currentPlayer = player
-                        if (currentPlayer != null) {
-                            if (event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
-                                currentPlayer.seekBack()
-                            } else {
-                                currentPlayer.seekForward()
-                            }
-                            return true
-                        }
-                    } else {
-                        return true
-                    }
-                }
+            if (handleSeekKeyUp(event.keyCode)) {
+                suppressSeekKeyUp = true
+                return true
+            }
+        } else if (event.action == android.view.MotionEvent.ACTION_CANCEL) {
+            if (pendingSeekKey != null) {
+                stopSeekRepeat()
+                return true
             }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (suppressSeekKeyUp) {
+            suppressSeekKeyUp = false
+            return super.onKeyUp(keyCode, event)
+        }
+        if (handleSeekKeyUp(keyCode)) {
+            return true
+        }
+        return super.onKeyUp(keyCode, event)
+    }
+
+    private fun setSeekPreviewVisible(visible: Boolean) {
+        if (seekPreviewActive == visible) return
+        seekPreviewActive = visible
+        onSeekPreviewChanged?.invoke(visible)
+    }
+
+    private fun stopSeekRepeat() {
+        longPressRunnable?.let { keyHandler.removeCallbacks(it) }
+        repeatSeekRunnable?.let { keyHandler.removeCallbacks(it) }
+        longPressRunnable = null
+        repeatSeekRunnable = null
+        isLongSeekActive = false
+        pendingSeekKey = null
+        longSeekStartMs = 0L
+        if (!pendingSeekFromHidden) {
+            setControllerShowTimeoutMs(defaultControllerTimeoutMs)
+        } else {
+            setSeekPreviewVisible(false)
+            pendingSeekFromHidden = false
+        }
+    }
+
+    private fun handleSeekKeyUp(keyCode: Int): Boolean {
+        if (!fastSeekEnabled ||
+            isLiveContent ||
+            (keyCode != KeyEvent.KEYCODE_DPAD_LEFT &&
+                keyCode != KeyEvent.KEYCODE_DPAD_RIGHT)
+        ) {
+            return false
+        }
+        if (pendingSeekKey == null) return false
+        val wasLongSeek = isLongSeekActive
+        stopSeekRepeat()
+        if (!wasLongSeek) {
+            val currentPlayer = player ?: return true
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                currentPlayer.seekBack()
+            } else {
+                currentPlayer.seekForward()
+            }
+        }
+        return true
     }
 
     private fun updateControlsForContentType() {
@@ -431,12 +475,13 @@ class XtreamPlayerView @JvmOverloads constructor(
 private fun resolveLongSeekStepMs(elapsedMs: Long): Long {
     return when {
         elapsedMs < 2_000L -> 1_000L
-        elapsedMs < 5_000L -> 2_000L
-        elapsedMs < 8_000L -> 5_000L
-        elapsedMs < 12_000L -> 10_000L
-        else -> 20_000L
+        elapsedMs < 4_000L -> 2_000L
+        elapsedMs < 7_000L -> 5_000L
+        elapsedMs < 11_000L -> 10_000L
+        elapsedMs < 15_000L -> 20_000L
+        else -> 30_000L
     }
 }
 
 private const val LONG_SEEK_DELAY_MS = 350L
-private const val LONG_SEEK_REPEAT_MS = 250L
+private const val LONG_SEEK_REPEAT_MS = 80L
