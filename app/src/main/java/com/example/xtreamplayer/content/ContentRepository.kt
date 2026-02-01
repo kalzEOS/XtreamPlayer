@@ -403,7 +403,7 @@ class ContentRepository(
             return cached
         }
         val result = api.fetchVodInfo(authConfig, vodId)
-        val info = result.getOrNull() ?: return null
+        val info = result.getOrElse { throw it }
         contentCache.writeVodInfo(vodId, authConfig, info)
         movieInfoMutex.withLock { movieInfoCache[key] = info }
         return info
@@ -427,7 +427,7 @@ class ContentRepository(
             return cached
         }
         val result = api.fetchSeriesInfo(authConfig, seriesId)
-        val info = result.getOrNull() ?: return null
+        val info = result.getOrElse { throw it }
         contentCache.writeSeriesInfo(seriesId, authConfig, info)
         seriesInfoMutex.withLock { seriesInfoCache[key] = info }
         return info
