@@ -75,8 +75,20 @@ class SubtitleRepository(
 
             val content = contentResult.getOrThrow()
             val baseName = "${mediaId}_${subtitle.language}"
-            val fallbackExt = downloadInfo.fileName.substringAfterLast('.', "srt")
-                .lowercase()
+            val rawFileName = downloadInfo.fileName
+            val normalizedFileName =
+                if (rawFileName.lowercase().endsWith(".gz")) {
+                    rawFileName.dropLast(3)
+                } else {
+                    rawFileName
+                }
+            val extCandidate = normalizedFileName.substringAfterLast('.', "")
+            val fallbackExt =
+                if (normalizedFileName.contains('.') && extCandidate.isNotBlank()) {
+                    extCandidate.lowercase()
+                } else {
+                    "srt"
+                }
 
             val (finalBytes, finalExt) = when {
                 isZip(content) -> extractZipSubtitle(content, fallbackExt)
