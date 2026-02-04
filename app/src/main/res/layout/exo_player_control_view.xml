@@ -112,6 +112,14 @@
                 style="@style/ExoStyledControls.Button.Bottom.CC" />
 
             <ImageButton
+                android:id="@+id/exo_subtitle_timing"
+                style="@style/ExoStyledControls.Button.Bottom"
+                android:src="@drawable/ic_subtitle_timing"
+                android:contentDescription="@string/subtitle_timing_description"
+                android:focusable="true"
+                android:clickable="true" />
+
+            <ImageButton
                 android:id="@+id/exo_subtitle_download"
                 style="@style/ExoStyledControls.Button.Bottom"
                 android:src="@drawable/ic_subtitle_download"

@@ -17,6 +17,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
+import androidx.compose.runtime.neverEqualPolicy
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
@@ -49,18 +50,30 @@ import com.example.xtreamplayer.ui.NextEpisodeOverlay
 import com.example.xtreamplayer.ui.PlaybackSettingsDialog
 import com.example.xtreamplayer.ui.PlaybackSpeedDialog
 import com.example.xtreamplayer.ui.SubtitleDialogState
+import com.example.xtreamplayer.ui.SubtitleOffsetDialog
 import com.example.xtreamplayer.ui.SubtitleOptionsDialog
 import com.example.xtreamplayer.ui.SubtitleSearchDialog
 import com.example.xtreamplayer.ui.VideoResolutionDialog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private data class ActiveSubtitle(
     val uri: Uri,
     val language: String,
     val label: String,
-    val fileName: String?
-)
+    val fileName: String?,
+    val originalContent: ByteArray? = null  // Store original content for offset adjustment
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is ActiveSubtitle) return false
+        return uri == other.uri && language == other.language && label == other.label && fileName == other.fileName
+    }
+    override fun hashCode(): Int = uri.hashCode()
+}
 
 private fun sanitizeSubtitleQuery(rawTitle: String): String {
     if (rawTitle.isBlank()) return rawTitle
@@ -82,6 +95,119 @@ private fun subtitleMimeType(fileName: String?): String {
         "ssa", "ass" -> MimeTypes.TEXT_SSA
         "ttml", "dfxp" -> MimeTypes.APPLICATION_TTML
         else -> MimeTypes.APPLICATION_SUBRIP
+    }
+}
+
+private enum class SubtitleFormat {
+    SRT,
+    VTT,
+    ASS,
+    SSA,
+    UNKNOWN
+}
+
+private fun subtitleFormat(fileName: String?): SubtitleFormat {
+    return when (fileName?.substringAfterLast('.', "")?.lowercase()) {
+        "srt" -> SubtitleFormat.SRT
+        "vtt" -> SubtitleFormat.VTT
+        "ass" -> SubtitleFormat.ASS
+        "ssa" -> SubtitleFormat.SSA
+        else -> SubtitleFormat.UNKNOWN
+    }
+}
+
+private fun isOffsetSupported(fileName: String?): Boolean {
+    return subtitleFormat(fileName) != SubtitleFormat.UNKNOWN
+}
+
+private data class DecodedSubtitle(val text: String, val charset: java.nio.charset.Charset)
+
+private fun decodeSubtitle(content: ByteArray): DecodedSubtitle {
+    val utf8 = content.toString(Charsets.UTF_8)
+    return if (utf8.contains('\uFFFD')) {
+        DecodedSubtitle(content.toString(Charsets.ISO_8859_1), Charsets.ISO_8859_1)
+    } else {
+        DecodedSubtitle(utf8, Charsets.UTF_8)
+    }
+}
+
+private fun applySubtitleOffset(
+    content: ByteArray,
+    offsetMs: Long,
+    format: SubtitleFormat
+): ByteArray {
+    if (offsetMs == 0L || format == SubtitleFormat.UNKNOWN) return content
+    val decoded = decodeSubtitle(content)
+    val adjustedText = when (format) {
+        SubtitleFormat.SRT -> applySrtOffset(decoded.text, offsetMs)
+        SubtitleFormat.VTT -> applyVttOffset(decoded.text, offsetMs)
+        SubtitleFormat.ASS, SubtitleFormat.SSA -> applyAssOffset(decoded.text, offsetMs)
+        SubtitleFormat.UNKNOWN -> decoded.text
+    }
+    return adjustedText.toByteArray(decoded.charset)
+}
+
+// Apply timing offset to SRT subtitle content
+private fun applySrtOffset(text: String, offsetMs: Long): String {
+    if (offsetMs == 0L) return text
+
+    val timePattern = Regex("""(\d{2}):(\d{2}):(\d{2}),(\d{3})""")
+
+    return timePattern.replace(text) { match ->
+        val hours = match.groupValues[1].toInt()
+        val minutes = match.groupValues[2].toInt()
+        val seconds = match.groupValues[3].toInt()
+        val millis = match.groupValues[4].toInt()
+
+        val totalMs = (hours * 3600000L) + (minutes * 60000L) + (seconds * 1000L) + millis + offsetMs
+        val adjustedMs = maxOf(0L, totalMs)  // Don't go negative
+
+        val newHours = (adjustedMs / 3600000).toInt()
+        val newMinutes = ((adjustedMs % 3600000) / 60000).toInt()
+        val newSeconds = ((adjustedMs % 60000) / 1000).toInt()
+        val newMillis = (adjustedMs % 1000).toInt()
+
+        String.format("%02d:%02d:%02d,%03d", newHours, newMinutes, newSeconds, newMillis)
+    }
+}
+
+private fun applyVttOffset(text: String, offsetMs: Long): String {
+    val timePattern = Regex("""(?:(\d{2}):)?(\d{2}):(\d{2})[.](\d{3})""")
+    return timePattern.replace(text) { match ->
+        val hasHours = match.groupValues[1].isNotEmpty()
+        val hours = match.groupValues[1].toIntOrNull() ?: 0
+        val minutes = match.groupValues[2].toInt()
+        val seconds = match.groupValues[3].toInt()
+        val millis = match.groupValues[4].toInt()
+        val totalMs = (hours * 3600000L) + (minutes * 60000L) + (seconds * 1000L) + millis + offsetMs
+        val adjustedMs = maxOf(0L, totalMs)
+        val newHours = (adjustedMs / 3600000).toInt()
+        val newMinutes = ((adjustedMs % 3600000) / 60000).toInt()
+        val newSeconds = ((adjustedMs % 60000) / 1000).toInt()
+        val newMillis = (adjustedMs % 1000).toInt()
+        if (hasHours || newHours > 0) {
+            String.format("%02d:%02d:%02d.%03d", newHours, newMinutes, newSeconds, newMillis)
+        } else {
+            val totalMinutes = (adjustedMs / 60000).toInt()
+            String.format("%02d:%02d.%03d", totalMinutes, newSeconds, newMillis)
+        }
+    }
+}
+
+private fun applyAssOffset(text: String, offsetMs: Long): String {
+    val timePattern = Regex("""(\d+):(\d{2}):(\d{2})[.](\d{2})""")
+    return timePattern.replace(text) { match ->
+        val hours = match.groupValues[1].toInt()
+        val minutes = match.groupValues[2].toInt()
+        val seconds = match.groupValues[3].toInt()
+        val centis = match.groupValues[4].toInt()
+        val totalMs = (hours * 3600000L) + (minutes * 60000L) + (seconds * 1000L) + (centis * 10L) + offsetMs
+        val adjustedMs = maxOf(0L, totalMs)
+        val newHours = (adjustedMs / 3600000).toInt()
+        val newMinutes = ((adjustedMs % 3600000) / 60000).toInt()
+        val newSeconds = ((adjustedMs % 60000) / 1000).toInt()
+        val newCentis = ((adjustedMs % 1000) / 10).toInt()
+        String.format("%d:%02d:%02d.%02d", newHours, newMinutes, newSeconds, newCentis)
     }
 }
 
@@ -136,14 +262,6 @@ internal fun PlayerOverlay(
     var showPlaybackSettingsDialog by remember { mutableStateOf(false) }
     var showPlaybackSpeedDialog by remember { mutableStateOf(false) }
     var showResolutionDialog by remember { mutableStateOf(false) }
-    val hasModalOpen =
-            showPlaybackSettingsDialog ||
-                    showResolutionDialog ||
-                    showAudioTrackDialog ||
-                    showAudioBoostDialog ||
-                    showPlaybackSpeedDialog ||
-                    showSubtitleDialog ||
-                    showSubtitleOptionsDialog
     var subtitleDialogState by remember {
         mutableStateOf<SubtitleDialogState>(SubtitleDialogState.Idle)
     }
@@ -153,7 +271,23 @@ internal fun PlayerOverlay(
         mutableStateOf(isTextTrackEnabled(player.trackSelectionParameters))
     }
     var hasEmbeddedSubtitles by remember { mutableStateOf(false) }
-    var activeSubtitle by remember { mutableStateOf<ActiveSubtitle?>(null) }
+    var activeSubtitle by remember { mutableStateOf<ActiveSubtitle?>(null, policy = neverEqualPolicy()) }
+    var hasCachedSubtitle by remember { mutableStateOf(false) }
+    var lastAppliedOffsetMs by remember { mutableStateOf(0L) }
+
+    // Subtitle timing adjustment state
+    var subtitleOffsetMs by remember { mutableStateOf(0L) }
+    var showSubtitleTimingDialog by remember { mutableStateOf(false) }
+    var offsetApplyJob by remember { mutableStateOf<Job?>(null) }
+    val hasModalOpen =
+            showPlaybackSettingsDialog ||
+                    showResolutionDialog ||
+                    showAudioTrackDialog ||
+                    showAudioBoostDialog ||
+                    showPlaybackSpeedDialog ||
+                    showSubtitleDialog ||
+                    showSubtitleOptionsDialog
+    val isPlayerModalOpen = hasModalOpen || showSubtitleTimingDialog
 
     // Next episode overlay state
     var showNextEpisodeOverlay by remember { mutableStateOf(false) }
@@ -235,6 +369,51 @@ internal fun PlayerOverlay(
         onDispose { player.removeListener(listener) }
     }
 
+    suspend fun loadSubtitleContent(uri: Uri): ByteArray? = withContext(Dispatchers.IO) {
+        val path = uri.path ?: return@withContext null
+        val file = java.io.File(path)
+        if (!file.exists()) return@withContext null
+        file.readBytes()
+    }
+
+    suspend fun applyOffsetToSubtitle(subtitle: ActiveSubtitle, offsetMs: Long) {
+        val format = subtitleFormat(subtitle.fileName)
+        if (format == SubtitleFormat.UNKNOWN) return
+        val original = subtitle.originalContent ?: return
+        val adjustedContent = applySubtitleOffset(original, offsetMs, format)
+        val path = subtitle.uri.path ?: return
+        withContext(Dispatchers.IO) {
+            java.io.File(path).writeBytes(adjustedContent)
+        }
+        playbackEngine.addSubtitle(
+            subtitleUri = subtitle.uri,
+            language = subtitle.language,
+            label = subtitle.label,
+            mimeType = subtitleMimeType(subtitle.fileName)
+        )
+        lastAppliedOffsetMs = offsetMs
+    }
+
+    fun scheduleOffsetApply(newOffset: Long) {
+        val subtitle = activeSubtitle ?: return
+        if (subtitle.originalContent == null || !isOffsetSupported(subtitle.fileName)) return
+        if (newOffset == lastAppliedOffsetMs) return
+        offsetApplyJob?.cancel()
+        offsetApplyJob = subtitleCoroutineScope.launch {
+            delay(2000)
+            applyOffsetToSubtitle(subtitle, newOffset)
+        }
+    }
+
+    fun applyOffsetNow(newOffset: Long) {
+        val subtitle = activeSubtitle ?: return
+        if (subtitle.originalContent == null || !isOffsetSupported(subtitle.fileName)) return
+        offsetApplyJob?.cancel()
+        offsetApplyJob = subtitleCoroutineScope.launch {
+            applyOffsetToSubtitle(subtitle, newOffset)
+        }
+    }
+
     LaunchedEffect(mediaId) {
         activeSubtitle =
                 if (mediaId.isBlank()) {
@@ -242,14 +421,46 @@ internal fun PlayerOverlay(
                 } else {
                     subtitleRepository.getCachedSubtitlesForMedia(mediaId).firstOrNull()?.let {
                             cached ->
+                        val originalContent = loadSubtitleContent(cached.uri)
                         ActiveSubtitle(
                                 uri = cached.uri,
                                 language = cached.language,
                                 label = "Cached ${cached.language.uppercase()}",
-                                fileName = cached.fileName
+                                fileName = cached.fileName,
+                                originalContent = originalContent
                         )
                     }
                 }
+        subtitleOffsetMs = 0L
+        lastAppliedOffsetMs = 0L
+        hasCachedSubtitle =
+                if (mediaId.isBlank()) {
+                    false
+                } else {
+                    withContext(Dispatchers.IO) {
+                        subtitleRepository.getCachedSubtitlesForMedia(mediaId).isNotEmpty()
+                    }
+                }
+    }
+
+    LaunchedEffect(showSubtitleOptionsDialog, mediaId) {
+        if (showSubtitleOptionsDialog && activeSubtitle == null && mediaId.isNotBlank()) {
+            subtitleRepository.getCachedSubtitlesForMedia(mediaId).firstOrNull()?.let { cached ->
+                val originalContent = loadSubtitleContent(cached.uri)
+                activeSubtitle =
+                    ActiveSubtitle(
+                        uri = cached.uri,
+                        language = cached.language,
+                        label = "Cached ${cached.language.uppercase()}",
+                        fileName = cached.fileName,
+                        originalContent = originalContent
+                    )
+            }
+            hasCachedSubtitle =
+                    withContext(Dispatchers.IO) {
+                        subtitleRepository.getCachedSubtitlesForMedia(mediaId).isNotEmpty()
+                    }
+        }
     }
 
     val toggleSubtitles: () -> Unit = {
@@ -336,6 +547,7 @@ internal fun PlayerOverlay(
 
     BackHandler(enabled = true) {
         when {
+            showSubtitleTimingDialog -> showSubtitleTimingDialog = false
             showPlaybackSettingsDialog -> showPlaybackSettingsDialog = false
             showPlaybackSpeedDialog -> showPlaybackSpeedDialog = false
             showResolutionDialog -> showResolutionDialog = false
@@ -348,7 +560,60 @@ internal fun PlayerOverlay(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    val openSubtitleTimingDialog: () -> Unit = open@{
+        val subtitle =
+            activeSubtitle ?: subtitleRepository
+                .getCachedSubtitlesForMedia(mediaId)
+                .firstOrNull()
+                ?.let { cached ->
+                    ActiveSubtitle(
+                        uri = cached.uri,
+                        language = cached.language,
+                        label = "Cached ${cached.language.uppercase()}",
+                        fileName = cached.fileName,
+                        originalContent = null
+                    )
+                }
+        if (subtitle == null) {
+            Toast.makeText(
+                context,
+                "No subtitle available for timing adjustment",
+                Toast.LENGTH_SHORT
+            ).show()
+            return@open
+        }
+        if (!isOffsetSupported(subtitle.fileName)) {
+            Toast.makeText(
+                context,
+                "Subtitle format not supported for timing adjustment",
+                Toast.LENGTH_SHORT
+            ).show()
+            return@open
+        }
+        subtitleCoroutineScope.launch {
+            val withContent =
+                if (subtitle.originalContent != null) {
+                    subtitle
+                } else {
+                    val loaded = loadSubtitleContent(subtitle.uri)
+                    if (loaded == null) {
+                        Toast.makeText(
+                            context,
+                            "Subtitle file not available for timing adjustment",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        return@launch
+                    }
+                    subtitle.copy(originalContent = loaded)
+                }
+            activeSubtitle = withContent
+            showSubtitleDialog = false
+            showSubtitleOptionsDialog = false
+            showSubtitleTimingDialog = true
+        }
+    }
+
+Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
                 modifier =
                         Modifier.fillMaxSize()
@@ -386,13 +651,14 @@ internal fun PlayerOverlay(
                         onBackClick = onExit
                         onSubtitleDownloadClick = { showSubtitleDialog = true }
                         onSubtitleToggleClick = { showSubtitleOptionsDialog = true }
+                        onSubtitleTimingClick = openSubtitleTimingDialog
                         onAudioTrackClick = { showAudioTrackDialog = true }
                         onAudioBoostClick = { showAudioBoostDialog = true }
                         onSettingsClick = { showPlaybackSettingsDialog = true }
                         isLiveContent = currentContentType == ContentType.LIVE
                         fastSeekEnabled = currentContentType != ContentType.LIVE
                         onToggleControls = {
-                            if (hasModalOpen) {
+                            if (isPlayerModalOpen) {
                                 false
                             } else {
                                 if (isControllerFullyVisible()) {
@@ -404,14 +670,14 @@ internal fun PlayerOverlay(
                             }
                         }
                         onChannelUp = {
-                            if (!hasModalOpen && currentContentType == ContentType.LIVE) {
+                            if (!isPlayerModalOpen && currentContentType == ContentType.LIVE) {
                                 onLiveChannelSwitch(1)
                             } else {
                                 false
                             }
                         }
                         onChannelDown = {
-                            if (!hasModalOpen && currentContentType == ContentType.LIVE) {
+                            if (!isPlayerModalOpen && currentContentType == ContentType.LIVE) {
                                 onLiveChannelSwitch(-1)
                             } else {
                                 false
@@ -434,14 +700,6 @@ internal fun PlayerOverlay(
                             if (event.action != KeyEvent.ACTION_DOWN) {
                                 return@setOnKeyListener false
                             }
-                            val hasModalOpen =
-                                    showPlaybackSettingsDialog ||
-                                            showResolutionDialog ||
-                                            showAudioTrackDialog ||
-                                            showAudioBoostDialog ||
-                                            showPlaybackSpeedDialog ||
-                                            showSubtitleDialog ||
-                                            showSubtitleOptionsDialog
                             // Live channel switching is handled inside XtreamPlayerView based on controller visibility.
                             if (event.keyCode == KeyEvent.KEYCODE_BACK ||
                                             event.keyCode == KeyEvent.KEYCODE_ESCAPE
@@ -475,6 +733,7 @@ internal fun PlayerOverlay(
                     view.onBackClick = onExit
                     view.onSubtitleDownloadClick = { showSubtitleDialog = true }
                     view.onSubtitleToggleClick = { showSubtitleOptionsDialog = true }
+                    view.onSubtitleTimingClick = openSubtitleTimingDialog
                     view.onAudioTrackClick = { showAudioTrackDialog = true }
                     view.onAudioBoostClick = { showAudioBoostDialog = true }
                     view.onSettingsClick = { showPlaybackSettingsDialog = true }
@@ -482,7 +741,7 @@ internal fun PlayerOverlay(
                     view.fastSeekEnabled = currentContentType != ContentType.LIVE
                     view.defaultControllerTimeoutMs = 3000
                     view.onToggleControls = {
-                        if (hasModalOpen) {
+                        if (isPlayerModalOpen) {
                             false
                         } else {
                             if (view.isControllerFullyVisible()) {
@@ -494,14 +753,14 @@ internal fun PlayerOverlay(
                         }
                     }
                     view.onChannelUp = {
-                        if (!hasModalOpen && currentContentType == ContentType.LIVE) {
+                        if (!isPlayerModalOpen && currentContentType == ContentType.LIVE) {
                             onLiveChannelSwitch(1)
                         } else {
                             false
                         }
                     }
                     view.onChannelDown = {
-                        if (!hasModalOpen && currentContentType == ContentType.LIVE) {
+                        if (!isPlayerModalOpen && currentContentType == ContentType.LIVE) {
                             onLiveChannelSwitch(-1)
                         } else {
                             false
@@ -527,9 +786,28 @@ internal fun PlayerOverlay(
             )
         }
 
+        // Subtitle offset adjustment overlay with modal backdrop
+        if (showSubtitleTimingDialog && activeSubtitle != null && isOffsetSupported(activeSubtitle?.fileName)) {
+            SubtitleOffsetDialog(
+                offsetMs = subtitleOffsetMs,
+                onOffsetChange = { newOffset ->
+                    if (newOffset == subtitleOffsetMs) return@SubtitleOffsetDialog
+                    subtitleOffsetMs = newOffset
+                    scheduleOffsetApply(newOffset)
+                },
+                onDismiss = {
+                    if (subtitleOffsetMs != lastAppliedOffsetMs) {
+                        applyOffsetNow(subtitleOffsetMs)
+                    }
+                    showSubtitleTimingDialog = false
+                }
+            )
+        }
+
     }
 
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
+
 
     if (showSubtitleDialog) {
         val subtitleQuery = remember(title) { sanitizeSubtitleQuery(title) }
@@ -583,13 +861,21 @@ internal fun PlayerOverlay(
                         result.fold(
                                 onSuccess = { cachedSubtitle ->
                                     android.util.Log.d("PlayerOverlay", "Subtitle downloaded successfully: uri=${cachedSubtitle.uri}, language=${cachedSubtitle.language}, fileName=${cachedSubtitle.fileName}")
+                                    // Read original content for offset adjustment
+                                    val originalContent = try {
+                                        java.io.File(cachedSubtitle.uri.path ?: "").readBytes()
+                                    } catch (e: Exception) {
+                                        null
+                                    }
                                     activeSubtitle =
                                             ActiveSubtitle(
                                                     uri = cachedSubtitle.uri,
                                                     language = cachedSubtitle.language,
                                                     label = subtitle.release,
-                                                    fileName = cachedSubtitle.fileName
+                                                    fileName = cachedSubtitle.fileName,
+                                                    originalContent = originalContent
                                             )
+                                    subtitleOffsetMs = 0L  // Reset offset for new subtitle
                                     val mimeType = subtitleMimeType(cachedSubtitle.fileName)
                                     android.util.Log.d("PlayerOverlay", "Adding subtitle to player: mimeType=$mimeType")
                                     playbackEngine.addSubtitle(

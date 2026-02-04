@@ -74,6 +74,26 @@ class SubtitleRepository(
             }
 
             val content = contentResult.getOrThrow()
+            Timber.d("Downloaded subtitle content: ${content.size} bytes, first bytes: ${content.take(10).joinToString(" ") { String.format("%02X", it) }}")
+
+            // OpenSubtitles sometimes returns HTTP 200 with an error message in the body
+            // instead of a proper error code. Detect this by checking content size and content.
+            if (content.size < 100) {
+                val textContent = content.decodeToString()
+                Timber.e("Subtitle content too small, likely an error: $textContent")
+                if (textContent.contains("error", ignoreCase = true) ||
+                    textContent.contains("limit", ignoreCase = true) ||
+                    textContent.contains("expired", ignoreCase = true)) {
+                    return@withContext Result.failure(
+                        Exception("OpenSubtitles error: $textContent")
+                    )
+                }
+                // Even if it doesn't contain "error", a subtitle file should be larger
+                return@withContext Result.failure(
+                    Exception("Downloaded content too small to be a valid subtitle (${content.size} bytes)")
+                )
+            }
+
             val baseName = "${mediaId}_${subtitle.language}"
             val rawFileName = downloadInfo.fileName
             val normalizedFileName =
@@ -90,11 +110,26 @@ class SubtitleRepository(
                     "srt"
                 }
 
+            Timber.d("Content detection: isZip=${isZip(content)}, isGzip=${isGzip(content)}")
+
             val (finalBytes, finalExt) = when {
-                isZip(content) -> extractZipSubtitle(content, fallbackExt)
-                isGzip(content) -> Pair(extractGzipSubtitle(content), fallbackExt)
-                else -> Pair(content, fallbackExt)
+                isZip(content) -> {
+                    Timber.d("Extracting ZIP content")
+                    extractZipSubtitle(content, fallbackExt)
+                }
+                isGzip(content) -> {
+                    Timber.d("Extracting GZIP content")
+                    val extracted = extractGzipSubtitle(content)
+                    Timber.d("GZIP extracted: ${extracted.size} bytes")
+                    Pair(extracted, fallbackExt)
+                }
+                else -> {
+                    Timber.d("Using raw content (no compression detected)")
+                    Pair(content, fallbackExt)
+                }
             }
+
+            Timber.d("Final subtitle content: ${finalBytes.size} bytes")
 
             val safeExt = finalExt.ifBlank { "srt" }
             val fileName = "$baseName.$safeExt"

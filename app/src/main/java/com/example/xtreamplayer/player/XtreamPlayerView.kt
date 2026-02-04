@@ -30,6 +30,7 @@ class XtreamPlayerView @JvmOverloads constructor(
     private var backButtonView: View? = null
     private var subtitleDownloadView: View? = null
     private var subtitleToggleView: View? = null
+    private var subtitleTimingView: View? = null
     private var audioTrackView: View? = null
     private var audioBoostView: View? = null
     private var settingsView: View? = null
@@ -56,6 +57,11 @@ class XtreamPlayerView @JvmOverloads constructor(
         set(value) {
             field = value
             bindSubtitleToggleView()
+        }
+    var onSubtitleTimingClick: (() -> Unit)? = null
+        set(value) {
+            field = value
+            bindSubtitleTimingView()
         }
     var onAudioTrackClick: (() -> Unit)? = null
         set(value) {
@@ -168,6 +174,7 @@ class XtreamPlayerView @JvmOverloads constructor(
         bindBackButtonView()
         bindSubtitleDownloadView()
         bindSubtitleToggleView()
+        bindSubtitleTimingView()
         bindAudioTrackView()
         bindAudioBoostView()
         bindSettingsView()
@@ -379,6 +386,7 @@ class XtreamPlayerView @JvmOverloads constructor(
                 Media3UiR.id.exo_shuffle,
                 Media3UiR.id.exo_repeat_toggle,
                 Media3UiR.id.exo_subtitle,
+                R.id.exo_subtitle_timing,
                 R.id.exo_subtitle_download,
                 R.id.exo_audio_track,
                 R.id.exo_audio_boost,
@@ -424,6 +432,13 @@ class XtreamPlayerView @JvmOverloads constructor(
                 subtitleToggleView = it
             }
         view?.setOnClickListener { onSubtitleToggleClick?.invoke() }
+    }
+
+    private fun bindSubtitleTimingView() {
+        val view = subtitleTimingView ?: findViewById<View>(R.id.exo_subtitle_timing).also {
+            subtitleTimingView = it
+        }
+        view?.setOnClickListener { onSubtitleTimingClick?.invoke() }
     }
 
     private fun bindResizeModeView() {

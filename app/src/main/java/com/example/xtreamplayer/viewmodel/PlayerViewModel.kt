@@ -18,6 +18,7 @@ class PlayerViewModel @Inject constructor() : ViewModel() {
     val activePlaybackTitle = mutableStateOf<String?>(null)
     val activePlaybackItem = mutableStateOf<ContentItem?>(null)
     val activePlaybackItems = mutableStateOf<List<ContentItem>>(emptyList())
+    val activePlaybackSeriesParent = mutableStateOf<ContentItem?>(null)
 
     val playbackFallbackAttempts = mutableStateOf<Map<String, Int>>(emptyMap())
     val liveReconnectAttempts = mutableStateOf(0)

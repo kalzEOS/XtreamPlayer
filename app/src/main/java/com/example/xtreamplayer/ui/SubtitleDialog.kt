@@ -1,5 +1,6 @@
 package com.example.xtreamplayer.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -35,13 +37,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -77,6 +81,7 @@ private val InputBackground: Color
     @Composable get() = AppTheme.colors.surfaceAlt
 private val InputTextColor: Color
     @Composable get() = AppTheme.colors.textPrimary
+
 private val ContentAreaBackground: Color
     @Composable get() = AppTheme.colors.surface
 
@@ -358,28 +363,38 @@ fun SubtitleSearchDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Close button
-                FocusableButton(
-                    onClick = onDismiss,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = SecondaryBorderColor,
-                        contentColor = AppTheme.colors.textPrimary
-                    ),
-                    modifier = Modifier
-                        .align(Alignment.End)
-                        .focusRequester(closeFocusRequester)
-                        .onKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
-                                searchButtonFocusRequester.requestFocus()
-                                true
-                            } else false
-                        }
+                Row(
+                    modifier = Modifier.align(Alignment.End),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text(
-                        text = "Close",
-                        fontFamily = AppTheme.fontFamily,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    FocusableButton(
+                        onClick = onDismiss,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = SecondaryBorderColor,
+                            contentColor = AppTheme.colors.textPrimary
+                        ),
+                        modifier = Modifier
+                            .focusRequester(closeFocusRequester)
+                            .onKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyDown) {
+                                    when (event.key) {
+                                        Key.DirectionUp -> {
+                                            searchButtonFocusRequester.requestFocus()
+                                            true
+                                        }
+                                        else -> false
+                                    }
+                                } else {
+                                    false
+                                }
+                            }
+                    ) {
+                        Text(
+                            text = "Close",
+                            fontFamily = AppTheme.fontFamily,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
         }
@@ -1612,6 +1627,199 @@ private fun SettingsOptionRow(
             color = MutedTextColor,
             fontSize = 12.sp,
             fontFamily = AppTheme.fontFamily
+        )
+    }
+}
+
+@Composable
+fun SubtitleOffsetDialog(
+    offsetMs: Long,
+    onOffsetChange: (Long) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = 20.dp, end = 20.dp),
+            contentAlignment = Alignment.TopEnd
+        ) {
+            SubtitleOffsetControls(
+                offsetMs = offsetMs,
+                onOffsetChange = onOffsetChange,
+                onDismiss = onDismiss
+            )
+        }
+    }
+}
+
+@Composable
+private fun SubtitleOffsetControls(
+    offsetMs: Long,
+    onOffsetChange: (Long) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val smallStep = 100L  // 0.1 seconds
+    val largeStep = 500L  // 0.5 seconds
+    val minusLargeRequester = remember { FocusRequester() }
+    val plusLargeRequester = remember { FocusRequester() }
+    val minusSmallRequester = remember { FocusRequester() }
+    val resetRequester = remember { FocusRequester() }
+    val plusSmallRequester = remember { FocusRequester() }
+    val doneRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(60)
+        minusLargeRequester.requestFocus()
+    }
+
+    val offsetSeconds = offsetMs / 1000f
+    val offsetText = when {
+        offsetMs == 0L -> "0.0s"
+        offsetMs > 0 -> "+${String.format("%.1f", offsetSeconds)}s"
+        else -> "${String.format("%.1f", offsetSeconds)}s"
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth(0.30f)
+            .clip(RoundedCornerShape(12.dp))
+            .background(DialogBackground)
+            .border(1.dp, SecondaryBorderColor, RoundedCornerShape(12.dp))
+            .padding(16.dp)
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "Subtitle Timing",
+                color = Color.White,
+                fontSize = 18.sp,
+                fontFamily = AppTheme.fontFamily,
+                fontWeight = FontWeight.Bold
+            )
+
+            Text(
+                text = "Adjust subtitle sync offset.",
+                color = MutedTextColor,
+                fontSize = 12.sp,
+                fontFamily = AppTheme.fontFamily
+            )
+
+            Text(
+                text = offsetText,
+                color = PrimaryButtonColor,
+                fontSize = 18.sp,
+                fontFamily = AppTheme.fontFamily,
+                fontWeight = FontWeight.SemiBold
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OffsetButton(
+                    text = "-0.5s",
+                    onClick = { onOffsetChange(offsetMs - largeStep) },
+                    focusRequester = minusLargeRequester
+                )
+                OffsetButton(
+                    text = "+0.5s",
+                    onClick = { onOffsetChange(offsetMs + largeStep) },
+                    focusRequester = plusLargeRequester
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OffsetButton(
+                    text = "-0.1s",
+                    onClick = { onOffsetChange(offsetMs - smallStep) },
+                    small = true,
+                    focusRequester = minusSmallRequester
+                )
+                OffsetButton(
+                    text = "Reset",
+                    onClick = { onOffsetChange(0L) },
+                    small = true,
+                    focusRequester = resetRequester
+                )
+                OffsetButton(
+                    text = "+0.1s",
+                    onClick = { onOffsetChange(offsetMs + smallStep) },
+                    small = true,
+                    focusRequester = plusSmallRequester
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OffsetButton(
+                    text = "Done",
+                    onClick = onDismiss,
+                    small = true,
+                    focusRequester = doneRequester
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OffsetButton(
+    text: String,
+    onClick: () -> Unit,
+    small: Boolean = false,
+    focusRequester: FocusRequester? = null,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val bgColor = if (isFocused) PrimaryButtonColor else SecondaryBorderColor
+    val textColor = if (isFocused) Color.Black else Color.White
+
+    val baseModifier = modifier
+        .clip(RoundedCornerShape(6.dp))
+        .background(bgColor)
+        .focusable(interactionSource = interactionSource)
+        .clickable(
+            interactionSource = interactionSource,
+            indication = null,
+            onClick = {
+                focusRequester?.requestFocus()
+                onClick()
+            }
+        )
+        .padding(
+            horizontal = if (small) 8.dp else 12.dp,
+            vertical = if (small) 4.dp else 6.dp
+        )
+
+    Box(
+        modifier = if (focusRequester != null) {
+            baseModifier.focusRequester(focusRequester)
+        } else {
+            baseModifier
+        },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            color = textColor,
+            fontSize = if (small) 11.sp else 13.sp,
+            fontFamily = AppTheme.fontFamily,
+            fontWeight = FontWeight.SemiBold
         )
     }
 }
