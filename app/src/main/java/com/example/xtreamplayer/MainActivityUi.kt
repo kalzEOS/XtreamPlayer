@@ -298,9 +298,12 @@ fun RootScreen(
     var activePlaybackTitle by playerViewModel.activePlaybackTitle
     var activePlaybackItem by playerViewModel.activePlaybackItem
     var activePlaybackItems by playerViewModel.activePlaybackItems
+    var activePlaybackSeriesParent by playerViewModel.activePlaybackSeriesParent
     var movieInfoItem by remember { mutableStateOf<ContentItem?>(null) }
     var movieInfoQueue by remember { mutableStateOf<List<ContentItem>>(emptyList()) }
     var movieInfoInfo by remember { mutableStateOf<MovieInfo?>(null) }
+    var movieInfoFromContinueWatching by remember { mutableStateOf(false) }
+    var movieInfoResumePositionMs by remember { mutableStateOf<Long?>(null) }
     var movieInfoLoadJob by remember { mutableStateOf<Job?>(null) }
     var playbackFallbackAttempts by playerViewModel.playbackFallbackAttempts
     var liveReconnectAttempts by playerViewModel.liveReconnectAttempts
@@ -810,6 +813,40 @@ fun RootScreen(
             movieInfoLoadJob?.cancel()
             movieInfoItem = null
             movieInfoInfo = null
+            movieInfoFromContinueWatching = false
+            movieInfoResumePositionMs = null
+            movieInfoQueue = if (items.isEmpty()) listOf(item) else items
+            movieInfoLoadJob =
+                    coroutineScope.launch {
+                        val infoResult = runCatching { contentRepository.loadMovieInfo(item, config) }
+                        val info = infoResult.getOrNull()
+                        if (info == null) {
+                            val message =
+                                    if (infoResult.exceptionOrNull() != null) {
+                                        "Failed to load content info"
+                                    } else {
+                                        "No details available"
+                                    }
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        }
+                        movieInfoInfo = info
+                        movieInfoItem = item
+                    }
+        }
+    }
+
+    val openMovieInfoFromContinueWatching: (ContentItem, List<ContentItem>) -> Unit = { item, items ->
+        val config = authState.activeConfig
+        if (config != null) {
+            movieInfoLoadJob?.cancel()
+            movieInfoItem = null
+            movieInfoInfo = null
+            movieInfoFromContinueWatching = true
+            movieInfoResumePositionMs =
+                    continueWatchingEntries.firstOrNull {
+                        it.item.contentType == ContentType.MOVIES &&
+                                (it.item.id == item.id || it.item.streamId == item.streamId)
+                    }?.positionMs?.takeIf { it > 0 }
             movieInfoQueue = if (items.isEmpty()) listOf(item) else items
             movieInfoLoadJob =
                     coroutineScope.launch {
@@ -837,6 +874,9 @@ fun RootScreen(
             val playableItems = items.filter(::isPlayableContent)
             activePlaybackItems = playableItems
             activePlaybackItem = item
+            if (item.contentType != ContentType.SERIES) {
+                activePlaybackSeriesParent = null
+            }
             val profile =
                     if (item.contentType == ContentType.LIVE) {
                         BufferProfile.LIVE
@@ -866,6 +906,7 @@ fun RootScreen(
         activePlaybackItems = liveItems
         activePlaybackItem = nextItem
         activePlaybackTitle = nextItem.title
+        activePlaybackSeriesParent = null
         val queue = buildPlaybackQueue(liveItems, nextItem, config)
         activePlaybackQueue = queue
         true
@@ -876,6 +917,7 @@ fun RootScreen(
             resumeFocusId = localFiles[index].uri.toString()
             activePlaybackItems = emptyList()
             activePlaybackItem = null
+            activePlaybackSeriesParent = null
             playbackEngine.setBufferProfile(BufferProfile.VOD)
             activePlaybackQueue = buildLocalPlaybackQueue(localFiles, index)
             activePlaybackTitle = localFiles[index].displayName
@@ -891,6 +933,9 @@ fun RootScreen(
             val playableItems = items.filter(::isPlayableContent)
             activePlaybackItems = playableItems
             activePlaybackItem = item
+            if (item.contentType != ContentType.SERIES) {
+                activePlaybackSeriesParent = null
+            }
             resumePositionMs = if (positionMs > 0) positionMs else null
             playbackEngine.setBufferProfile(BufferProfile.VOD)
             val queue = buildPlaybackQueue(items, item, config)
@@ -908,6 +953,9 @@ fun RootScreen(
                     val playableItems = items.filter(::isPlayableContent)
                     activePlaybackItems = playableItems
                     activePlaybackItem = item
+                    if (item.contentType != ContentType.SERIES) {
+                        activePlaybackSeriesParent = null
+                    }
                     resumePositionMs = positionMs?.takeIf { it > 0 }
                     val profile =
                             if (item.contentType == ContentType.LIVE) {
@@ -1026,7 +1074,19 @@ fun RootScreen(
                     if (duration > 0 && progressPercent >= 90) {
                         continueWatchingRepository.removeEntry(config, item)
                     } else {
-                        continueWatchingRepository.updateProgress(config, item, position, duration)
+                        val parentItem =
+                                if (item.contentType == ContentType.SERIES) {
+                                    activePlaybackSeriesParent
+                                } else {
+                                    null
+                                }
+                        continueWatchingRepository.updateProgress(
+                                config,
+                                item,
+                                position,
+                                duration,
+                                parentItem = parentItem
+                        )
                     }
                 }
             }
@@ -1496,13 +1556,19 @@ fun RootScreen(
                         onItemFocused = handleItemFocused,
                         onPlay = handlePlayItem,
                         onPlayWithPosition = handlePlayItemWithPosition,
+                        onPlayContinueWatching = { item, position, parent ->
+                            activePlaybackSeriesParent = parent
+                            handlePlayItemWithPosition(item, position)
+                        },
                         onPlayWithPositionAndQueue = handlePlayItemWithPositionAndQueue,
                         onMovieInfo = openMovieInfo,
+                        onMovieInfoContinueWatching = openMovieInfoFromContinueWatching,
                         onPlayLocalFile = handlePlayLocalFile,
                         onToggleFavorite = handleToggleFavorite,
                         onToggleCategoryFavorite = handleToggleCategoryFavorite,
                         isItemFavorite = isContentFavorite,
                         isCategoryFavorite = isCategoryFavorite,
+                        onSeriesPlaybackStart = { activePlaybackSeriesParent = it },
                         onTriggerSectionSync = { section, config ->
                             triggerSectionSync(section, config)
                         },
@@ -1725,6 +1791,7 @@ fun RootScreen(
                     activePlaybackQueue = null
                     activePlaybackTitle = null
                     activePlaybackItem = null
+                    activePlaybackSeriesParent = null
                     resumePositionMs = null
                 },
                 onPlayNextEpisode = { playbackEngine.player.seekToNextMediaItem() },
@@ -1733,6 +1800,11 @@ fun RootScreen(
 
         if (movieInfoItem != null) {
             val item = movieInfoItem!!
+            val isInContinueWatching =
+                    continueWatchingEntries.any {
+                        it.item.contentType == ContentType.MOVIES &&
+                                (it.item.id == item.id || it.item.streamId == item.streamId)
+                    }
             MovieInfoDialog(
                     item = item,
                     info = movieInfoInfo,
@@ -1742,11 +1814,43 @@ fun RootScreen(
                     onPlay = { selected, queue ->
                         movieInfoItem = null
                         movieInfoInfo = null
+                        movieInfoFromContinueWatching = false
+                        movieInfoResumePositionMs = null
                         handlePlayItem(selected, queue)
+                    },
+                    onPlayWithPosition = { selected, queue, position ->
+                        movieInfoItem = null
+                        movieInfoInfo = null
+                        movieInfoFromContinueWatching = false
+                        movieInfoResumePositionMs = null
+                        handlePlayItemWithPositionAndQueue(selected, queue, position)
+                    },
+                    resumePositionMs = movieInfoResumePositionMs,
+                    showClearContinueWatching = movieInfoFromContinueWatching && isInContinueWatching,
+                    onClearContinueWatching =
+                            if (isInContinueWatching) {
+                                {
+                                    val config = authState.activeConfig
+                                    if (config != null) {
+                                        coroutineScope.launch {
+                                            continueWatchingRepository.removeEntry(config, item)
+                                            Toast.makeText(
+                                                            context,
+                                                            "Removed from Continue Watching",
+                                                            Toast.LENGTH_SHORT
+                                            )
+                                                    .show()
+                                        }
+                                    }
+                                }
+                            } else {
+                                null
                     },
                     onDismiss = {
                         movieInfoItem = null
                         movieInfoInfo = null
+                        movieInfoFromContinueWatching = false
+                        movieInfoResumePositionMs = null
                     }
             )
         }
@@ -2192,6 +2296,7 @@ private fun rememberReflowColumns(
 private fun FavoriteIndicator(modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(10.dp)
     val colors = AppTheme.colors
+    val context = LocalContext.current
     Box(
             modifier =
                     modifier.size(22.dp)
@@ -3032,6 +3137,10 @@ private fun MovieInfoDialog(
         isFavorite: Boolean,
         onToggleFavorite: (ContentItem) -> Unit,
         onPlay: (ContentItem, List<ContentItem>) -> Unit,
+        onPlayWithPosition: (ContentItem, List<ContentItem>, Long?) -> Unit,
+        resumePositionMs: Long?,
+        showClearContinueWatching: Boolean,
+        onClearContinueWatching: (() -> Unit)?,
         onDismiss: () -> Unit
 ) {
     BackHandler(enabled = true) { onDismiss() }
@@ -3042,6 +3151,7 @@ private fun MovieInfoDialog(
         val colors = AppTheme.colors
         val releaseLabel = formatReleaseYear(info?.releaseDate, info?.year)
         val playFocusRequester = remember { FocusRequester() }
+        val clearFocusRequester = remember { FocusRequester() }
         LaunchedEffect(Unit) { playFocusRequester.requestFocus() }
         Box(
                 modifier =
@@ -3139,8 +3249,15 @@ private fun MovieInfoDialog(
                                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                                 verticalAlignment = Alignment.CenterVertically
                         ) {
+                            val isResume = resumePositionMs != null && resumePositionMs > 0
                             FocusableButton(
-                                    onClick = { onPlay(item, queueItems) },
+                                    onClick = {
+                                        if (isResume) {
+                                            onPlayWithPosition(item, queueItems, resumePositionMs)
+                                        } else {
+                                            onPlay(item, queueItems)
+                                        }
+                                    },
                                     modifier = Modifier.width(180.dp).focusRequester(playFocusRequester),
                                     colors =
                                             ButtonDefaults.buttonColors(
@@ -3149,7 +3266,7 @@ private fun MovieInfoDialog(
                                             )
                             ) {
                                 Text(
-                                        text = "Play",
+                                        text = if (isResume) "Resume Playing" else "Play",
                                         fontSize = 14.sp,
                                         fontFamily = AppTheme.fontFamily,
                                         fontWeight = FontWeight.SemiBold
@@ -3176,6 +3293,24 @@ private fun MovieInfoDialog(
                                         tint = if (isFavorite) Color(0xFFEF5350) else colors.textPrimary,
                                         modifier = Modifier.size(22.dp)
                                 )
+                            }
+                            if (showClearContinueWatching && onClearContinueWatching != null) {
+                                FocusableButton(
+                                        onClick = onClearContinueWatching,
+                                        modifier = Modifier.height(48.dp).focusRequester(clearFocusRequester),
+                                        colors =
+                                                ButtonDefaults.buttonColors(
+                                                        containerColor = colors.surfaceAlt,
+                                                        contentColor = colors.textPrimary
+                                                )
+                                ) {
+                                    Text(
+                                            text = "Clear from list",
+                                            fontSize = 11.sp,
+                                            fontFamily = AppTheme.fontFamily,
+                                            fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                             }
                         }
                         Spacer(modifier = Modifier.height(10.dp))
@@ -3995,7 +4130,7 @@ private fun ContentCard(
 
 @Composable
 private fun ContinueWatchingCard(
-        entry: ContinueWatchingEntry,
+        entry: ContinueWatchingDisplayEntry,
         focusRequester: FocusRequester?,
         isLeftEdge: Boolean,
         isFavorite: Boolean,
@@ -4007,7 +4142,7 @@ private fun ContinueWatchingCard(
         onLongClick: () -> Unit,
         onRemove: () -> Unit
 ) {
-    val item = entry.item
+    val item = entry.displayItem
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     var longPressTriggered by remember { mutableStateOf(false) }
@@ -4016,7 +4151,13 @@ private fun ContinueWatchingCard(
     val borderColor = if (isFocused) AppTheme.colors.focus else AppTheme.colors.borderStrong
     val backgroundColor = if (isFocused) AppTheme.colors.surfaceAlt else AppTheme.colors.surface
     val title = item.title
-    val subtitle = item.subtitle
+    val resumeLabel =
+            if (item.contentType == ContentType.SERIES) {
+                formatEpisodeLabel(item, separator = " - ")?.let { "Resume $it" }
+            } else {
+                null
+            }
+    val subtitle = resumeLabel ?: item.subtitle
     val imageUrl = item.imageUrl
     val context = LocalContext.current
     val labelStripColor = cardTextStripColor(colors, cardTitleColor(colors))
@@ -4785,6 +4926,8 @@ fun SectionScreen(
         onMovieInfo: (ContentItem, List<ContentItem>) -> Unit,
         onMoveLeft: () -> Unit,
         onToggleFavorite: (ContentItem) -> Unit,
+        onRemoveContinueWatching: (ContentItem) -> Unit,
+        onSeriesPlaybackStart: (ContentItem) -> Unit,
         isItemFavorite: (ContentItem) -> Boolean
 ) {
     val shape = RoundedCornerShape(18.dp)
@@ -4917,8 +5060,14 @@ fun SectionScreen(
                         pendingEpisodeFocus = pendingEpisodeFocus,
                         onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                         onItemFocused = onItemFocused,
-                        onPlay = onPlay,
-                        onPlayWithPosition = onPlayWithPosition,
+                        onPlay = { playItem, items ->
+                            onSeriesPlaybackStart(selectedSeries!!)
+                            onPlay(playItem, items)
+                        },
+                        onPlayWithPosition = { playItem, items, position ->
+                            onSeriesPlaybackStart(selectedSeries!!)
+                            onPlayWithPosition(playItem, items, position)
+                        },
                         onMoveLeft = onMoveLeft,
                         onBack = {
                             onItemFocused(selectedSeries!!)
@@ -4929,6 +5078,7 @@ fun SectionScreen(
                             pendingEpisodeFocus = false
                         },
                         onToggleFavorite = onToggleFavorite,
+                        onRemoveContinueWatching = onRemoveContinueWatching,
                         isItemFavorite = isItemFavorite,
                         prefetchedInfo = pendingSeriesInfo
                 )
@@ -5601,8 +5751,10 @@ fun FavoritesScreen(
         onMovieInfo: (ContentItem, List<ContentItem>) -> Unit,
         onMoveLeft: () -> Unit,
         onToggleFavorite: (ContentItem) -> Unit,
+        onRemoveContinueWatching: (ContentItem) -> Unit,
         onToggleCategoryFavorite: (CategoryItem) -> Unit,
         isItemFavorite: (ContentItem) -> Boolean,
+        onSeriesPlaybackStart: (ContentItem) -> Unit,
         isCategoryFavorite: (CategoryItem) -> Boolean
 ) {
     val shape = RoundedCornerShape(18.dp)
@@ -5847,8 +5999,14 @@ fun FavoritesScreen(
                         pendingEpisodeFocus = pendingEpisodeFocus,
                         onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                         onItemFocused = onItemFocused,
-                        onPlay = onPlay,
-                        onPlayWithPosition = onPlayWithPosition,
+                        onPlay = { playItem, items ->
+                            onSeriesPlaybackStart(selectedSeries!!)
+                            onPlay(playItem, items)
+                        },
+                        onPlayWithPosition = { playItem, items, position ->
+                            onSeriesPlaybackStart(selectedSeries!!)
+                            onPlayWithPosition(playItem, items, position)
+                        },
                         onMoveLeft = onMoveLeft,
                         onBack = {
                             onItemFocused(selectedSeries!!)
@@ -5859,6 +6017,7 @@ fun FavoritesScreen(
                             pendingEpisodeFocus = false
                         },
                         onToggleFavorite = onToggleFavorite,
+                        onRemoveContinueWatching = onRemoveContinueWatching,
                         isItemFavorite = isItemFavorite,
                         prefetchedInfo = pendingSeriesInfo
                 )
@@ -6079,8 +6238,14 @@ fun FavoritesScreen(
                                 pendingEpisodeFocus = pendingEpisodeFocus,
                                 onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                                 onItemFocused = onItemFocused,
-                                onPlay = onPlay,
-                                onPlayWithPosition = onPlayWithPosition,
+                                onPlay = { playItem, items ->
+                                    onSeriesPlaybackStart(selectedSeries!!)
+                                    onPlay(playItem, items)
+                                },
+                                onPlayWithPosition = { playItem, items, position ->
+                                    onSeriesPlaybackStart(selectedSeries!!)
+                                    onPlayWithPosition(playItem, items, position)
+                                },
                                 onMoveLeft = onMoveLeft,
                                 onBack = {
                                     onItemFocused(selectedSeries!!)
@@ -6090,6 +6255,7 @@ fun FavoritesScreen(
                                     pendingEpisodeFocus = false
                                 },
                                 onToggleFavorite = onToggleFavorite,
+                                onRemoveContinueWatching = onRemoveContinueWatching,
                                 isItemFavorite = isItemFavorite
                         )
                     } else {
@@ -6377,8 +6543,10 @@ fun CategorySectionScreen(
         onMovieInfo: (ContentItem, List<ContentItem>) -> Unit,
         onMoveLeft: () -> Unit,
         onToggleFavorite: (ContentItem) -> Unit,
+        onRemoveContinueWatching: (ContentItem) -> Unit,
         onToggleCategoryFavorite: (CategoryItem) -> Unit,
         isItemFavorite: (ContentItem) -> Boolean,
+        onSeriesPlaybackStart: (ContentItem) -> Unit,
         isCategoryFavorite: (CategoryItem) -> Boolean
 ) {
     val shape = RoundedCornerShape(18.dp)
@@ -6925,8 +7093,14 @@ fun CategorySectionScreen(
                                 pendingEpisodeFocus = pendingEpisodeFocus,
                                 onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                                 onItemFocused = onItemFocused,
-                                onPlay = onPlay,
-                                onPlayWithPosition = onPlayWithPosition,
+                                onPlay = { playItem, items ->
+                                    onSeriesPlaybackStart(selectedSeries!!)
+                                    onPlay(playItem, items)
+                                },
+                                onPlayWithPosition = { playItem, items, position ->
+                                    onSeriesPlaybackStart(selectedSeries!!)
+                                    onPlayWithPosition(playItem, items, position)
+                                },
                                 onMoveLeft = onMoveLeft,
                                 onBack = {
                                     onItemFocused(selectedSeries!!)
@@ -6937,6 +7111,7 @@ fun CategorySectionScreen(
                                     pendingEpisodeFocus = false
                                 },
                                 onToggleFavorite = onToggleFavorite,
+                                onRemoveContinueWatching = onRemoveContinueWatching,
                                 isItemFavorite = isItemFavorite,
                                 prefetchedInfo = pendingSeriesInfo,
                                 forceDarkText = forceDarkText,
@@ -7051,6 +7226,17 @@ fun CategorySectionScreen(
     }
 }
 
+private data class ContinueWatchingDisplayEntry(
+        val key: String,
+        val displayItem: ContentItem,
+        val resumeItem: ContentItem,
+        val parentItem: ContentItem?,
+        val sourceItems: List<ContentItem>,
+        val positionMs: Long,
+        val durationMs: Long,
+        val timestampMs: Long
+)
+
 @Composable
 fun ContinueWatchingScreen(
         title: String,
@@ -7063,12 +7249,17 @@ fun ContinueWatchingScreen(
         resumeFocusId: String?,
         resumeFocusRequester: FocusRequester,
         onItemFocused: (ContentItem) -> Unit,
-        onPlay: (ContentItem, Long) -> Unit,
+        onPlay: (ContentItem, Long, ContentItem?) -> Unit,
+        onPlayWithPosition: (ContentItem, List<ContentItem>, Long?) -> Unit,
+        onMovieInfo: (ContentItem, List<ContentItem>) -> Unit,
+        onSeriesPlaybackStart: (ContentItem) -> Unit,
         onMoveLeft: () -> Unit,
         onToggleFavorite: (ContentItem) -> Unit,
         onRemoveEntry: (ContentItem) -> Unit,
+        onClearAll: () -> Unit,
         isItemFavorite: (ContentItem) -> Boolean
 ) {
+
     val shape = RoundedCornerShape(18.dp)
     // Use 4 columns at 100% (poster sizing, since continue watching includes mixed content)
     val baseColumns = remember(settings.uiScale) {
@@ -7076,7 +7267,113 @@ fun ContinueWatchingScreen(
     }
     val columns = rememberReflowColumns(baseColumns, navLayoutExpanded)
     val posterFontScale = remember(columns) { 4f / columns.toFloat() }
-    val hasItems = continueWatchingItems.isNotEmpty()
+    val displayEntries =
+            remember(continueWatchingItems) {
+                val grouped =
+                        continueWatchingItems.groupBy { entry ->
+                            if (entry.parentItem != null &&
+                                            entry.item.contentType == ContentType.SERIES
+                            ) {
+                                "series:${entry.parentItem.id}"
+                            } else {
+                                "item:${entry.item.id}"
+                            }
+                        }
+                grouped.values.mapNotNull { group ->
+                    val latest = group.maxByOrNull { it.timestampMs } ?: return@mapNotNull null
+                    val displayItem = latest.parentItem ?: latest.item
+                    val resumeLabel =
+                            if (latest.item.contentType == ContentType.SERIES) {
+                                formatEpisodeLabel(latest.item, separator = " - ")?.let { "Resume $it" }
+                            } else {
+                                null
+                            }
+                    val displayItemWithSubtitle =
+                            if (resumeLabel != null) {
+                                displayItem.copy(subtitle = resumeLabel)
+                            } else {
+                                displayItem
+                            }
+                    ContinueWatchingDisplayEntry(
+                            key = latest.key,
+                            displayItem = displayItemWithSubtitle,
+                            resumeItem = latest.item,
+                            parentItem = latest.parentItem,
+                            sourceItems = group.map { it.item }.distinctBy { it.id },
+                            positionMs = latest.positionMs,
+                            durationMs = latest.durationMs,
+                            timestampMs = latest.timestampMs
+                    )
+                }.sortedByDescending { it.timestampMs }
+            }
+    val hasItems = displayEntries.isNotEmpty()
+    var showClearDialog by remember { mutableStateOf(false) }
+    var selectedSeries by remember { mutableStateOf<ContentItem?>(null) }
+    var pendingSeries by remember { mutableStateOf<ContentItem?>(null) }
+    var pendingSeriesInfo by remember { mutableStateOf<SeriesInfo?>(null) }
+    var pendingEpisodeFocus by remember { mutableStateOf(false) }
+    val episodesFocusRequester = remember { FocusRequester() }
+    val movieQueueItems =
+            remember(displayEntries) {
+                displayEntries.mapNotNull { entry ->
+                    entry.displayItem.takeIf {
+                        entry.resumeItem.contentType == ContentType.MOVIES
+                    }
+                }
+            }
+    val resolvedParents = remember { androidx.compose.runtime.mutableStateMapOf<String, ContentItem>() }
+
+    LaunchedEffect(displayEntries, authConfig) {
+        displayEntries
+            .filter { entry ->
+                entry.resumeItem.contentType == ContentType.SERIES && entry.parentItem == null &&
+                    !resolvedParents.containsKey(entry.key)
+            }
+            .forEach { entry ->
+                val rawTitle = entry.resumeItem.title
+                val dashSeasonMatch = Regex("\\s-\\sS\\d", RegexOption.IGNORE_CASE).find(rawTitle)
+                val compactSeasonMatch = Regex("S\\d+E\\d+", RegexOption.IGNORE_CASE).find(rawTitle)
+                val seriesName =
+                    when {
+                        dashSeasonMatch != null && dashSeasonMatch.range.first > 0 ->
+                            rawTitle.substring(0, dashSeasonMatch.range.first).trim()
+                        compactSeasonMatch != null && compactSeasonMatch.range.first > 0 ->
+                            rawTitle.substring(0, compactSeasonMatch.range.first).trim().trimEnd('-').trim()
+                        else -> rawTitle
+                    }
+                if (seriesName.isBlank()) return@forEach
+                val resolved = runCatching {
+                    contentRepository.searchPage(
+                        section = Section.SERIES,
+                        query = seriesName,
+                        page = 0,
+                        limit = 20,
+                        authConfig = authConfig
+                    )
+                }.getOrNull()?.items?.firstOrNull { it.title.startsWith(seriesName, ignoreCase = true) }
+                    ?: runCatching {
+                        contentRepository.searchPage(
+                            section = Section.SERIES,
+                            query = seriesName,
+                            page = 0,
+                            limit = 20,
+                            authConfig = authConfig
+                        )
+                    }.getOrNull()?.items?.firstOrNull()
+                if (resolved != null) {
+                    resolvedParents[entry.key] = resolved
+                }
+            }
+    }
+
+    LaunchedEffect(pendingSeries) {
+        val series = pendingSeries ?: return@LaunchedEffect
+        val infoResult = runCatching { contentRepository.loadSeriesInfo(series, authConfig) }
+        pendingSeriesInfo = infoResult.getOrNull()
+        selectedSeries = series
+        pendingSeries = null
+        pendingEpisodeFocus = true
+    }
 
     // Focus is managed by user navigation - no auto-focus on screen load
 
@@ -7095,18 +7392,42 @@ fun ContinueWatchingScreen(
                                 .border(1.dp, AppTheme.colors.border, shape)
                                 .padding(20.dp)
         ) {
-            Text(
-                    text = title,
-                    color = AppTheme.colors.textPrimary,
-                    fontSize = 20.sp,
-                    fontFamily = AppTheme.fontFamily,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp
-            )
+            Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                        text = title,
+                        color = AppTheme.colors.textPrimary,
+                        fontSize = 20.sp,
+                        fontFamily = AppTheme.fontFamily,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp,
+                        modifier = Modifier.weight(1f)
+                )
+                if (hasItems) {
+                    FocusableButton(
+                            onClick = { showClearDialog = true },
+                            colors =
+                                    ButtonDefaults.buttonColors(
+                                            containerColor = AppTheme.colors.surfaceAlt,
+                                            contentColor = AppTheme.colors.textPrimary
+                                    ),
+                            modifier = Modifier.height(36.dp)
+                    ) {
+                        Text(
+                                text = "Clear all",
+                                fontSize = 12.sp,
+                                fontFamily = AppTheme.fontFamily,
+                                fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            if (continueWatchingItems.isEmpty()) {
+            if (displayEntries.isEmpty()) {
                 Text(
                         text = "No items in progress",
                         color = AppTheme.colors.textSecondary,
@@ -7116,46 +7437,181 @@ fun ContinueWatchingScreen(
                         modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
                 )
             } else {
-                LazyVerticalGrid(
-                        columns = GridCells.Fixed(columns),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        modifier = Modifier.fillMaxWidth().weight(1f)
-                ) {
-                    items(
-                            count = continueWatchingItems.size,
-                            key = { index -> continueWatchingItems[index].key }
-                    ) { index ->
-                        val entry = continueWatchingItems[index]
-                        val item = entry.item
+                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    LazyVerticalGrid(
+                            columns = GridCells.Fixed(columns),
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            modifier = Modifier.fillMaxSize()
+                                    .alpha(if (selectedSeries != null) 0f else 1f),
+                            userScrollEnabled = selectedSeries == null
+                    ) {
+                        items(
+                                count = displayEntries.size,
+                                key = { index -> displayEntries[index].key }
+                        ) { index ->
+                        val entry = displayEntries[index]
+                        val resolvedParent = resolvedParents[entry.key]
+                        val displayItem = resolvedParent ?: entry.displayItem
+                        val item = displayItem
                         val requester =
                                 when {
                                     item.id == resumeFocusId -> resumeFocusRequester
                                     index == 0 -> contentItemFocusRequester
                                     else -> null
                                 }
-                        val isLeftEdge = index % columns == 0
+                            val isLeftEdge = index % columns == 0
 
-                        val progressPercent =
-                                if (entry.durationMs > 0) {
-                                    ((entry.positionMs * 100) / entry.durationMs).toInt()
-                                } else {
-                                    0
-                                }
+                            val progressPercent =
+                                    if (entry.durationMs > 0) {
+                                        ((entry.positionMs * 100) / entry.durationMs).toInt()
+                                    } else {
+                                        0
+                                    }
 
-                        ContinueWatchingCard(
-                                entry = entry,
-                                focusRequester = requester,
-                                isLeftEdge = isLeftEdge,
-                                isFavorite = isItemFavorite(item),
-                                progressPercent = progressPercent,
-                                fontScaleFactor = posterFontScale,
-                                onActivate = { onPlay(item, entry.positionMs) },
-                                onFocused = { onItemFocused(item) },
+                            ContinueWatchingCard(
+                                    entry = entry,
+                                    focusRequester = requester,
+                                    isLeftEdge = isLeftEdge,
+                                    isFavorite = isItemFavorite(item),
+                                    progressPercent = progressPercent,
+                                    fontScaleFactor = posterFontScale,
+                                    onActivate = {
+                                        when (entry.resumeItem.contentType) {
+                                            ContentType.MOVIES -> onMovieInfo(item, movieQueueItems)
+                                            ContentType.SERIES -> {
+                                                val seriesItem =
+                                                        resolvedParent
+                                                                ?: entry.parentItem
+                                                                ?: item.takeIf {
+                                                                    it.containerExtension.isNullOrBlank()
+                                                                }
+                                                if (seriesItem != null) {
+                                                    pendingSeries = seriesItem
+                                                } else {
+                                                    onPlay(
+                                                            entry.resumeItem,
+                                                            entry.positionMs,
+                                                            entry.parentItem
+                                                    )
+                                                }
+                                            }
+                                            else -> onPlay(entry.resumeItem, entry.positionMs, entry.parentItem)
+                                        }
+                                    },
+                                    onFocused = { onItemFocused(item) },
+                                    onMoveLeft = onMoveLeft,
+                                    onLongClick = { onToggleFavorite(item) },
+                                    onRemove = { entry.sourceItems.forEach(onRemoveEntry) }
+                            )
+                        }
+                    }
+
+                    if (selectedSeries != null) {
+                        SeriesSeasonsScreen(
+                                seriesItem = selectedSeries!!,
+                                contentRepository = contentRepository,
+                                authConfig = authConfig,
+                                continueWatchingEntries = continueWatchingItems,
+                                showClearContinueWatching = true,
+                                contentItemFocusRequester = contentItemFocusRequester,
+                                resumeFocusId = resumeFocusId,
+                                resumeFocusRequester = resumeFocusRequester,
+                                episodesFocusRequester = episodesFocusRequester,
+                                pendingEpisodeFocus = pendingEpisodeFocus,
+                                onEpisodeFocusHandled = { pendingEpisodeFocus = false },
+                                onItemFocused = onItemFocused,
+                                onPlay = { playItem, items ->
+                                    onSeriesPlaybackStart(selectedSeries!!)
+                                    onPlayWithPosition(playItem, items, null)
+                                },
+                                onPlayWithPosition = { playItem, items, position ->
+                                    onSeriesPlaybackStart(selectedSeries!!)
+                                    onPlayWithPosition(playItem, items, position)
+                                },
                                 onMoveLeft = onMoveLeft,
-                                onLongClick = { onToggleFavorite(item) },
-                                onRemove = { onRemoveEntry(item) }
+                                onBack = {
+                                    selectedSeries = null
+                                    pendingSeriesInfo = null
+                                    pendingEpisodeFocus = false
+                                    runCatching { contentItemFocusRequester.requestFocus() }
+                                },
+                                onToggleFavorite = onToggleFavorite,
+                                onRemoveContinueWatching = onRemoveEntry,
+                                isItemFavorite = isItemFavorite,
+                                prefetchedInfo = pendingSeriesInfo
                         )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showClearDialog) {
+        Dialog(onDismissRequest = { showClearDialog = false }) {
+            val colors = AppTheme.colors
+            Box(
+                modifier =
+                    Modifier
+                        .width(420.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(colors.surface)
+                        .border(1.dp, colors.border, RoundedCornerShape(16.dp))
+                        .padding(20.dp)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text(
+                        text = "Clear Continue Watching?",
+                        color = colors.textPrimary,
+                        fontSize = 16.sp,
+                        fontFamily = AppTheme.fontFamily,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "This will remove all items from your Continue Watching list.",
+                        color = colors.textSecondary,
+                        fontSize = 12.sp,
+                        fontFamily = AppTheme.fontFamily
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        FocusableButton(
+                            onClick = {
+                                onClearAll()
+                                showClearDialog = false
+                            },
+                            modifier = Modifier.weight(1f).height(40.dp),
+                            colors =
+                                ButtonDefaults.buttonColors(
+                                    containerColor = colors.accent,
+                                    contentColor = colors.textOnAccent
+                                )
+                        ) {
+                            Text(
+                                text = "Clear all",
+                                fontFamily = AppTheme.fontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp
+                            )
+                        }
+                        FocusableButton(
+                            onClick = { showClearDialog = false },
+                            modifier = Modifier.weight(1f).height(40.dp),
+                            colors =
+                                ButtonDefaults.buttonColors(
+                                    containerColor = colors.surfaceAlt,
+                                    contentColor = colors.textPrimary
+                                )
+                        ) {
+                            Text(
+                                text = "Cancel",
+                                fontFamily = AppTheme.fontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp
+                            )
+                        }
                     }
                 }
             }
@@ -7169,6 +7625,7 @@ fun SeriesSeasonsScreen(
         contentRepository: ContentRepository,
         authConfig: AuthConfig,
         continueWatchingEntries: List<ContinueWatchingEntry> = emptyList(),
+        showClearContinueWatching: Boolean = false,
         topInsetDp: Dp = 0.dp,
         contentItemFocusRequester: FocusRequester,
         resumeFocusId: String?,
@@ -7184,6 +7641,7 @@ fun SeriesSeasonsScreen(
         onMoveLeft: () -> Unit,
         onBack: () -> Unit,
         onToggleFavorite: (ContentItem) -> Unit,
+        onRemoveContinueWatching: (ContentItem) -> Unit = {},
         isItemFavorite: (ContentItem) -> Boolean,
         forceDarkText: Boolean = false,
         onMoveUpFromTop: (() -> Unit)? = null,
@@ -7210,6 +7668,7 @@ fun SeriesSeasonsScreen(
     val playFocusRequester = remember { FocusRequester() }
     val seasonFocusRequester = remember { FocusRequester() }
     val favoriteFocusRequester = remember { FocusRequester() }
+    val clearFocusRequester = remember { FocusRequester() }
     val readMoreFocusRequester = remember { FocusRequester() }
     val episodesTabRequester = contentItemFocusRequester
     val castTabRequester = tabFocusRequesters[1]
@@ -7274,6 +7733,18 @@ fun SeriesSeasonsScreen(
             } else {
                 val episodeIds = allEpisodes.map { it.streamId }.toHashSet()
                 continueWatchingEntries.firstOrNull { entry ->
+                    entry.item.contentType == ContentType.SERIES &&
+                        episodeIds.contains(entry.item.streamId)
+                }
+            }
+        }
+    val continueWatchingEntriesForSeries =
+        remember(allEpisodes, continueWatchingEntries) {
+            if (allEpisodes.isEmpty()) {
+                emptyList()
+            } else {
+                val episodeIds = allEpisodes.map { it.streamId }.toHashSet()
+                continueWatchingEntries.filter { entry ->
                     entry.item.contentType == ContentType.SERIES &&
                         episodeIds.contains(entry.item.streamId)
                 }
@@ -7837,7 +8308,11 @@ fun SeriesSeasonsScreen(
                                     seasonFocusRequester.requestFocus()
                                     true
                                 } else if (it.key == Key.DirectionRight) {
-                                    closeFocusRequester.requestFocus()
+                                    if (continueWatchingEntriesForSeries.isNotEmpty()) {
+                                        clearFocusRequester.requestFocus()
+                                    } else {
+                                        closeFocusRequester.requestFocus()
+                                    }
                                     true
                                 } else if (it.key == Key.DirectionUp) {
                                     if (!episodesExpanded && showReadMore) {
@@ -7881,6 +8356,72 @@ fun SeriesSeasonsScreen(
                         tint = if (isItemFavorite(seriesItem)) Color(0xFFEF5350) else colors.textPrimary,
                         modifier = Modifier.size(22.dp)
                     )
+                }
+                if (showClearContinueWatching && continueWatchingEntriesForSeries.isNotEmpty()) {
+                    FocusableButton(
+                        onClick = {
+                            val itemsToRemove =
+                                continueWatchingEntriesForSeries
+                                    .map { it.item }
+                                    .distinctBy { it.id }
+                            itemsToRemove.forEach { onRemoveContinueWatching(it) }
+                            if (itemsToRemove.isNotEmpty()) {
+                                Toast.makeText(
+                                        context,
+                                        "Removed from Continue Watching",
+                                        Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        },
+                        modifier =
+                            Modifier.height(48.dp)
+                                .focusRequester(clearFocusRequester)
+                                .onKeyEvent {
+                                    if (it.type != KeyEventType.KeyDown) {
+                                        false
+                                    } else if (it.key == Key.DirectionLeft) {
+                                        favoriteFocusRequester.requestFocus()
+                                        true
+                                    } else if (it.key == Key.DirectionRight) {
+                                        closeFocusRequester.requestFocus()
+                                        true
+                                    } else if (it.key == Key.DirectionUp) {
+                                        if (!episodesExpanded && showReadMore) {
+                                            readMoreFocusRequester.requestFocus()
+                                        } else {
+                                            closeFocusRequester.requestFocus()
+                                        }
+                                        true
+                                    } else if (it.key == Key.DirectionDown) {
+                                        activeTab = SeriesDetailTab.EPISODES
+                                        episodesExpanded = true
+                                        internalEpisodeFocusRequested = true
+                                        if (seasonEpisodes.isNotEmpty() ||
+                                            lazyItems.itemSnapshotList.items.isNotEmpty()
+                                        ) {
+                                            episodesFocusRequester.requestFocus()
+                                        } else {
+                                            episodesTabRequester.requestFocus()
+                                        }
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
+                                .onFocusChanged { if (it.isFocused) episodesExpanded = false },
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                containerColor = colors.surfaceAlt,
+                                contentColor = colors.textPrimary
+                            )
+                    ) {
+                        Text(
+                            text = "Clear from list",
+                            fontSize = 11.sp,
+                            fontFamily = AppTheme.fontFamily,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
         }

@@ -28,7 +28,8 @@ class ContinueWatchingRepository(private val context: Context) {
         config: AuthConfig,
         item: ContentItem,
         positionMs: Long,
-        durationMs: Long
+        durationMs: Long,
+        parentItem: ContentItem? = null
     ) {
         val key = contentKey(config, item)
         val timestampMs = System.currentTimeMillis()
@@ -48,7 +49,8 @@ class ContinueWatchingRepository(private val context: Context) {
                     item = item,
                     positionMs = positionMs,
                     durationMs = durationMs,
-                    timestampMs = timestampMs
+                    timestampMs = timestampMs,
+                    parentItem = parentItem
                 )
             )
 
@@ -64,6 +66,15 @@ class ContinueWatchingRepository(private val context: Context) {
             val raw = prefs[Keys.CONTINUE_WATCHING_ENTRIES] ?: "[]"
             val entries = parseAllEntries(raw).toMutableList()
             entries.removeAll { it.key == key }
+            prefs[Keys.CONTINUE_WATCHING_ENTRIES] = encodeEntries(entries)
+        }
+    }
+
+    suspend fun clearAll(config: AuthConfig) {
+        val prefix = "${accountKey(config)}|"
+        context.continueWatchingDataStore.edit { prefs ->
+            val raw = prefs[Keys.CONTINUE_WATCHING_ENTRIES] ?: "[]"
+            val entries = parseAllEntries(raw).filterNot { it.key.startsWith(prefix) }
             prefs[Keys.CONTINUE_WATCHING_ENTRIES] = encodeEntries(entries)
         }
     }
@@ -97,6 +108,16 @@ class ContinueWatchingRepository(private val context: Context) {
             obj.put("contentType", item.contentType.name)
             obj.put("streamId", item.streamId)
             obj.put("containerExtension", item.containerExtension)
+            entry.parentItem?.let { parent ->
+                obj.put("parentId", parent.id)
+                obj.put("parentTitle", parent.title)
+                obj.put("parentSubtitle", parent.subtitle)
+                obj.put("parentImageUrl", parent.imageUrl)
+                obj.put("parentSection", parent.section.name)
+                obj.put("parentContentType", parent.contentType.name)
+                obj.put("parentStreamId", parent.streamId)
+                obj.put("parentContainerExtension", parent.containerExtension)
+            }
             array.put(obj)
         }
         return array.toString()
@@ -129,6 +150,36 @@ class ContinueWatchingRepository(private val context: Context) {
                     .takeUnless { it.isBlank() || it == "null" }
                     ?: obj.optString("id")
 
+                val parentItem =
+                    obj.optString("parentId").takeIf { it.isNotBlank() }?.let {
+                        val parentSectionName = obj.optString("parentSection")
+                        val parentSection =
+                            runCatching { Section.valueOf(parentSectionName) }
+                                .getOrNull() ?: Section.SERIES
+                        val parentTypeName = obj.optString("parentContentType")
+                        val parentContentType =
+                            runCatching { ContentType.valueOf(parentTypeName) }
+                                .getOrNull() ?: ContentType.SERIES
+                        val parentImageUrl = obj.optString("parentImageUrl")
+                            .takeUnless { it.isBlank() || it == "null" }
+                        val parentContainerExtension = obj.optString("parentContainerExtension")
+                            .takeUnless { it.isBlank() || it == "null" }
+                        val parentStreamId =
+                            obj.optString("parentStreamId")
+                                .takeUnless { it.isBlank() || it == "null" }
+                                ?: it
+                        ContentItem(
+                            id = it,
+                            title = obj.optString("parentTitle"),
+                            subtitle = obj.optString("parentSubtitle"),
+                            imageUrl = parentImageUrl,
+                            section = parentSection,
+                            contentType = parentContentType,
+                            streamId = parentStreamId,
+                            containerExtension = parentContainerExtension
+                        )
+                    }
+
                 entries.add(
                     ContinueWatchingEntry(
                         key = key,
@@ -144,7 +195,8 @@ class ContinueWatchingRepository(private val context: Context) {
                         ),
                         positionMs = positionMs,
                         durationMs = durationMs,
-                        timestampMs = timestampMs
+                        timestampMs = timestampMs,
+                        parentItem = parentItem
                     )
                 )
             }
@@ -173,13 +225,13 @@ class ContinueWatchingRepository(private val context: Context) {
             }
         }
 
-        // Partial sort for top 10
-        return if (result.size <= 10) {
+        // Partial sort for top 15
+        return if (result.size <= 15) {
             result.sortedByDescending { it.timestampMs }
         } else {
             result.asSequence()
                 .sortedByDescending { it.timestampMs }
-                .take(10)
+                .take(15)
                 .toList()
         }
     }

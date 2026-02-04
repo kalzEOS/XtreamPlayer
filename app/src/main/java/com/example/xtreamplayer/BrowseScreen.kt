@@ -112,13 +112,16 @@ internal fun BrowseScreen(
     onItemFocused: (ContentItem) -> Unit,
     onPlay: (ContentItem, List<ContentItem>) -> Unit,
     onPlayWithPosition: (ContentItem, Long) -> Unit,
+    onPlayContinueWatching: (ContentItem, Long, ContentItem?) -> Unit,
     onPlayWithPositionAndQueue: (ContentItem, List<ContentItem>, Long?) -> Unit,
     onMovieInfo: (ContentItem, List<ContentItem>) -> Unit,
+    onMovieInfoContinueWatching: (ContentItem, List<ContentItem>) -> Unit,
     onPlayLocalFile: (Int) -> Unit,
     onToggleFavorite: (ContentItem) -> Unit,
     onToggleCategoryFavorite: (CategoryItem) -> Unit,
     isItemFavorite: (ContentItem) -> Boolean,
     isCategoryFavorite: (CategoryItem) -> Boolean,
+    onSeriesPlaybackStart: (ContentItem) -> Unit,
     onTriggerSectionSync: (Section, AuthConfig) -> Unit,
     onEditList: () -> Unit,
     onSignOutKeepSaved: () -> Unit,
@@ -366,7 +369,10 @@ Row(modifier = Modifier.fillMaxSize()) {
                                 resumeFocusId = resumeFocusId,
                                 resumeFocusRequester = resumeFocusRequester,
                                 onItemFocused = onItemFocused,
-                                onPlay = onPlayWithPosition,
+                                onPlay = onPlayContinueWatching,
+                                onPlayWithPosition = onPlayWithPositionAndQueue,
+                                onMovieInfo = onMovieInfoContinueWatching,
+                                onSeriesPlaybackStart = onSeriesPlaybackStart,
                                 onMoveLeft = handleMoveLeft,
                                 onToggleFavorite = onToggleFavorite,
                                 onRemoveEntry = { item ->
@@ -379,7 +385,18 @@ Row(modifier = Modifier.fillMaxSize()) {
                                                         context,
                                                         "Removed from Continue Watching",
                                                         Toast.LENGTH_SHORT
-                                                )
+                                        )
+                                                .show()
+                                    }
+                                },
+                                onClearAll = {
+                                    coroutineScope.launch {
+                                        continueWatchingRepository.clearAll(activeConfig)
+                                        Toast.makeText(
+                                                        context,
+                                                        "Continue Watching cleared",
+                                                        Toast.LENGTH_SHORT
+                                        )
                                                 .show()
                                     }
                                 },
@@ -405,10 +422,16 @@ Row(modifier = Modifier.fillMaxSize()) {
                                 onMovieInfo = onMovieInfo,
                                 onMoveLeft = handleMoveLeft,
                                 onToggleFavorite = onToggleFavorite,
+                                onRemoveContinueWatching = { item ->
+                                    coroutineScope.launch {
+                                        continueWatchingRepository.removeEntry(activeConfig, item)
+                                    }
+                                },
                                 onToggleCategoryFavorite =
                                         onToggleCategoryFavorite,
                                 isItemFavorite = isItemFavorite,
-                                isCategoryFavorite = isCategoryFavorite
+                                isCategoryFavorite = isCategoryFavorite,
+                                onSeriesPlaybackStart = onSeriesPlaybackStart
                         )
                     }
                     Section.FAVORITES -> {
@@ -435,10 +458,16 @@ Row(modifier = Modifier.fillMaxSize()) {
                                 onMovieInfo = onMovieInfo,
                                 onMoveLeft = handleMoveLeft,
                                 onToggleFavorite = onToggleFavorite,
+                                onRemoveContinueWatching = { item ->
+                                    coroutineScope.launch {
+                                        continueWatchingRepository.removeEntry(activeConfig, item)
+                                    }
+                                },
                                 onToggleCategoryFavorite =
                                         onToggleCategoryFavorite,
                                 isItemFavorite = isItemFavorite,
-                                isCategoryFavorite = isCategoryFavorite
+                                isCategoryFavorite = isCategoryFavorite,
+                                onSeriesPlaybackStart = onSeriesPlaybackStart
                         )
                     }
                     Section.LOCAL_FILES -> {
@@ -557,7 +586,13 @@ Row(modifier = Modifier.fillMaxSize()) {
                                 onMovieInfo = onMovieInfo,
                                 onMoveLeft = handleMoveLeft,
                                 onToggleFavorite = onToggleFavorite,
-                                isItemFavorite = isItemFavorite
+                                onRemoveContinueWatching = { item ->
+                                    coroutineScope.launch {
+                                        continueWatchingRepository.removeEntry(activeConfig, item)
+                                    }
+                                },
+                                isItemFavorite = isItemFavorite,
+                                onSeriesPlaybackStart = onSeriesPlaybackStart
                         )
                     }
                 }

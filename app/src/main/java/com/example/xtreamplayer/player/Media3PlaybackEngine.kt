@@ -369,6 +369,13 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
             .setSubtitleConfigurations(listOf(subtitleConfig))
             .build()
 
+        // Verify subtitle was added to MediaItem
+        val subtitleConfigs = newItem.localConfiguration?.subtitleConfigurations ?: emptyList()
+        Timber.d("New MediaItem subtitle configs: ${subtitleConfigs.size}")
+        subtitleConfigs.forEach { config ->
+            Timber.d("  Subtitle config: uri=${config.uri}, mimeType=${config.mimeType}, lang=${config.language}")
+        }
+
         // Enable text tracks BEFORE replacing media item
         val builder = player.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
@@ -383,6 +390,8 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
                         "Found text track group: groupIndex=$groupIndex, length=${trackGroup.length}"
                     )
                     for (i in 0 until trackGroup.length) {
+                        val format = trackGroup.getTrackFormat(i)
+                        Timber.d("  Track $i: supported=${trackGroup.isTrackSupported(i)}, selected=${trackGroup.isTrackSelected(i)}, label=${format.label}, lang=${format.language}, mimeType=${format.sampleMimeType}")
                         if (trackGroup.isTrackSupported(i)) {
                             Timber.d("Selecting text track: groupIndex=$groupIndex, trackIndex=$i")
                             val newBuilder = player.trackSelectionParameters.buildUpon()
@@ -402,20 +411,40 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
                     Timber.w("Found text track group but no supported tracks")
                 }
             }
+            Timber.d("No text track groups found in ${tracks.groups.size} total groups")
             return false
         }
 
         // Register listener before replacing to avoid missing an early tracks update.
         val listener = object : Player.Listener {
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                Timber.d("onTracksChanged: ${tracks.groups.size} groups")
                 if (selectTextTrack(tracks)) {
+                    // Verify selection
+                    val currentTracks = player.currentTracks
+                    val textSelected = currentTracks.groups.any { group ->
+                        group.type == C.TRACK_TYPE_TEXT && (0 until group.length).any { group.isTrackSelected(it) }
+                    }
+                    Timber.d("After selection - text track selected: $textSelected")
                     player.removeListener(this)
                 }
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                Timber.e(error, "Player error during subtitle loading")
             }
         }
         player.addListener(listener)
 
         replaceMediaItemPreservingState(newItem)
+
+        // Verify the replacement
+        val currentMediaItem = player.currentMediaItem
+        val currentSubConfigs = currentMediaItem?.localConfiguration?.subtitleConfigurations ?: emptyList()
+        Timber.d("After replacement - current MediaItem subtitle configs: ${currentSubConfigs.size}")
+        if (currentSubConfigs.isEmpty()) {
+            Timber.e("WARNING: Subtitle configuration was NOT preserved after replacement!")
+        }
 
         // Try immediately in case tracks are already available.
         if (selectTextTrack(player.currentTracks)) {

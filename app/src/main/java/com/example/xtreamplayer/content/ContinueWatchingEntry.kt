@@ -5,5 +5,6 @@ data class ContinueWatchingEntry(
     val item: ContentItem,
     val positionMs: Long,
     val durationMs: Long,
-    val timestampMs: Long
+    val timestampMs: Long,
+    val parentItem: ContentItem? = null
 )

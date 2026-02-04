@@ -176,12 +176,16 @@ class OpenSubtitlesApi(
                 .url(url)
                 .addHeader("User-Agent", resolvedUserAgent)
                 .addHeader("X-User-Agent", resolvedUserAgent)
-                .addHeader("Accept", "application/octet-stream")
+                .addHeader("Accept", "*/*")
                 .get()
                 .build()
 
             client.newCall(request).execute().use { response ->
+                Timber.d("Download response: code=${response.code}, contentLength=${response.body?.contentLength()}, contentType=${response.body?.contentType()}")
+
                 val body = response.body?.bytes() ?: ByteArray(0)
+                Timber.d("Downloaded body size: ${body.size} bytes")
+
                 if (!response.isSuccessful) {
                     val message = parseErrorMessage(body.decodeToString())
                     return@withContext Result.failure(
