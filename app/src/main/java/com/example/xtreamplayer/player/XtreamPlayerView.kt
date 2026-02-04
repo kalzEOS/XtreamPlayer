@@ -360,6 +360,8 @@ class XtreamPlayerView @JvmOverloads constructor(
         setViewVisible(Media3UiR.id.exo_next, true)
         setViewVisible(Media3UiR.id.exo_rew_with_amount, !isLive)
         setViewVisible(Media3UiR.id.exo_ffwd_with_amount, !isLive)
+        setViewVisible(Media3UiR.id.exo_shuffle, !isLive)
+        setViewVisible(Media3UiR.id.exo_repeat_toggle, !isLive)
         bindPrevNextView()
         updateFocusOrder()
     }

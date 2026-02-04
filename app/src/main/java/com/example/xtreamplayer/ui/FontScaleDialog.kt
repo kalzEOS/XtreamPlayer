@@ -26,6 +26,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -65,20 +66,27 @@ fun FontScaleDialog(
     val plusFocusRequester = remember { FocusRequester() }
     val resetFocusRequester = remember { FocusRequester() }
     val closeFocusRequester = remember { FocusRequester() }
-    var pendingFocus by remember { mutableStateOf<FontScaleFocusTarget?>(FontScaleFocusTarget.MINUS) }
+    var lastFocusTarget by remember { mutableStateOf(FontScaleFocusTarget.MINUS) }
+    var focusRequestNonce by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(currentScale) {
         localPercent = (currentScale * 100).roundToInt().coerceIn(minPercent, maxPercent)
     }
 
-    LaunchedEffect(pendingFocus) {
-        when (pendingFocus) {
-            FontScaleFocusTarget.MINUS -> minusFocusRequester.requestFocus()
-            FontScaleFocusTarget.PLUS -> plusFocusRequester.requestFocus()
-            FontScaleFocusTarget.RESET -> resetFocusRequester.requestFocus()
-            null -> Unit
+    suspend fun requestFocusWithFrames(target: FocusRequester) {
+        repeat(3) {
+            withFrameNanos { }
+            runCatching { target.requestFocus() }.onSuccess { return }
         }
-        pendingFocus = null
+    }
+
+    LaunchedEffect(lastFocusTarget, focusRequestNonce, currentScale) {
+        val requester = when (lastFocusTarget) {
+            FontScaleFocusTarget.MINUS -> minusFocusRequester
+            FontScaleFocusTarget.PLUS -> plusFocusRequester
+            FontScaleFocusTarget.RESET -> resetFocusRequester
+        }
+        requestFocusWithFrames(requester)
     }
 
     Dialog(
@@ -120,7 +128,8 @@ fun FontScaleDialog(
                             if (newPercent == localPercent) return@RepeatableFocusableButton false
                             localPercent = newPercent
                             onScaleChange(newPercent / 100f)
-                            pendingFocus = FontScaleFocusTarget.MINUS
+                            lastFocusTarget = FontScaleFocusTarget.MINUS
+                            focusRequestNonce++
                             true
                         },
                         enabled = true,
@@ -146,7 +155,8 @@ fun FontScaleDialog(
                             if (newPercent == localPercent) return@RepeatableFocusableButton false
                             localPercent = newPercent
                             onScaleChange(newPercent / 100f)
-                            pendingFocus = FontScaleFocusTarget.PLUS
+                            lastFocusTarget = FontScaleFocusTarget.PLUS
+                            focusRequestNonce++
                             true
                         },
                         enabled = true,
@@ -169,7 +179,8 @@ fun FontScaleDialog(
                         onClick = {
                             localPercent = 100
                             onScaleChange(1f)
-                            pendingFocus = FontScaleFocusTarget.RESET
+                            lastFocusTarget = FontScaleFocusTarget.RESET
+                            focusRequestNonce++
                         },
                         modifier = Modifier.weight(1f)
                     )

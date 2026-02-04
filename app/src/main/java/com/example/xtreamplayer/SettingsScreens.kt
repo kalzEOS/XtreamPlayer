@@ -74,16 +74,24 @@ fun SettingsScreen(
     val colors = AppTheme.colors
     val apiKeyLabel = if (settings.openSubtitlesApiKey.isNotBlank()) "Configured" else "Not set"
     val thresholdLabel = "${settings.nextEpisodeThresholdSeconds}s"
-    val actions = listOf(
+    val playbackActions = listOf(
         SettingsAction("Auto-play next", flagLabel(settings.autoPlayNext), onToggleAutoPlay),
         SettingsAction("Next episode prompt", thresholdLabel, onOpenNextEpisodeThreshold),
         SettingsAction("Subtitles", flagLabel(settings.subtitlesEnabled), onToggleSubtitles),
-        SettingsAction("Appearance", null, onOpenAppearance),
-        SettingsAction("OpenSubtitles API key", apiKeyLabel, onOpenSubtitlesApiKey),
+        SettingsAction("OpenSubtitles API key", apiKeyLabel, onOpenSubtitlesApiKey)
+    )
+    val appearanceActions = listOf(
+        SettingsAction("Appearance", null, onOpenAppearance)
+    )
+    val accountActions = listOf(
         SettingsAction("Remember login", flagLabel(settings.rememberLogin), onToggleRememberLogin),
         SettingsAction("Auto sign-in", flagLabel(settings.autoSignIn), onToggleAutoSignIn),
-        SettingsAction("Manage lists", null, onManageLists),
-        SettingsAction("Sync library", null, onRefreshContent),
+        SettingsAction("Manage lists", null, onManageLists)
+    )
+    val libraryActions = listOf(
+        SettingsAction("Sync library", null, onRefreshContent)
+    )
+    val aboutActions = listOf(
         SettingsAction("Check for updates", appVersionLabel, onCheckForUpdates)
     )
 
@@ -127,16 +135,28 @@ fun SettingsScreen(
                     .verticalScroll(scrollState),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                actions.forEachIndexed { index, action ->
+                var actionIndex = 0
+                @Composable
+                fun renderAction(action: SettingsAction) {
                     SettingsActionRow(
                         label = action.label,
                         value = action.value,
-                        focusRequester = if (index == 0) contentItemFocusRequester else null,
+                        focusRequester = if (actionIndex == 0) contentItemFocusRequester else null,
                         onMoveLeft = onMoveLeft,
                         onActivate = action.onActivate,
                         fontFamily = settings.appFont.fontFamily
                     )
+                    actionIndex += 1
                 }
+
+                SettingsSectionHeader("Playback")
+                playbackActions.forEach { action -> renderAction(action) }
+
+                SettingsSectionHeader("Appearance")
+                appearanceActions.forEach { action -> renderAction(action) }
+
+                SettingsSectionHeader("Library")
+                libraryActions.forEach { action -> renderAction(action) }
                 SettingsActionRow(
                     label = "Clear cache",
                     value = null,
@@ -146,6 +166,9 @@ fun SettingsScreen(
                     fontFamily = settings.appFont.fontFamily,
                     secondaryText = "If playback or syncing acts up, clear cached data here, then run Sync library above."
                 )
+
+                SettingsSectionHeader("Account")
+                accountActions.forEach { action -> renderAction(action) }
                 SettingsActionRow(
                     label = "Sign out",
                     value = null,
@@ -154,9 +177,24 @@ fun SettingsScreen(
                     onActivate = onSignOut,
                     fontFamily = settings.appFont.fontFamily
                 )
+
+                SettingsSectionHeader("App")
+                aboutActions.forEach { action -> renderAction(action) }
             }
         }
     }
+}
+
+@Composable
+private fun SettingsSectionHeader(title: String) {
+    Text(
+        text = title.uppercase(),
+        color = AppTheme.colors.textTertiary,
+        fontSize = 11.sp,
+        fontFamily = AppTheme.fontFamily,
+        letterSpacing = 1.sp,
+        modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
+    )
 }
 
 @Composable

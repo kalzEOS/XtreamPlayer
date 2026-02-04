@@ -53,6 +53,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import android.content.Context
 import android.view.inputmethod.InputMethodManager
+import android.widget.Toast
 import com.example.xtreamplayer.api.SubtitleSearchResult
 import com.example.xtreamplayer.player.VideoTrackInfo
 import com.example.xtreamplayer.ui.theme.AppTheme
@@ -595,6 +596,7 @@ fun ApiKeyInputDialog(
 ) {
     var apiKey by remember { mutableStateOf(currentKey) }
     var userAgent by remember { mutableStateOf(currentUserAgent) }
+    val context = LocalContext.current
     val inputFocusRequester = remember { FocusRequester() }
     val userAgentFocusRequester = remember { FocusRequester() }
     val saveFocusRequester = remember { FocusRequester() }
@@ -785,7 +787,17 @@ fun ApiKeyInputDialog(
                     Spacer(modifier = Modifier.width(12.dp))
 
                     FocusableButton(
-                        onClick = { onSave(apiKey, userAgent) },
+                        onClick = {
+                            if (apiKey.isBlank() || userAgent.isBlank()) {
+                                Toast.makeText(
+                                    context,
+                                    "Enter API key and user agent",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                return@FocusableButton
+                            }
+                            onSave(apiKey, userAgent)
+                        },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = PrimaryButtonColor,
                             contentColor = AppTheme.colors.textOnAccent

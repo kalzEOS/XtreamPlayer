@@ -20,6 +20,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import com.example.xtreamplayer.PlaybackQueueItem
 import com.example.xtreamplayer.settings.SettingsState
+import timber.log.Timber
 
 @OptIn(UnstableApi::class)
 class Media3PlaybackEngine(context: Context) : PlaybackEngine {
@@ -336,11 +337,29 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
     }
 
     @OptIn(UnstableApi::class)
-    fun addSubtitle(subtitleUri: Uri, language: String = "en", label: String = "Downloaded") {
+    fun addSubtitle(
+        subtitleUri: Uri,
+        language: String = "en",
+        label: String = "Downloaded",
+        mimeType: String = MimeTypes.APPLICATION_SUBRIP
+    ) {
         val currentItem = player.currentMediaItem ?: return
 
+        Timber.d("Adding subtitle: uri=$subtitleUri, language=$language, mimeType=$mimeType")
+
+        // Verify file exists if it's a file URI
+        if (subtitleUri.scheme == "file") {
+            val file = java.io.File(subtitleUri.path ?: "")
+            if (file.exists()) {
+                Timber.d("Subtitle file exists: ${file.absolutePath}, size=${file.length()} bytes")
+            } else {
+                Timber.e("Subtitle file does not exist: ${file.absolutePath}")
+                return
+            }
+        }
+
         val subtitleConfig = SubtitleConfiguration.Builder(subtitleUri)
-            .setMimeType(MimeTypes.APPLICATION_SUBRIP)
+            .setMimeType(mimeType)
             .setLanguage(language)
             .setLabel(label)
             .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
@@ -350,12 +369,58 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
             .setSubtitleConfigurations(listOf(subtitleConfig))
             .build()
 
-        replaceMediaItemPreservingState(newItem)
-
+        // Enable text tracks BEFORE replacing media item
         val builder = player.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
             .setPreferredTextLanguage(language)
         player.trackSelectionParameters = builder.build()
+
+        fun selectTextTrack(tracks: androidx.media3.common.Tracks): Boolean {
+            Timber.d("Checking text tracks (groupCount=${tracks.groups.size})")
+            tracks.groups.forEachIndexed { groupIndex, trackGroup ->
+                if (trackGroup.type == C.TRACK_TYPE_TEXT) {
+                    Timber.d(
+                        "Found text track group: groupIndex=$groupIndex, length=${trackGroup.length}"
+                    )
+                    for (i in 0 until trackGroup.length) {
+                        if (trackGroup.isTrackSupported(i)) {
+                            Timber.d("Selecting text track: groupIndex=$groupIndex, trackIndex=$i")
+                            val newBuilder = player.trackSelectionParameters.buildUpon()
+                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                                .setPreferredTextLanguage(language)
+                                .setOverrideForType(
+                                    TrackSelectionOverride(
+                                        trackGroup.mediaTrackGroup,
+                                        listOf(i)
+                                    )
+                                )
+                            player.trackSelectionParameters = newBuilder.build()
+                            Timber.d("Text track selected successfully")
+                            return true
+                        }
+                    }
+                    Timber.w("Found text track group but no supported tracks")
+                }
+            }
+            return false
+        }
+
+        // Register listener before replacing to avoid missing an early tracks update.
+        val listener = object : Player.Listener {
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                if (selectTextTrack(tracks)) {
+                    player.removeListener(this)
+                }
+            }
+        }
+        player.addListener(listener)
+
+        replaceMediaItemPreservingState(newItem)
+
+        // Try immediately in case tracks are already available.
+        if (selectTextTrack(player.currentTracks)) {
+            player.removeListener(listener)
+        }
     }
 
     @OptIn(UnstableApi::class)
