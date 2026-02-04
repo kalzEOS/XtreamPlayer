@@ -26,6 +26,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -68,20 +69,27 @@ fun UiScaleDialog(
     val plusFocusRequester = remember { FocusRequester() }
     val resetFocusRequester = remember { FocusRequester() }
     val closeFocusRequester = remember { FocusRequester() }
-    var pendingFocus by remember { mutableStateOf<UiScaleFocusTarget?>(UiScaleFocusTarget.MINUS) }
+    var lastFocusTarget by remember { mutableStateOf(UiScaleFocusTarget.MINUS) }
+    var focusRequestNonce by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(currentScale) {
         localPercent = uiScaleDisplayPercent(currentScale).coerceIn(minPercent, maxPercent)
     }
 
-    LaunchedEffect(pendingFocus) {
-        when (pendingFocus) {
-            UiScaleFocusTarget.MINUS -> minusFocusRequester.requestFocus()
-            UiScaleFocusTarget.PLUS -> plusFocusRequester.requestFocus()
-            UiScaleFocusTarget.RESET -> resetFocusRequester.requestFocus()
-            null -> Unit
+    suspend fun requestFocusWithFrames(target: FocusRequester) {
+        repeat(3) {
+            withFrameNanos { }
+            runCatching { target.requestFocus() }.onSuccess { return }
         }
-        pendingFocus = null
+    }
+
+    LaunchedEffect(lastFocusTarget, focusRequestNonce, currentScale) {
+        val requester = when (lastFocusTarget) {
+            UiScaleFocusTarget.MINUS -> minusFocusRequester
+            UiScaleFocusTarget.PLUS -> plusFocusRequester
+            UiScaleFocusTarget.RESET -> resetFocusRequester
+        }
+        requestFocusWithFrames(requester)
     }
 
     Dialog(
@@ -123,7 +131,8 @@ fun UiScaleDialog(
                             if (newPercent == localPercent) return@RepeatableFocusableButton false
                             localPercent = newPercent
                             onScaleChange(displayToUiScale(newPercent / 100f))
-                            pendingFocus = UiScaleFocusTarget.MINUS
+                            lastFocusTarget = UiScaleFocusTarget.MINUS
+                            focusRequestNonce++
                             true
                         },
                         enabled = true,
@@ -149,7 +158,8 @@ fun UiScaleDialog(
                             if (newPercent == localPercent) return@RepeatableFocusableButton false
                             localPercent = newPercent
                             onScaleChange(displayToUiScale(newPercent / 100f))
-                            pendingFocus = UiScaleFocusTarget.PLUS
+                            lastFocusTarget = UiScaleFocusTarget.PLUS
+                            focusRequestNonce++
                             true
                         },
                         enabled = true,
@@ -172,7 +182,8 @@ fun UiScaleDialog(
                         onClick = {
                             localPercent = 100
                             onScaleChange(displayToUiScale(1f))
-                            pendingFocus = UiScaleFocusTarget.RESET
+                            lastFocusTarget = UiScaleFocusTarget.RESET
+                            focusRequestNonce++
                         },
                         modifier = Modifier.weight(1f)
                     )

@@ -169,7 +169,7 @@ class OpenSubtitlesApi(
     suspend fun downloadSubtitle(
         url: String,
         userAgent: String
-    ): Result<String> = withContext(Dispatchers.IO) {
+    ): Result<ByteArray> = withContext(Dispatchers.IO) {
         try {
             val resolvedUserAgent = resolveUserAgent(userAgent)
             val request = Request.Builder()
@@ -181,9 +181,9 @@ class OpenSubtitlesApi(
                 .build()
 
             client.newCall(request).execute().use { response ->
-                val body = response.body?.string().orEmpty()
+                val body = response.body?.bytes() ?: ByteArray(0)
                 if (!response.isSuccessful) {
-                    val message = parseErrorMessage(body)
+                    val message = parseErrorMessage(body.decodeToString())
                     return@withContext Result.failure(
                         OpenSubtitlesException(response.code, message)
                     )

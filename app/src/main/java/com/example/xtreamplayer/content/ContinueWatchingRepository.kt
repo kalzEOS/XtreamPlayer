@@ -160,8 +160,15 @@ class ContinueWatchingRepository(private val context: Context) {
         allEntries.forEach { entry ->
             val progressPercent = if (entry.durationMs > 0) {
                 (entry.positionMs * 100) / entry.durationMs
-            } else { 0 }
-            if (progressPercent in MIN_PROGRESS_PERCENT..MAX_PROGRESS_PERCENT) {
+            } else {
+                0
+            }
+            val minWatchMs = if (entry.durationMs > 0) {
+                minOf(MIN_WATCH_MS, entry.durationMs / 10)
+            } else {
+                MIN_WATCH_MS
+            }
+            if (entry.positionMs >= minWatchMs && progressPercent <= MAX_PROGRESS_PERCENT) {
                 result.add(entry)
             }
         }
@@ -183,7 +190,7 @@ class ContinueWatchingRepository(private val context: Context) {
 
     private companion object {
         const val MAX_ENTRIES = 50
-        const val MIN_PROGRESS_PERCENT = 2
+        const val MIN_WATCH_MS = 60_000L
         const val MAX_PROGRESS_PERCENT = 95
     }
 }

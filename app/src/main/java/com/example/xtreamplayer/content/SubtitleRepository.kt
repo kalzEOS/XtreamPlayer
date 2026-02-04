@@ -10,6 +10,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
+import java.util.zip.GZIPInputStream
+import java.util.zip.ZipInputStream
 
 data class CachedSubtitle(
     val uri: Uri,
@@ -72,11 +74,20 @@ class SubtitleRepository(
             }
 
             val content = contentResult.getOrThrow()
+            val baseName = "${mediaId}_${subtitle.language}"
+            val fallbackExt = downloadInfo.fileName.substringAfterLast('.', "srt")
+                .lowercase()
 
-            // Save to cache
-            val fileName = "${mediaId}_${subtitle.language}.srt"
+            val (finalBytes, finalExt) = when {
+                isZip(content) -> extractZipSubtitle(content, fallbackExt)
+                isGzip(content) -> Pair(extractGzipSubtitle(content), fallbackExt)
+                else -> Pair(content, fallbackExt)
+            }
+
+            val safeExt = finalExt.ifBlank { "srt" }
+            val fileName = "$baseName.$safeExt"
             val file = File(subtitleDir, fileName)
-            file.writeText(content)
+            file.writeBytes(finalBytes)
 
             Timber.d("Subtitle cached: ${file.absolutePath}")
 
@@ -131,7 +142,7 @@ class SubtitleRepository(
 
     fun getCachedSubtitlesForMedia(mediaId: String): List<CachedSubtitle> {
         return subtitleDir.listFiles()
-            ?.filter { it.name.startsWith("${mediaId}_") && it.name.endsWith(".srt") }
+            ?.filter { it.name.startsWith("${mediaId}_") }
             ?.map { file ->
                 val language = file.nameWithoutExtension.substringAfterLast("_")
                 CachedSubtitle(
@@ -141,6 +152,52 @@ class SubtitleRepository(
                 )
             }
             ?: emptyList()
+    }
+
+    private fun isZip(bytes: ByteArray): Boolean {
+        return bytes.size >= 4 &&
+            bytes[0] == 0x50.toByte() &&
+            bytes[1] == 0x4B.toByte()
+    }
+
+    private fun isGzip(bytes: ByteArray): Boolean {
+        return bytes.size >= 2 &&
+            bytes[0] == 0x1F.toByte() &&
+            bytes[1] == 0x8B.toByte()
+    }
+
+    private fun extractGzipSubtitle(bytes: ByteArray): ByteArray {
+        GZIPInputStream(bytes.inputStream()).use { gzip ->
+            return gzip.readBytes()
+        }
+    }
+
+    private fun extractZipSubtitle(
+        bytes: ByteArray,
+        fallbackExt: String
+    ): Pair<ByteArray, String> {
+        ZipInputStream(bytes.inputStream()).use { zip ->
+            var entry = zip.nextEntry
+            var firstFileBytes: ByteArray? = null
+            var firstFileExt: String? = null
+            while (entry != null) {
+                if (!entry.isDirectory) {
+                    val ext = entry.name.substringAfterLast('.', "").lowercase()
+                    val data = zip.readBytes()
+                    if (firstFileBytes == null) {
+                        firstFileBytes = data
+                        firstFileExt = ext
+                    }
+                    if (ext in setOf("srt", "vtt", "ass", "ssa", "ttml", "dfxp")) {
+                        return Pair(data, ext)
+                    }
+                }
+                entry = zip.nextEntry
+            }
+            val resolvedBytes = firstFileBytes ?: bytes
+            val resolvedExt = firstFileExt?.ifBlank { fallbackExt } ?: fallbackExt
+            return Pair(resolvedBytes, resolvedExt)
+        }
     }
 
     fun clearCache() {
