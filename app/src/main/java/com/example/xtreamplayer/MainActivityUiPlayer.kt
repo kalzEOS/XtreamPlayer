@@ -40,7 +40,10 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.MimeTypes
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.example.xtreamplayer.content.ContentItem
 import com.example.xtreamplayer.content.ContentType
+import com.example.xtreamplayer.content.LiveNowNextEpg
+import com.example.xtreamplayer.content.LiveProgramInfo
 import com.example.xtreamplayer.content.SubtitleRepository
 import com.example.xtreamplayer.player.Media3PlaybackEngine
 import com.example.xtreamplayer.player.XtreamPlayerView
@@ -59,6 +62,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+private const val LIVE_EPG_REFRESH_INTERVAL_MS = 60_000L
+private const val LIVE_EPG_CHANNEL_CHANGE_DEBOUNCE_MS = 250L
 
 private data class ActiveSubtitle(
     val uri: Uri,
@@ -233,6 +242,7 @@ data class PendingResume(
 @Composable
 internal fun PlayerOverlay(
         title: String,
+        activePlaybackItem: ContentItem?,
         player: Player,
         playbackEngine: Media3PlaybackEngine,
         subtitleRepository: SubtitleRepository,
@@ -247,7 +257,8 @@ internal fun PlayerOverlay(
         nextEpisodeTitle: String?,
         hasNextEpisode: Boolean,
         onPlayNextEpisode: () -> Unit,
-        onLiveChannelSwitch: (Int) -> Boolean
+        onLiveChannelSwitch: (Int) -> Boolean,
+        loadLiveNowNext: suspend (ContentItem) -> Result<LiveNowNextEpg?>
 ) {
     val context = LocalContext.current
     val interactionSource = remember { MutableInteractionSource() }
@@ -293,6 +304,55 @@ internal fun PlayerOverlay(
     var showNextEpisodeOverlay by remember { mutableStateOf(false) }
     var countdownRemaining by remember { mutableIntStateOf(15) }
     var shouldAutoPlayNext by remember { mutableStateOf(false) }
+    var liveNowNextEpg by remember { mutableStateOf<LiveNowNextEpg?>(null) }
+    val lastGoodLiveEpgByStream = remember { mutableStateMapOf<String, LiveNowNextEpg>() }
+    var liveEpgGeneration by remember { mutableIntStateOf(0) }
+    val nowPlayingInfoLabel = remember(title, activePlaybackItem, currentContentType, liveNowNextEpg) {
+        buildNowPlayingInfoText(
+            title = title,
+            activeItem = activePlaybackItem,
+            contentType = currentContentType,
+            liveNowNextEpg = liveNowNextEpg
+        )
+    }
+
+    LaunchedEffect(currentContentType, activePlaybackItem?.streamId) {
+        val generation = liveEpgGeneration + 1
+        liveEpgGeneration = generation
+        if (currentContentType != ContentType.LIVE) {
+            liveNowNextEpg = null
+            return@LaunchedEffect
+        }
+        val liveItem = activePlaybackItem ?: return@LaunchedEffect
+        val streamId = liveItem.streamId.takeIf { it.isNotBlank() } ?: run {
+            liveNowNextEpg = null
+            return@LaunchedEffect
+        }
+        delay(LIVE_EPG_CHANNEL_CHANGE_DEBOUNCE_MS)
+        while (true) {
+            val result =
+                runCatching { loadLiveNowNext(liveItem) }
+                    .getOrElse { error -> Result.failure(error) }
+            if (generation != liveEpgGeneration) {
+                return@LaunchedEffect
+            }
+            result
+                .onSuccess { epg ->
+                    val hasProgram =
+                        epg?.now?.title?.isNotBlank() == true || epg?.next?.title?.isNotBlank() == true
+                    if (hasProgram) {
+                        liveNowNextEpg = epg
+                        epg?.let { lastGoodLiveEpgByStream[streamId] = it }
+                    } else {
+                        liveNowNextEpg = null
+                    }
+                }
+                .onFailure {
+                    liveNowNextEpg = lastGoodLiveEpgByStream[streamId]
+                }
+            delay(LIVE_EPG_REFRESH_INTERVAL_MS)
+        }
+    }
 
     // Threshold from settings (converted to milliseconds)
     val episodeEndThresholdMs = nextEpisodeThresholdSeconds * 1000L
@@ -647,6 +707,7 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                         forcedAspectRatio = resizeMode.forcedAspectRatio
                         setResizeModeLabel(resizeMode.label)
                         titleText = title
+                        nowPlayingInfoText = nowPlayingInfoLabel
                         onResizeModeClick = { resizeMode = nextResizeMode(resizeMode) }
                         onBackClick = onExit
                         onSubtitleDownloadClick = { showSubtitleDialog = true }
@@ -729,6 +790,7 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                     view.forcedAspectRatio = resizeMode.forcedAspectRatio
                     view.setResizeModeLabel(resizeMode.label)
                     view.titleText = title
+                    view.nowPlayingInfoText = nowPlayingInfoLabel
                     view.onResizeModeClick = { resizeMode = nextResizeMode(resizeMode) }
                     view.onBackClick = onExit
                     view.onSubtitleDownloadClick = { showSubtitleDialog = true }
@@ -1006,6 +1068,101 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                 onDismiss = { showResolutionDialog = false }
         )
     }
+}
+
+private fun buildNowPlayingInfoText(
+    title: String,
+    activeItem: ContentItem?,
+    contentType: ContentType?,
+    liveNowNextEpg: LiveNowNextEpg? = null
+): String {
+    val resolvedTitle = activeItem?.title?.takeIf { it.isNotBlank() } ?: title
+    return when (contentType) {
+        ContentType.LIVE -> {
+            val liveEpgLabel = buildLiveNowNextLabel(resolvedTitle, liveNowNextEpg)
+            if (!liveEpgLabel.isNullOrBlank()) {
+                liveEpgLabel
+            } else {
+                val program = activeItem?.subtitle?.takeIf { it.isNotBlank() }
+                    ?: activeItem?.description?.takeIf { it.isNotBlank() }
+                when {
+                    !program.isNullOrBlank() && resolvedTitle.isNotBlank() -> "$resolvedTitle • $program"
+                    !program.isNullOrBlank() -> program
+                    resolvedTitle.isNotBlank() -> "Live: $resolvedTitle"
+                    else -> "Live"
+                }
+            }
+        }
+        ContentType.MOVIES -> {
+            val parts = mutableListOf<String>()
+            if (resolvedTitle.isNotBlank()) {
+                parts += resolvedTitle
+            }
+            activeItem?.duration?.takeIf { it.isNotBlank() }?.let { parts += it }
+            activeItem?.rating?.takeIf { it.isNotBlank() }?.let { parts += "Rating $it" }
+            activeItem?.subtitle
+                ?.takeIf { it.isNotBlank() && !it.equals(resolvedTitle, ignoreCase = true) }
+                ?.let { parts += it }
+            parts.joinToString(" • ")
+        }
+        ContentType.SERIES -> {
+            val parts = mutableListOf<String>()
+            if (resolvedTitle.isNotBlank()) {
+                parts += resolvedTitle
+            }
+            val season = activeItem?.seasonLabel?.takeIf { it.isNotBlank() }
+            val episode = activeItem?.episodeNumber?.takeIf { it.isNotBlank() }
+            val seasonEpisode = when {
+                !season.isNullOrBlank() && !episode.isNullOrBlank() -> "$season • Episode $episode"
+                !season.isNullOrBlank() -> season
+                !episode.isNullOrBlank() -> "Episode $episode"
+                else -> null
+            }
+            seasonEpisode?.let { parts += it }
+            activeItem?.subtitle
+                ?.takeIf { it.isNotBlank() && !it.equals(resolvedTitle, ignoreCase = true) }
+                ?.let { parts += it }
+            parts.joinToString(" • ")
+        }
+        else -> resolvedTitle
+    }.trim()
+}
+
+private fun buildLiveNowNextLabel(
+    channelName: String,
+    liveNowNextEpg: LiveNowNextEpg?
+): String? {
+    val now = liveNowNextEpg?.now?.takeIf { it.title.isNotBlank() }
+    val next = liveNowNextEpg?.next?.takeIf { it.title.isNotBlank() }
+    if (now == null && next == null) return null
+    val parts = mutableListOf<String>()
+    if (channelName.isNotBlank()) {
+        parts += channelName
+    }
+    now?.let {
+        parts += "Now: ${formatProgramLabel(it)}"
+    }
+    next?.let {
+        parts += "Next: ${formatProgramLabel(it)}"
+    }
+    return parts.joinToString(" • ").takeIf { it.isNotBlank() }
+}
+
+private fun formatProgramLabel(program: LiveProgramInfo): String {
+    val range = formatProgramTimeRange(program.startTimeMs, program.endTimeMs)
+    return if (range == null) {
+        program.title
+    } else {
+        "${program.title} ($range)"
+    }
+}
+
+private fun formatProgramTimeRange(startMs: Long?, endMs: Long?): String? {
+    if (startMs == null || endMs == null) return null
+    val formatter = SimpleDateFormat("HH:mm", Locale.getDefault())
+    val start = formatter.format(Date(startMs))
+    val end = formatter.format(Date(endMs))
+    return "$start-$end"
 }
 
 private fun isTextTrackEnabled(parameters: TrackSelectionParameters): Boolean {

@@ -36,6 +36,7 @@ class ContentRepository(
         const val BACKGROUND_SAVE_INTERVAL = 10
         const val BACKGROUND_THROTTLE_MS = 200L
         const val BOOST_PAGE_SIZE = 400
+        const val LIVE_EPG_CACHE_TTL_MS = 20_000L
     }
 
     private val memoryCache = object : LinkedHashMap<String, ContentPage>(200, 0.75f, true) {
@@ -86,6 +87,15 @@ class ContentRepository(
                 return size > 50
             }
         }
+    private data class LiveEpgCacheEntry(val data: LiveNowNextEpg?, val cachedAtMs: Long)
+    private val liveEpgCache =
+        object : LinkedHashMap<String, LiveEpgCacheEntry>(100, 0.75f, true) {
+            override fun removeEldestEntry(
+                eldest: MutableMap.MutableEntry<String, LiveEpgCacheEntry>
+            ): Boolean {
+                return size > 100
+            }
+        }
     private val locks = Section.values().associateWith { Mutex() }
     private val categoryLock = Mutex()
     private val memoryCacheMutex = Mutex()
@@ -95,6 +105,7 @@ class ContentRepository(
     private val seriesInfoMutex = Mutex()
     private val seriesSeasonFullMutex = Mutex()
     private val seriesSeasonsMutex = Mutex()
+    private val liveEpgMutex = Mutex()
     private val categoryThumbnailMutex = Mutex()
     private val categoryCache = object : LinkedHashMap<String, List<CategoryItem>>(100, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<CategoryItem>>): Boolean {
@@ -431,6 +442,31 @@ class ContentRepository(
         contentCache.writeSeriesInfo(seriesId, authConfig, info)
         seriesInfoMutex.withLock { seriesInfoCache[key] = info }
         return info
+    }
+
+    suspend fun loadLiveNowNext(
+        streamId: String,
+        authConfig: AuthConfig
+    ): Result<LiveNowNextEpg?> {
+        if (streamId.isBlank()) {
+            return Result.success(null)
+        }
+        val key = "live-epg-${accountKey(authConfig)}-$streamId"
+        val now = System.currentTimeMillis()
+        liveEpgMutex.withLock {
+            val cached = liveEpgCache[key]
+            if (cached != null && now - cached.cachedAtMs <= LIVE_EPG_CACHE_TTL_MS) {
+                return Result.success(cached.data)
+            }
+        }
+        val result = api.fetchLiveNowNext(authConfig, streamId)
+        if (result.isSuccess) {
+            val data = result.getOrNull()
+            liveEpgMutex.withLock {
+                liveEpgCache[key] = LiveEpgCacheEntry(data = data, cachedAtMs = System.currentTimeMillis())
+            }
+        }
+        return result
     }
 
     fun peekSeriesSeasonFullCache(
@@ -1525,6 +1561,7 @@ class ContentRepository(
         seriesInfoMutex.withLock { seriesInfoCache.clear() }
         seriesSeasonFullMutex.withLock { seriesSeasonFullCache.clear() }
         seriesSeasonsMutex.withLock { seriesSeasonsCache.clear() }
+        liveEpgMutex.withLock { liveEpgCache.clear() }
         validationCacheMutex.withLock { validationCache.clear() }
         SearchNormalizer.clearCache()
     }

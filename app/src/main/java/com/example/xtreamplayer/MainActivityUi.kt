@@ -1795,7 +1795,17 @@ fun RootScreen(
                     resumePositionMs = null
                 },
                 onPlayNextEpisode = { playbackEngine.player.seekToNextMediaItem() },
-                onLiveChannelSwitch = switchLiveChannel
+                onLiveChannelSwitch = switchLiveChannel,
+                loadLiveNowNext = loadLiveNowNext@{ item ->
+                    val config = authState.activeConfig ?: return@loadLiveNowNext Result.success(null)
+                    if (item.contentType != ContentType.LIVE) {
+                        return@loadLiveNowNext Result.success(null)
+                    }
+                    contentRepository.loadLiveNowNext(
+                        streamId = item.streamId,
+                        authConfig = config
+                    )
+                }
         )
 
         if (movieInfoItem != null) {
@@ -6583,9 +6593,12 @@ fun CategorySectionScreen(
     val tabFocusRequesters = remember { ContentType.values().map { FocusRequester() } }
     val backTabFocusRequester = remember { FocusRequester() }
     val searchFocusRequester = remember { FocusRequester() }
+    val searchDownCategoryFocusRequester = remember { FocusRequester() }
+    val searchDownContentFocusRequester = remember { FocusRequester() }
     val episodesFocusRequester = remember { FocusRequester() }
     var pendingEpisodeFocus by remember { mutableStateOf(false) }
     val useStackedHeader = settings.uiScale >= 1.2f
+    val selectedTypeTabFocusRequester = tabFocusRequesters.getOrNull(activeType.ordinal)
 
     val activeQuery = searchState.debouncedQuery
 
@@ -6786,21 +6799,27 @@ fun CategorySectionScreen(
                                     if (selectedCategory != null) {
                                         backTabFocusRequester.requestFocus()
                                     } else {
-                                        tabFocusRequesters.firstOrNull()?.requestFocus()
+                                        selectedTypeTabFocusRequester?.requestFocus()
+                                                ?: tabFocusRequesters.firstOrNull()?.requestFocus()
                                     }
                                 },
                                 onMoveUp = {
                                     if (selectedCategory != null) {
                                         backTabFocusRequester.requestFocus()
                                     } else {
-                                        tabFocusRequesters.firstOrNull()?.requestFocus()
+                                        selectedTypeTabFocusRequester?.requestFocus()
+                                                ?: tabFocusRequesters.firstOrNull()?.requestFocus()
                                     }
                                 },
                                 onMoveDown = {
                                     if (selectedSeries != null) {
                                         pendingEpisodeFocus = true
-                                    } else {
+                                    } else if (activeType == ContentType.SERIES) {
                                         contentItemFocusRequester.requestFocus()
+                                    } else if (selectedCategory != null) {
+                                        searchDownContentFocusRequester.requestFocus()
+                                    } else {
+                                        searchDownCategoryFocusRequester.requestFocus()
                                     }
                                 },
                                 onSearch = { searchState.performSearch() }
@@ -6992,8 +7011,14 @@ fun CategorySectionScreen(
                                         key = { index -> lazyItems[index]?.id ?: "cat-item-$index" }
                                 ) { index ->
                                     val item = lazyItems[index]
-                                    val isLeftEdge = index % posterColumns == 0
-                                    val isTopRow = index < posterColumns
+                            val isLeftEdge = index % posterColumns == 0
+                            val isTopRow = index < posterColumns
+                                    val searchDownIndex =
+                                            if (activeType != ContentType.SERIES && lazyItems.itemCount > 1) {
+                                                (posterColumns - 1).coerceAtMost(lazyItems.itemCount - 1)
+                                            } else {
+                                                -1
+                                            }
                                     val requester =
                                             if (selectedSeries == null) {
                                                 when {
@@ -7001,6 +7026,8 @@ fun CategorySectionScreen(
                                                             (item.id == lastCategoryContentId ||
                                                                     item.id == resumeFocusId) ->
                                                             resumeFocusRequester
+                                                    index == searchDownIndex ->
+                                                            searchDownContentFocusRequester
                                                     index == 0 -> contentItemFocusRequester
                                                     else -> null
                                                 }
@@ -7165,6 +7192,12 @@ fun CategorySectionScreen(
                                     Modifier.focusRequester(contentItemFocusRequester).focusable()
                     )
                 } else {
+                    val searchDownIndex =
+                            if (activeType != ContentType.SERIES && filteredCategories.size > 1) {
+                                (categoryColumns - 1).coerceAtMost(filteredCategories.lastIndex)
+                            } else {
+                                -1
+                            }
                     LazyVerticalGrid(
                             columns = GridCells.Fixed(categoryColumns),
                             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -7174,7 +7207,12 @@ fun CategorySectionScreen(
                     ) {
                         items(filteredCategories.size) { index ->
                             val category = filteredCategories[index]
-                            val requester = if (index == 0) contentItemFocusRequester else null
+                            val requester =
+                                    when {
+                                        index == searchDownIndex -> searchDownCategoryFocusRequester
+                                        index == 0 -> contentItemFocusRequester
+                                        else -> null
+                                    }
                             val isLeftEdge = index % categoryColumns == 0
                             val isTopRow = index < categoryColumns
                             val categoryThumbnailUrl by
