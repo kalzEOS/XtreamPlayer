@@ -2,6 +2,7 @@ package com.example.xtreamplayer.player
 
 import android.content.Context
 import android.util.AttributeSet
+import android.text.TextUtils
 import android.view.KeyEvent
 import android.view.View
 import android.widget.PopupWindow
@@ -37,6 +38,7 @@ class XtreamPlayerView @JvmOverloads constructor(
     private var prevButtonView: View? = null
     private var nextButtonView: View? = null
     private var titleView: TextView? = null
+    private var nowPlayingInfoView: TextView? = null
     private var topBarView: View? = null
     var onResizeModeClick: (() -> Unit)? = null
         set(value) {
@@ -95,6 +97,11 @@ class XtreamPlayerView @JvmOverloads constructor(
         set(value) {
             field = value
             bindTitleView()
+        }
+    var nowPlayingInfoText: String? = null
+        set(value) {
+            field = value
+            bindNowPlayingInfoView()
         }
     var isLiveContent: Boolean = false
         set(value) {
@@ -179,6 +186,7 @@ class XtreamPlayerView @JvmOverloads constructor(
         bindAudioBoostView()
         bindSettingsView()
         bindTitleView()
+        bindNowPlayingInfoView()
         updateControlsForContentType()
         updateFocusOrder()
         viewTreeObserver.addOnPreDrawListener(topBarSyncListener)
@@ -507,6 +515,27 @@ class XtreamPlayerView @JvmOverloads constructor(
             titleView = it
         }
         view?.text = titleText.orEmpty()
+    }
+
+    private fun bindNowPlayingInfoView() {
+        val view = nowPlayingInfoView ?: findViewById<TextView>(R.id.exo_now_playing_info).also {
+            nowPlayingInfoView = it
+        }
+        if (view != null) {
+            val text = nowPlayingInfoText.orEmpty().trim()
+            view.text = text
+            view.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
+            if (text.isBlank()) {
+                view.isSelected = false
+            } else {
+                view.ellipsize = TextUtils.TruncateAt.MARQUEE
+                view.marqueeRepeatLimit = -1
+                view.isSingleLine = true
+                view.setHorizontallyScrolling(true)
+                // Marquee only runs when selected/focused.
+                view.isSelected = true
+            }
+        }
     }
 
 }

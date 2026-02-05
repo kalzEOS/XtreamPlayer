@@ -3,6 +3,7 @@ package com.example.xtreamplayer
 import androidx.compose.runtime.Composable
 import com.example.xtreamplayer.content.ContentItem
 import com.example.xtreamplayer.content.ContentType
+import com.example.xtreamplayer.content.LiveNowNextEpg
 import com.example.xtreamplayer.content.SubtitleRepository
 import com.example.xtreamplayer.player.Media3PlaybackEngine
 import com.example.xtreamplayer.settings.SettingsState
@@ -18,7 +19,8 @@ internal fun PlayerScreen(
     onRequestOpenSubtitlesApiKey: () -> Unit,
     onExitPlayback: () -> Unit,
     onPlayNextEpisode: () -> Unit,
-    onLiveChannelSwitch: (Int) -> Boolean
+    onLiveChannelSwitch: (Int) -> Boolean,
+    loadLiveNowNext: suspend (ContentItem) -> Result<LiveNowNextEpg?>
 ) {
     val queue = activePlaybackQueue ?: return
     val currentIndex = playbackEngine.player.currentMediaItemIndex
@@ -29,6 +31,7 @@ internal fun PlayerScreen(
 
     PlayerOverlay(
         title = activePlaybackTitle ?: "",
+        activePlaybackItem = activePlaybackItem,
         player = playbackEngine.player,
         playbackEngine = playbackEngine,
         subtitleRepository = subtitleRepository,
@@ -43,6 +46,7 @@ internal fun PlayerScreen(
         nextEpisodeTitle = nextEpisodeTitle,
         hasNextEpisode = hasNextEpisode,
         onPlayNextEpisode = onPlayNextEpisode,
-        onLiveChannelSwitch = onLiveChannelSwitch
+        onLiveChannelSwitch = onLiveChannelSwitch,
+        loadLiveNowNext = loadLiveNowNext
     )
 }

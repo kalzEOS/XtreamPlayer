@@ -2,12 +2,15 @@ package com.example.xtreamplayer.api
 
 import android.util.JsonReader
 import android.util.JsonToken
+import android.util.Base64
 import com.example.xtreamplayer.Section
 import com.example.xtreamplayer.auth.AuthConfig
 import com.example.xtreamplayer.content.CategoryItem
 import com.example.xtreamplayer.content.ContentItem
 import com.example.xtreamplayer.content.ContentPage
 import com.example.xtreamplayer.content.ContentType
+import com.example.xtreamplayer.content.LiveNowNextEpg
+import com.example.xtreamplayer.content.LiveProgramInfo
 import com.example.xtreamplayer.content.MovieInfo
 import com.example.xtreamplayer.content.SeriesInfo
 import kotlinx.coroutines.Dispatchers
@@ -19,8 +22,10 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
+import java.text.SimpleDateFormat
 import java.net.SocketException
 import java.net.SocketTimeoutException
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 class XtreamApi(
@@ -449,6 +454,62 @@ class XtreamApi(
                 }
             } catch (e: Exception) {
                 Timber.e(e, "API request failed")
+                Result.failure(e)
+            }
+        }
+    }
+
+    suspend fun fetchLiveNowNext(
+        config: AuthConfig,
+        streamId: String,
+        limit: Int = 2
+    ): Result<LiveNowNextEpg?> {
+        if (streamId.isBlank()) {
+            return Result.success(null)
+        }
+        return withContext(Dispatchers.IO) {
+            try {
+                val safeLimit = limit.coerceIn(1, 10)
+                val url = buildApiUrl(
+                    config,
+                    "get_short_epg",
+                    mapOf(
+                        "stream_id" to streamId,
+                        "limit" to safeLimit.toString()
+                    )
+                ) ?: return@withContext Result.failure(
+                    IllegalArgumentException("Invalid service URL")
+                )
+                val request = Request.Builder().url(url).get().build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        return@withContext Result.failure(
+                            IllegalStateException("Request failed: ${response.code}")
+                        )
+                    }
+                    val body = response.body?.string()
+                        ?: return@withContext Result.failure(
+                            IllegalStateException("Empty response")
+                        )
+                    val json = JSONObject(body)
+                    val listingsRaw = when {
+                        json.has("epg_listings") -> json.opt("epg_listings")
+                        json.has("listings") -> json.opt("listings")
+                        else -> null
+                    }
+                    val programs = parseLivePrograms(listingsRaw).take(safeLimit)
+                    if (programs.isEmpty()) {
+                        return@withContext Result.success(null)
+                    }
+                    Result.success(
+                        LiveNowNextEpg(
+                            now = programs.getOrNull(0),
+                            next = programs.getOrNull(1)
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                Timber.w(e, "Failed to fetch live EPG for stream=$streamId")
                 Result.failure(e)
             }
         }
@@ -972,6 +1033,130 @@ class XtreamApi(
         }
         reader.endObject()
         return summaries
+    }
+
+    private fun parseLivePrograms(raw: Any?): List<LiveProgramInfo> {
+        val objects = mutableListOf<JSONObject>()
+        when (raw) {
+            is JSONArray -> {
+                for (index in 0 until raw.length()) {
+                    raw.optJSONObject(index)?.let { objects += it }
+                }
+            }
+            is JSONObject -> {
+                val keys = raw.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    raw.optJSONObject(key)?.let { objects += it }
+                }
+            }
+            else -> Unit
+        }
+        return objects
+            .mapNotNull(::parseLiveProgram)
+            .sortedBy { it.startTimeMs ?: Long.MAX_VALUE }
+    }
+
+    private fun parseLiveProgram(obj: JSONObject): LiveProgramInfo? {
+        val rawTitle = firstNonBlank(
+            obj.optString("title"),
+            obj.optString("name"),
+            obj.optString("programme"),
+            obj.optString("program_title")
+        ) ?: return null
+        val title = decodePossiblyBase64(rawTitle).trim()
+        if (title.isBlank()) return null
+        val startTimeMs = firstTimestamp(
+            obj.opt("start_timestamp"),
+            obj.opt("start"),
+            obj.opt("start_datetime"),
+            obj.opt("start_time"),
+            obj.opt("from")
+        )
+        val endTimeMs = firstTimestamp(
+            obj.opt("stop_timestamp"),
+            obj.opt("end_timestamp"),
+            obj.opt("end"),
+            obj.opt("stop"),
+            obj.opt("end_datetime"),
+            obj.opt("stop_datetime"),
+            obj.opt("end_time"),
+            obj.opt("to")
+        )
+        return LiveProgramInfo(
+            title = title,
+            startTimeMs = startTimeMs,
+            endTimeMs = endTimeMs
+        )
+    }
+
+    private fun firstTimestamp(vararg values: Any?): Long? {
+        values.forEach { candidate ->
+            parseTimestamp(candidate)?.let { return it }
+        }
+        return null
+    }
+
+    private fun parseTimestamp(value: Any?): Long? {
+        return when (value) {
+            null -> null
+            is Number -> normalizeEpoch(value.toLong())
+            is String -> parseTimestamp(value)
+            else -> null
+        }
+    }
+
+    private fun parseTimestamp(raw: String): Long? {
+        val value = raw.trim()
+        if (value.isBlank()) return null
+        value.toLongOrNull()?.let { return normalizeEpoch(it) }
+        val formats =
+            listOf(
+                "yyyy-MM-dd HH:mm:ss",
+                "yyyy-MM-dd HH:mm",
+                "yyyy-MM-dd'T'HH:mm:ss",
+                "yyyy-MM-dd'T'HH:mm:ss.SSS",
+                "yyyy-MM-dd'T'HH:mm:ssX",
+                "yyyy-MM-dd'T'HH:mm:ssXXX",
+                "yyyy-MM-dd'T'HH:mm:ss.SSSX",
+                "yyyy-MM-dd'T'HH:mm:ss.SSSXXX"
+            )
+        for (pattern in formats) {
+            val parsed = runCatching {
+                SimpleDateFormat(pattern, Locale.US).apply {
+                    isLenient = true
+                }.parse(value)
+            }.getOrNull()
+            if (parsed != null) {
+                return parsed.time
+            }
+        }
+        return null
+    }
+
+    private fun normalizeEpoch(raw: Long): Long {
+        return if (raw in 1..9_999_999_999L) raw * 1000L else raw
+    }
+
+    private fun decodePossiblyBase64(raw: String): String {
+        val value = raw.trim()
+        if (value.length < 8) return value
+        if (!value.matches(Regex("^[A-Za-z0-9+/=_-]+$"))) {
+            return value
+        }
+        val normalized = value.replace('-', '+').replace('_', '/')
+        val padding = (4 - (normalized.length % 4)) % 4
+        val padded = normalized + "=".repeat(padding)
+        val decoded = runCatching {
+            String(Base64.decode(padded, Base64.DEFAULT), Charsets.UTF_8).trim()
+        }.getOrNull() ?: return value
+        if (decoded.isBlank() || decoded.contains('\uFFFD')) {
+            return value
+        }
+        val printableCount = decoded.count {
+            it.isLetterOrDigit() || it.isWhitespace() || it in ".,:;!?-_/&'\"()[]"
+        }
+        return if (printableCount >= (decoded.length * 0.6f)) decoded else value
     }
 
     private fun parseSeriesSeasonPage(
