@@ -3166,6 +3166,17 @@ private fun MovieInfoDialog(
         val releaseLabel = formatReleaseYear(info?.releaseDate, info?.year)
         val playFocusRequester = remember { FocusRequester() }
         val clearFocusRequester = remember { FocusRequester() }
+        val appScale = LocalAppScale.current
+        val baseDensity = LocalAppBaseDensity.current ?: LocalDensity.current
+        val movieDetailsScale = remember(appScale.uiScale) {
+            (1.05f * (1f + (appScale.uiScale - 1f) * 0.5f)).coerceIn(0.9f, 1.25f)
+        }
+        val movieDetailsDensity = remember(movieDetailsScale, baseDensity, appScale.fontScale) {
+            Density(
+                density = baseDensity.density * movieDetailsScale,
+                fontScale = baseDensity.fontScale * movieDetailsScale * appScale.fontScale
+            )
+        }
         var showPlotDialog by remember { mutableStateOf(false) }
         var plotOverflow by remember { mutableStateOf(false) }
         LaunchedEffect(Unit) { playFocusRequester.requestFocus() }
@@ -3231,192 +3242,194 @@ private fun MovieInfoDialog(
                         )
                     }
 
-                    Column(
-                            modifier = Modifier.fillMaxHeight().weight(1f)
-                    ) {
-                        val description =
-                                info?.description?.takeIf { it.isNotBlank() }
-                                        ?: "No description available."
-                        val showReadMore = plotOverflow
-                        val readMoreInteraction = remember { MutableInteractionSource() }
-                        val isReadMoreFocused by readMoreInteraction.collectIsFocusedAsState()
-                        val readMoreFocusRequester = remember { FocusRequester() }
+                    CompositionLocalProvider(LocalDensity provides movieDetailsDensity) {
+                        Column(
+                                modifier = Modifier.fillMaxHeight().weight(1f)
+                        ) {
+                            val description =
+                                    info?.description?.takeIf { it.isNotBlank() }
+                                            ?: "No description available."
+                            val showReadMore = plotOverflow
+                            val readMoreInteraction = remember { MutableInteractionSource() }
+                            val isReadMoreFocused by readMoreInteraction.collectIsFocusedAsState()
+                            val readMoreFocusRequester = remember { FocusRequester() }
 
-                        Column(verticalArrangement = Arrangement.spacedBy(DETAIL_ROW_SPACING)) {
-                            MovieInfoRow(label = "Directed By:", value = info?.director)
-                            MovieInfoRow(label = "Release Date:", value = releaseLabel)
-                            MovieInfoRow(
-                                    label = "Duration:",
-                                    value = formatDuration(info?.duration)
-                            )
-                            MovieInfoRow(label = "Genre:", value = info?.genre)
-                            MovieInfoRow(label = "Cast:", value = info?.cast, valueMaxLines = 2)
-                            val ratingValue = ratingToStars(info?.rating)
-                            if (ratingValue != null) {
-                                RatingStarsRow(label = "Rating:", rating = ratingValue)
-                            } else {
-                                MovieInfoRow(label = "Rating:", value = null)
-                            }
-                            Spacer(modifier = Modifier.height(DETAIL_SECTION_SPACING))
+                            Column(verticalArrangement = Arrangement.spacedBy(DETAIL_ROW_SPACING)) {
+                                MovieInfoRow(label = "Directed By:", value = info?.director)
+                                MovieInfoRow(label = "Release Date:", value = releaseLabel)
+                                MovieInfoRow(
+                                        label = "Duration:",
+                                        value = formatDuration(info?.duration)
+                                )
+                                MovieInfoRow(label = "Genre:", value = info?.genre)
+                                MovieInfoRow(label = "Cast:", value = info?.cast, valueMaxLines = 2)
+                                val ratingValue = ratingToStars(info?.rating)
+                                if (ratingValue != null) {
+                                    RatingStarsRow(label = "Rating:", rating = ratingValue)
+                                } else {
+                                    MovieInfoRow(label = "Rating:", value = null)
+                                }
+                                Spacer(modifier = Modifier.height(DETAIL_SECTION_SPACING))
 
-                            if (showReadMore) {
-                                Row(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalAlignment = Alignment.Bottom,
-                                        modifier = Modifier.fillMaxWidth()
-                                ) {
+                                if (showReadMore) {
+                                    Row(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.Bottom,
+                                            modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                                text = description,
+                                                color = colors.textPrimary,
+                                                fontSize = 13.sp,
+                                                fontFamily = AppTheme.fontFamily,
+                                                lineHeight = 18.sp,
+                                                maxLines = 3,
+                                                overflow = TextOverflow.Ellipsis,
+                                                onTextLayout = { plotOverflow = it.hasVisualOverflow },
+                                                modifier = Modifier.weight(1f)
+                                        )
+                                        Box(
+                                                modifier =
+                                                        Modifier.focusRequester(readMoreFocusRequester)
+                                                                .focusable(interactionSource = readMoreInteraction)
+                                                                .onKeyEvent {
+                                                                    if (it.type != KeyEventType.KeyDown) {
+                                                                        false
+                                                                    } else if (it.key == Key.Enter ||
+                                                                                    it.key == Key.NumPadEnter ||
+                                                                                    it.key == Key.DirectionCenter
+                                                                    ) {
+                                                                        showPlotDialog = true
+                                                                        true
+                                                                    } else {
+                                                                        false
+                                                                    }
+                                                                }
+                                                                .clip(RoundedCornerShape(6.dp))
+                                                                .then(
+                                                                        if (isReadMoreFocused) {
+                                                                            Modifier.border(1.dp, colors.focus, RoundedCornerShape(6.dp))
+                                                                        } else {
+                                                                            Modifier
+                                                                        }
+                                                                )
+                                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                                .clickable(
+                                                                        interactionSource = readMoreInteraction,
+                                                                        indication = null
+                                                                ) { showPlotDialog = true }
+                                        ) {
+                                            Text(
+                                                    text = "Read more",
+                                                    color = colors.accent,
+                                                    fontSize = 12.sp,
+                                                    fontFamily = AppTheme.fontFamily,
+                                                    fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    }
+                                } else {
                                     Text(
                                             text = description,
                                             color = colors.textPrimary,
                                             fontSize = 13.sp,
                                             fontFamily = AppTheme.fontFamily,
                                             lineHeight = 18.sp,
-                                            maxLines = 3,
+                                            maxLines = 4,
                                             overflow = TextOverflow.Ellipsis,
-                                            onTextLayout = { plotOverflow = it.hasVisualOverflow },
-                                            modifier = Modifier.weight(1f)
+                                            onTextLayout = { plotOverflow = it.hasVisualOverflow }
                                     )
-                                    Box(
-                                            modifier =
-                                                    Modifier.focusRequester(readMoreFocusRequester)
-                                                            .focusable(interactionSource = readMoreInteraction)
-                                                            .onKeyEvent {
-                                                                if (it.type != KeyEventType.KeyDown) {
-                                                                    false
-                                                                } else if (it.key == Key.Enter ||
-                                                                                it.key == Key.NumPadEnter ||
-                                                                                it.key == Key.DirectionCenter
-                                                                ) {
-                                                                    showPlotDialog = true
-                                                                    true
-                                                                } else {
-                                                                    false
-                                                                }
-                                                            }
-                                                            .clip(RoundedCornerShape(6.dp))
-                                                            .then(
-                                                                    if (isReadMoreFocused) {
-                                                                        Modifier.border(1.dp, colors.focus, RoundedCornerShape(6.dp))
-                                                                    } else {
-                                                                        Modifier
-                                                                    }
-                                                            )
-                                                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                                                            .clickable(
-                                                                    interactionSource = readMoreInteraction,
-                                                                    indication = null
-                                                            ) { showPlotDialog = true }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(DETAIL_SECTION_SPACING))
+
+                            Column(verticalArrangement = Arrangement.spacedBy(DETAIL_ROW_SPACING)) {
+                                Row(
+                                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    val isResume = resumePositionMs != null && resumePositionMs > 0
+                                    FocusableButton(
+                                            onClick = {
+                                                if (isResume) {
+                                                    onPlayWithPosition(item, queueItems, resumePositionMs)
+                                                } else {
+                                                    onPlay(item, queueItems)
+                                                }
+                                            },
+                                            modifier = Modifier.width(180.dp).focusRequester(playFocusRequester),
+                                            colors =
+                                                    ButtonDefaults.buttonColors(
+                                                            containerColor = colors.accent,
+                                                            contentColor = colors.textOnAccent
+                                                    )
                                     ) {
                                         Text(
-                                                text = "Read more",
-                                                color = colors.accent,
-                                                fontSize = 12.sp,
+                                                text = if (isResume) "Resume Playing" else "Play",
+                                                fontSize = 14.sp,
                                                 fontFamily = AppTheme.fontFamily,
                                                 fontWeight = FontWeight.SemiBold
                                         )
                                     }
-                                }
-                            } else {
-                                Text(
-                                        text = description,
-                                        color = colors.textPrimary,
-                                        fontSize = 13.sp,
-                                        fontFamily = AppTheme.fontFamily,
-                                        lineHeight = 18.sp,
-                                        maxLines = 4,
-                                        overflow = TextOverflow.Ellipsis,
-                                        onTextLayout = { plotOverflow = it.hasVisualOverflow }
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.weight(1f))
-
-                        Column(verticalArrangement = Arrangement.spacedBy(DETAIL_ROW_SPACING)) {
-                            Row(
-                                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                val isResume = resumePositionMs != null && resumePositionMs > 0
-                                FocusableButton(
-                                        onClick = {
-                                            if (isResume) {
-                                                onPlayWithPosition(item, queueItems, resumePositionMs)
-                                            } else {
-                                                onPlay(item, queueItems)
-                                            }
-                                        },
-                                        modifier = Modifier.width(180.dp).focusRequester(playFocusRequester),
-                                        colors =
-                                                ButtonDefaults.buttonColors(
-                                                        containerColor = colors.accent,
-                                                        contentColor = colors.textOnAccent
-                                                )
-                                ) {
-                                    Text(
-                                            text = if (isResume) "Resume Playing" else "Play",
-                                            fontSize = 14.sp,
-                                            fontFamily = AppTheme.fontFamily,
-                                            fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                                FocusableButton(
-                                        onClick = { onToggleFavorite(item) },
-                                        modifier = Modifier.size(48.dp),
-                                        contentPadding = PaddingValues(0.dp),
-                                        colors =
-                                                ButtonDefaults.buttonColors(
-                                                        containerColor = colors.surfaceAlt,
-                                                        contentColor = colors.textPrimary
-                                                )
-                                ) {
-                                    Icon(
-                                            imageVector =
-                                                    if (isFavorite) {
-                                                        Icons.Filled.Favorite
-                                                    } else {
-                                                        Icons.Outlined.FavoriteBorder
-                                                    },
-                                            contentDescription = "Favorite",
-                                            tint = if (isFavorite) Color(0xFFEF5350) else colors.textPrimary,
-                                            modifier = Modifier.size(22.dp)
-                                    )
-                                }
-                                if (showClearContinueWatching && onClearContinueWatching != null) {
                                     FocusableButton(
-                                            onClick = onClearContinueWatching,
-                                            modifier = Modifier.height(48.dp).focusRequester(clearFocusRequester),
+                                            onClick = { onToggleFavorite(item) },
+                                            modifier = Modifier.size(48.dp),
+                                            contentPadding = PaddingValues(0.dp),
                                             colors =
                                                     ButtonDefaults.buttonColors(
                                                             containerColor = colors.surfaceAlt,
                                                             contentColor = colors.textPrimary
                                                     )
                                     ) {
-                                        Text(
-                                                text = "Clear from list",
-                                                fontSize = 11.sp,
-                                                fontFamily = AppTheme.fontFamily,
-                                                fontWeight = FontWeight.SemiBold
+                                        Icon(
+                                                imageVector =
+                                                        if (isFavorite) {
+                                                            Icons.Filled.Favorite
+                                                        } else {
+                                                            Icons.Outlined.FavoriteBorder
+                                                        },
+                                                contentDescription = "Favorite",
+                                                tint = if (isFavorite) Color(0xFFEF5350) else colors.textPrimary,
+                                                modifier = Modifier.size(22.dp)
                                         )
                                     }
+                                    if (showClearContinueWatching && onClearContinueWatching != null) {
+                                        FocusableButton(
+                                                onClick = onClearContinueWatching,
+                                                modifier = Modifier.height(48.dp).focusRequester(clearFocusRequester),
+                                                colors =
+                                                        ButtonDefaults.buttonColors(
+                                                                containerColor = colors.surfaceAlt,
+                                                                contentColor = colors.textPrimary
+                                                        )
+                                        ) {
+                                            Text(
+                                                    text = "Clear from list",
+                                                    fontSize = 11.sp,
+                                                    fontFamily = AppTheme.fontFamily,
+                                                    fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    }
                                 }
-                            }
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(
-                                        text = "Video: ${formatVideoSummary(info)}",
-                                        color = colors.textSecondary,
-                                        fontSize = 9.sp,
-                                        fontFamily = AppTheme.fontFamily,
-                                        lineHeight = 13.sp
-                                )
-                                Text(
-                                        text = "Audio: ${formatAudioSummary(info)}",
-                                        color = colors.textSecondary,
-                                        fontSize = 9.sp,
-                                        fontFamily = AppTheme.fontFamily,
-                                        lineHeight = 13.sp
-                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(
+                                            text = "Video: ${formatVideoSummary(info)}",
+                                            color = colors.textSecondary,
+                                            fontSize = 9.sp,
+                                            fontFamily = AppTheme.fontFamily,
+                                            lineHeight = 13.sp
+                                    )
+                                    Text(
+                                            text = "Audio: ${formatAudioSummary(info)}",
+                                            color = colors.textSecondary,
+                                            fontSize = 9.sp,
+                                            fontFamily = AppTheme.fontFamily,
+                                            lineHeight = 13.sp
+                                    )
+                                }
                             }
                         }
                     }
