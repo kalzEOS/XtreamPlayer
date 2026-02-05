@@ -3214,18 +3214,18 @@ private fun MovieInfoDialog(
                         AsyncImage(
                                 model = imageRequest,
                                 contentDescription = null,
-                                contentScale = ContentScale.Crop,
+                                contentScale = ContentScale.Fit,
                                 filterQuality = FilterQuality.Low,
                                 modifier =
                                         Modifier.width(220.dp)
-                                                .fillMaxHeight()
+                                                .aspectRatio(2f / 3f)
                                                 .clip(RoundedCornerShape(14.dp))
                         )
                     } else {
                         Box(
                                 modifier =
                                         Modifier.width(220.dp)
-                                                .fillMaxHeight()
+                                                .aspectRatio(2f / 3f)
                                                 .clip(RoundedCornerShape(14.dp))
                                                 .background(colors.surfaceAlt)
                         )
@@ -8077,7 +8077,7 @@ fun SeriesSeasonsScreen(
                         AsyncImage(
                             model = imageRequest,
                             contentDescription = null,
-                            contentScale = ContentScale.Crop,
+                            contentScale = ContentScale.Fit,
                             filterQuality = FilterQuality.Low,
                             modifier =
                                 Modifier.width(posterWidth)
@@ -9131,7 +9131,10 @@ private fun UpdatePromptDialog(
             updateFocusRequester.requestFocus()
         }
     }
-    AppDialog(onDismissRequest = onLater) {
+    AppDialog(
+        onDismissRequest = onLater,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth(0.7f)
