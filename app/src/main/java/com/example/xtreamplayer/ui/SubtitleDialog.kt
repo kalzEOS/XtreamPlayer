@@ -1793,6 +1793,18 @@ private fun OffsetButton(
         .clip(RoundedCornerShape(6.dp))
         .background(bgColor)
         .focusable(interactionSource = interactionSource)
+        .onPreviewKeyEvent { event ->
+            val isSelectKey =
+                event.key == Key.Enter ||
+                    event.key == Key.NumPadEnter ||
+                    event.key == Key.DirectionCenter
+            if (event.type == KeyEventType.KeyDown && isSelectKey) {
+                onClick()
+                true
+            } else {
+                false
+            }
+        }
         .clickable(
             interactionSource = interactionSource,
             indication = null,
