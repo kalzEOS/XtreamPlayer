@@ -1036,48 +1036,92 @@ class XtreamApi(
     }
 
     private fun parseLivePrograms(raw: Any?): List<LiveProgramInfo> {
-        val sourceEntries = mutableListOf<Pair<Int, JSONObject>>()
+        data class RawEntry(
+            val sourceOrder: Int,
+            val key: String?,
+            val obj: JSONObject
+        )
+        data class ParsedEntry(
+            val sourceOrder: Int,
+            val key: String?,
+            val program: LiveProgramInfo
+        )
+
+        val sourceEntries = mutableListOf<RawEntry>()
         var sourceIsArray = false
         when (raw) {
             is JSONArray -> {
                 sourceIsArray = true
                 for (index in 0 until raw.length()) {
-                    raw.optJSONObject(index)?.let { sourceEntries += index to it }
+                    raw.optJSONObject(index)?.let {
+                        sourceEntries += RawEntry(sourceOrder = index, key = null, obj = it)
+                    }
                 }
             }
             is JSONObject -> {
-                // JSONObject key iteration order is not guaranteed; sort keys for stable ordering.
                 val keys = buildList {
                     val iterator = raw.keys()
                     while (iterator.hasNext()) add(iterator.next())
-                }.sorted()
-                keys.forEachIndexed { index, key ->
-                    raw.optJSONObject(key)?.let { sourceEntries += index to it }
+                }
+                val hasExplicitNowNext =
+                    keys.any { it.equals("now", ignoreCase = true) || it.equals("next", ignoreCase = true) }
+                val orderedKeys =
+                    if (hasExplicitNowNext) {
+                        keys.sortedWith(
+                            compareBy<String>(
+                                {
+                                    when {
+                                        it.equals("now", ignoreCase = true) -> 0
+                                        it.equals("next", ignoreCase = true) -> 1
+                                        else -> 2
+                                    }
+                                },
+                                { it.lowercase(Locale.ROOT) }
+                            )
+                        )
+                    } else {
+                        // Keep deterministic order for generic object payloads.
+                        keys.sorted()
+                    }
+                orderedKeys.forEachIndexed { index, key ->
+                    raw.optJSONObject(key)?.let {
+                        sourceEntries += RawEntry(sourceOrder = index, key = key, obj = it)
+                    }
                 }
             }
             else -> Unit
         }
         val parsed =
-            sourceEntries.mapNotNull { (sourceOrder, obj) ->
-                parseLiveProgram(obj)?.let { sourceOrder to it }
+            sourceEntries.mapNotNull { entry ->
+                parseLiveProgram(entry.obj)?.let {
+                    ParsedEntry(sourceOrder = entry.sourceOrder, key = entry.key, program = it)
+                }
             }
         if (parsed.isEmpty()) return emptyList()
-        val hasMissingTimestamp = parsed.any { (_, program) -> program.startTimeMs == null }
+        val hasMissingTimestamp = parsed.any { it.program.startTimeMs == null }
+        fun explicitKeyPriority(key: String?): Int {
+            return when {
+                key.equals("now", ignoreCase = true) -> 0
+                key.equals("next", ignoreCase = true) -> 1
+                else -> 2
+            }
+        }
         val ordered =
             if (sourceIsArray && hasMissingTimestamp) {
                 // Array payloads are usually already now/next ordered.
                 parsed
             } else {
-                // For JSONObject payloads (or complete timestamps), keep deterministic ordering
-                // with timestamp priority and stable fallback.
+                // For object payloads, keep deterministic ordering with explicit now/next
+                // priority when timestamps are partial/missing.
                 parsed.sortedWith(
-                    compareBy<Pair<Int, LiveProgramInfo>>(
-                        { (_, program) -> program.startTimeMs ?: Long.MAX_VALUE },
-                        { (sourceOrder, _) -> sourceOrder }
+                    compareBy<ParsedEntry>(
+                        { entry -> if (hasMissingTimestamp) explicitKeyPriority(entry.key) else 2 },
+                        { entry -> entry.program.startTimeMs ?: Long.MAX_VALUE },
+                        { entry -> entry.sourceOrder }
                     )
                 )
             }
-        return ordered.map { (_, program) -> program }
+        return ordered.map { it.program }
     }
 
     private fun parseLiveProgram(obj: JSONObject): LiveProgramInfo? {
