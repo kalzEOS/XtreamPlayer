@@ -323,7 +323,11 @@ internal fun PlayerOverlay(
             liveNowNextEpg = null
             return@LaunchedEffect
         }
-        val liveItem = activePlaybackItem ?: return@LaunchedEffect
+        val liveItem = activePlaybackItem ?: run {
+            // During live channel transitions, clear stale EPG until the next item resolves.
+            liveNowNextEpg = null
+            return@LaunchedEffect
+        }
         val streamId = liveItem.streamId.takeIf { it.isNotBlank() } ?: run {
             liveNowNextEpg = null
             return@LaunchedEffect
