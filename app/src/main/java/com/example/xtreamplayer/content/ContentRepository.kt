@@ -37,6 +37,15 @@ class ContentRepository(
         const val BACKGROUND_THROTTLE_MS = 200L
         const val BOOST_PAGE_SIZE = 400
         const val LIVE_EPG_CACHE_TTL_MS = 20_000L
+        const val MAX_SECTION_INDEX_CACHE_KEYS = 4
+        const val MAX_SECTION_INDEX_ITEMS_IN_MEMORY = 25_000
+        const val MAX_TRANSIENT_SEARCH_INDEX_CACHE_KEYS = 3
+        const val MAX_TRANSIENT_SEARCH_INDEX_ITEMS_IN_MEMORY = 75_000
+        const val TRANSIENT_SEARCH_INDEX_TTL_MS = 15_000L
+        const val ACTIVE_LARGE_SEARCH_INDEX_TTL_MS = 20_000L
+        const val SEARCH_READINESS_CACHE_TTL_MS = 10_000L
+        const val MAX_SEARCH_READINESS_CACHE_KEYS = 12
+        const val MAX_PREWARM_TITLES_PER_SECTION = 5_000
     }
 
     private val memoryCache = object : LinkedHashMap<String, ContentPage>(200, 0.75f, true) {
@@ -49,8 +58,55 @@ class ContentRepository(
             return size > 50
         }
     }
-    private val sectionIndexCache = mutableMapOf<String, List<ContentItem>>()
+    private val sectionIndexCache =
+        object : LinkedHashMap<String, List<ContentItem>>(MAX_SECTION_INDEX_CACHE_KEYS, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<ContentItem>>): Boolean {
+                return size > MAX_SECTION_INDEX_CACHE_KEYS
+            }
+        }
+    private data class TransientSectionIndexEntry(
+        val items: List<ContentItem>,
+        val cachedAtMs: Long
+    )
+    private data class SearchIndexReadinessEntry(
+        val checkpointTimestamp: Long,
+        val ready: Boolean,
+        val cachedAtMs: Long
+    )
+    private data class ActiveLargeSearchIndexEntry(
+        val key: String,
+        val items: List<ContentItem>,
+        val cachedAtMs: Long
+    )
+    private val transientSearchIndexCache =
+        object : LinkedHashMap<String, TransientSectionIndexEntry>(
+            MAX_TRANSIENT_SEARCH_INDEX_CACHE_KEYS,
+            0.75f,
+            true
+        ) {
+            override fun removeEldestEntry(
+                eldest: MutableMap.MutableEntry<String, TransientSectionIndexEntry>
+            ): Boolean {
+                return size > MAX_TRANSIENT_SEARCH_INDEX_CACHE_KEYS
+            }
+        }
     private val sectionIndexMutex = Mutex()
+    private val transientSearchIndexMutex = Mutex()
+    private var activeLargeSearchIndex: ActiveLargeSearchIndexEntry? = null
+    private val activeLargeSearchIndexMutex = Mutex()
+    private val searchReadinessCache =
+        object : LinkedHashMap<String, SearchIndexReadinessEntry>(
+            MAX_SEARCH_READINESS_CACHE_KEYS,
+            0.75f,
+            true
+        ) {
+            override fun removeEldestEntry(
+                eldest: MutableMap.MutableEntry<String, SearchIndexReadinessEntry>
+            ): Boolean {
+                return size > MAX_SEARCH_READINESS_CACHE_KEYS
+            }
+        }
+    private val searchReadinessMutex = Mutex()
     private val seriesEpisodesCache = object : LinkedHashMap<String, List<ContentItem>>(50, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<ContentItem>>): Boolean {
             return size > 50
@@ -241,7 +297,7 @@ class ContentRepository(
         authConfig: AuthConfig
     ): ContentPage {
         val normalizedQuery = SearchNormalizer.normalizeQuery(query)
-        val canUseLocalIndex = isSearchIndexComplete(section, authConfig)
+        val canUseLocalIndex = isSearchIndexReadyForQuery(section, authConfig)
         if (canUseLocalIndex && normalizedQuery.length >= MIN_LOCAL_SEARCH_QUERY_LENGTH) {
             val localResult = localSearchPage(section, normalizedQuery, page, limit, authConfig)
             if (localResult != null) {
@@ -764,33 +820,30 @@ class ContentRepository(
         ) {
             return null
         }
-        val items = if (section == Section.ALL) {
-            val live = loadSectionIndex(Section.LIVE, authConfig).orEmpty()
-            val movies = loadSectionIndex(Section.MOVIES, authConfig).orEmpty()
-            val series = loadSectionIndex(Section.SERIES, authConfig).orEmpty()
-            if (live.isEmpty() && movies.isEmpty() && series.isEmpty()) {
-                emptyList()
+        val sources =
+            if (section == Section.ALL) {
+                listOf(
+                    loadSectionIndex(Section.LIVE, authConfig).orEmpty(),
+                    loadSectionIndex(Section.MOVIES, authConfig).orEmpty(),
+                    loadSectionIndex(Section.SERIES, authConfig).orEmpty()
+                ).filter { it.isNotEmpty() }
             } else {
-                live + movies + series
+                listOf(loadSectionIndex(section, authConfig) ?: return null)
             }
-        } else {
-            loadSectionIndex(section, authConfig) ?: return null
-        }
-        if (items.isEmpty()) {
+        if (sources.isEmpty()) {
             return null
         }
+        Timber.d(
+            "Local search using cached indexes: section=$section queryLen=${normalizedQuery.length} " +
+                "sourceSizes=${sources.joinToString(",") { it.size.toString() }}"
+        )
         return withContext(Dispatchers.Default) {
-            val filtered = items.filter { item ->
-                SearchNormalizer.matchesTitle(item.title, normalizedQuery)
-            }
-            val start = page * limit
-            val slice = if (start >= filtered.size) {
-                emptyList()
-            } else {
-                filtered.subList(start, (start + limit).coerceAtMost(filtered.size))
-            }
-            val endReached = start + limit >= filtered.size
-            ContentPage(items = slice, endReached = endReached)
+            collectSearchPageFromSources(
+                sources = sources,
+                normalizedQuery = normalizedQuery,
+                page = page,
+                limit = limit
+            )
         }
     }
 
@@ -802,7 +855,32 @@ class ContentRepository(
 
         // Check memory cache with lock
         sectionIndexMutex.withLock {
-            sectionIndexCache[key]?.let { return it }
+            sectionIndexCache[key]?.let {
+                Timber.d("Search index hit in-memory section=$section size=${it.size}")
+                return it
+            }
+        }
+        transientSearchIndexMutex.withLock {
+            val transient = transientSearchIndexCache[key]
+            if (transient != null) {
+                val ageMs = System.currentTimeMillis() - transient.cachedAtMs
+                if (ageMs <= TRANSIENT_SEARCH_INDEX_TTL_MS) {
+                    Timber.d("Search index hit transient section=$section size=${transient.items.size} ageMs=$ageMs")
+                    return transient.items
+                }
+                transientSearchIndexCache.remove(key)
+            }
+        }
+        activeLargeSearchIndexMutex.withLock {
+            val active = activeLargeSearchIndex
+            if (active != null && active.key == key) {
+                val ageMs = System.currentTimeMillis() - active.cachedAtMs
+                if (ageMs <= ACTIVE_LARGE_SEARCH_INDEX_TTL_MS) {
+                    Timber.d("Search index hit active-large section=$section size=${active.items.size} ageMs=$ageMs")
+                    return active.items
+                }
+                activeLargeSearchIndex = null
+            }
         }
 
         // Read from disk cache (outside lock to avoid blocking)
@@ -816,16 +894,48 @@ class ContentRepository(
                 if (ageDays > 7) {
                     Timber.i("Section $section cache is ${ageDays}d old, marking for resync")
                     // Don't return stale cache
+                    transientSearchIndexMutex.withLock { transientSearchIndexCache.remove(key) }
+                    activeLargeSearchIndexMutex.withLock {
+                        if (activeLargeSearchIndex?.key == key) {
+                            activeLargeSearchIndex = null
+                        }
+                    }
                     return null
                 }
             }
 
             sectionIndexMutex.withLock {
-                sectionIndexCache[key] = cached
+                if (shouldKeepSectionIndexInMemory(cached.size)) {
+                    sectionIndexCache[key] = cached
+                } else {
+                    sectionIndexCache.remove(key)
+                }
             }
-            withContext(Dispatchers.Default) {
-                SearchNormalizer.preWarmCache(cached.map { it.title })
+            transientSearchIndexMutex.withLock {
+                if (shouldKeepTransientSectionIndexInMemory(cached.size)) {
+                    transientSearchIndexCache[key] =
+                        TransientSectionIndexEntry(
+                            items = cached,
+                            cachedAtMs = System.currentTimeMillis()
+                        )
+                } else {
+                    transientSearchIndexCache.remove(key)
+                }
             }
+            activeLargeSearchIndexMutex.withLock {
+                if (cached.size > MAX_TRANSIENT_SEARCH_INDEX_ITEMS_IN_MEMORY) {
+                    activeLargeSearchIndex =
+                        ActiveLargeSearchIndexEntry(
+                            key = key,
+                            items = cached,
+                            cachedAtMs = System.currentTimeMillis()
+                        )
+                } else if (activeLargeSearchIndex?.key == key) {
+                    activeLargeSearchIndex = null
+                }
+            }
+            Timber.d("Search index loaded from disk section=$section size=${cached.size}")
+            preWarmSearchTitles(cached)
         }
         return cached
     }
@@ -846,6 +956,57 @@ class ContentRepository(
         return contentCache.hasSectionIndex(Section.SERIES, authConfig) &&
             contentCache.hasSectionIndex(Section.MOVIES, authConfig) &&
             contentCache.hasSectionIndex(Section.LIVE, authConfig)
+    }
+
+    private fun shouldKeepSectionIndexInMemory(itemCount: Int): Boolean {
+        return itemCount in 1 until MAX_SECTION_INDEX_ITEMS_IN_MEMORY
+    }
+
+    private fun shouldKeepTransientSectionIndexInMemory(itemCount: Int): Boolean {
+        return itemCount in MAX_SECTION_INDEX_ITEMS_IN_MEMORY..MAX_TRANSIENT_SEARCH_INDEX_ITEMS_IN_MEMORY
+    }
+
+    private suspend fun preWarmSearchTitles(items: List<ContentItem>) {
+        if (items.isEmpty()) return
+        val titleSample =
+            if (items.size > MAX_PREWARM_TITLES_PER_SECTION) {
+                items.subList(0, MAX_PREWARM_TITLES_PER_SECTION)
+            } else {
+                items
+            }
+        withContext(Dispatchers.Default) {
+            SearchNormalizer.preWarmCache(titleSample.map { it.title })
+        }
+    }
+
+    private fun collectSearchPageFromSources(
+        sources: List<List<ContentItem>>,
+        normalizedQuery: String,
+        page: Int,
+        limit: Int
+    ): ContentPage {
+        val targetStart = page * limit
+        val matches = ArrayList<ContentItem>(limit)
+        var matchIndex = 0
+        var hasMoreMatches = false
+
+        outer@ for (source in sources) {
+            for (item in source) {
+                if (!SearchNormalizer.matchesTitle(item.title, normalizedQuery)) {
+                    continue
+                }
+                if (matchIndex >= targetStart) {
+                    if (matches.size < limit) {
+                        matches.add(item)
+                    } else {
+                        hasMoreMatches = true
+                        break@outer
+                    }
+                }
+                matchIndex++
+            }
+        }
+        return ContentPage(items = matches, endReached = !hasMoreMatches)
     }
 
     /**
@@ -943,8 +1104,8 @@ class ContentRepository(
                     }
 
                     // Cache results
-                    // Skip in-memory cache for huge indexes (>50k items) to avoid OOM
-                    if (finalItems.size < 50000) {
+                    // Skip in-memory cache for huge indexes to avoid OOM.
+                    if (shouldKeepSectionIndexInMemory(finalItems.size)) {
                         sectionIndexMutex.withLock {
                             sectionIndexCache[key] = finalItems
                         }
@@ -952,9 +1113,7 @@ class ContentRepository(
                         timber.log.Timber.d("Skipping memory cache for large section $section (${finalItems.size} items)")
                     }
                     contentCache.writeSectionIndex(section, authConfig, finalItems)
-                    withContext(Dispatchers.Default) {
-                        SearchNormalizer.preWarmCache(finalItems.map { it.title })
-                    }
+                    preWarmSearchTitles(finalItems)
 
                     // Report progress as this section completes
                     val completed = completedCounter.incrementAndGet()
@@ -1172,6 +1331,7 @@ class ContentRepository(
 
                 // Try bulk fetch first if requested
                 var bulkSuccess = false
+                val existingIds = allItems.asSequence().map { it.id }.toHashSet()
                 if (useBulkFirst) {
                     val bulkResult = api.fetchSectionAll(section, authConfig)
                     if (bulkResult.isSuccess) {
@@ -1190,7 +1350,7 @@ class ContentRepository(
                             }
                             val key = indexKey(section, authConfig)
                             sectionIndexMutex.withLock {
-                                if (bulkItems.size < 50000) {
+                                if (shouldKeepSectionIndexInMemory(bulkItems.size)) {
                                     sectionIndexCache[key] = bulkItems
                                 } else {
                                     sectionIndexCache.remove(key)
@@ -1244,7 +1404,6 @@ class ContentRepository(
                         val pageData = pageDataResult.getOrThrow()
 
                         if (pageData.items.isNotEmpty()) {
-                            val existingIds = allItems.asSequence().map { it.id }.toHashSet()
                             pageData.items.forEach { item ->
                                 if (existingIds.add(item.id)) {
                                     allItems.add(item)
@@ -1265,7 +1424,7 @@ class ContentRepository(
                                 )
                                 val cacheKey = indexKey(section, authConfig)
                                 sectionIndexMutex.withLock {
-                                    if (allItems.size < 50000) {
+                                    if (shouldKeepSectionIndexInMemory(allItems.size)) {
                                         sectionIndexCache[cacheKey] = allItems
                                     } else {
                                         sectionIndexCache.remove(cacheKey)
@@ -1298,7 +1457,7 @@ class ContentRepository(
                             }
                             val key = indexKey(section, authConfig)
                             sectionIndexMutex.withLock {
-                                if (allItems.size < 50000) {
+                                if (shouldKeepSectionIndexInMemory(allItems.size)) {
                                     sectionIndexCache[key] = allItems
                                 } else {
                                     sectionIndexCache.remove(key)
@@ -1512,16 +1671,51 @@ class ContentRepository(
         return true
     }
 
-    private suspend fun isSearchIndexComplete(
+    private suspend fun isSearchIndexReadyForQuery(
         section: Section,
         authConfig: AuthConfig
     ): Boolean {
         return if (section == Section.ALL) {
             val sections = listOf(Section.MOVIES, Section.SERIES, Section.LIVE)
-            sections.all { validateCheckpoint(it, authConfig) }
+            sections.all { isSectionSearchReadyForQuery(it, authConfig) }
         } else {
-            validateCheckpoint(section, authConfig)
+            isSectionSearchReadyForQuery(section, authConfig)
         }
+    }
+
+    private suspend fun isSectionSearchReadyForQuery(
+        section: Section,
+        authConfig: AuthConfig
+    ): Boolean {
+        val checkpoint = contentCache.readSectionSyncCheckpoint(section, authConfig) ?: return false
+        if (!checkpoint.isComplete) return false
+
+        val now = System.currentTimeMillis()
+        val ageDays = (now - checkpoint.timestamp) / (24 * 60 * 60 * 1000L)
+        if (ageDays > 7) {
+            return false
+        }
+
+        val readinessKey = indexKey(section, authConfig)
+        val cached = searchReadinessMutex.withLock { searchReadinessCache[readinessKey] }
+        if (
+            cached != null &&
+            cached.checkpointTimestamp == checkpoint.timestamp &&
+            now - cached.cachedAtMs <= SEARCH_READINESS_CACHE_TTL_MS
+        ) {
+            return cached.ready
+        }
+
+        val ready = contentCache.hasSectionIndex(section, authConfig)
+        searchReadinessMutex.withLock {
+            searchReadinessCache[readinessKey] =
+                SearchIndexReadinessEntry(
+                    checkpointTimestamp = checkpoint.timestamp,
+                    ready = ready,
+                    cachedAtMs = now
+                )
+        }
+        return ready
     }
 
     private fun indexPageSize(section: Section): Int {
@@ -1555,6 +1749,9 @@ class ContentRepository(
         categoryLock.withLock { categoryCache.clear() }
         categoryThumbnailMutex.withLock { categoryThumbnailCache.clear() }
         sectionIndexMutex.withLock { sectionIndexCache.clear() }
+        transientSearchIndexMutex.withLock { transientSearchIndexCache.clear() }
+        activeLargeSearchIndexMutex.withLock { activeLargeSearchIndex = null }
+        searchReadinessMutex.withLock { searchReadinessCache.clear() }
         seriesEpisodesMutex.withLock { seriesEpisodesCache.clear() }
         seriesSeasonCountMutex.withLock { seriesSeasonCountCache.clear() }
         movieInfoMutex.withLock { movieInfoCache.clear() }
