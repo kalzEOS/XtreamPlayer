@@ -36,7 +36,6 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.xtreamplayer.ui.theme.AppFont
 import com.example.xtreamplayer.ui.theme.AppTheme
@@ -66,7 +65,7 @@ fun FontSelectionDialog(
         }
     }
 
-    Dialog(
+    AppDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {

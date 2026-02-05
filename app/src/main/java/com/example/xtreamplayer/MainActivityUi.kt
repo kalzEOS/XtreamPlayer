@@ -96,7 +96,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -144,6 +143,10 @@ import com.example.xtreamplayer.update.downloadUpdateApk
 import com.example.xtreamplayer.update.fetchLatestRelease
 import com.example.xtreamplayer.update.parseVersionParts
 import com.example.xtreamplayer.ui.ApiKeyInputDialog
+import com.example.xtreamplayer.ui.AppDialog
+import com.example.xtreamplayer.ui.AppScale
+import com.example.xtreamplayer.ui.LocalAppBaseDensity
+import com.example.xtreamplayer.ui.LocalAppScale
 import com.example.xtreamplayer.ui.AudioBoostDialog
 import com.example.xtreamplayer.ui.AudioTrackDialog
 import com.example.xtreamplayer.ui.FocusableButton
@@ -1320,12 +1323,17 @@ fun RootScreen(
         val baseDensity = LocalDensity.current
         val uiScale = settings.uiScale.coerceIn(0.7f, 1.3f)
         val fontScale = settings.fontScale.coerceIn(0.7f, 1.4f)
+        val appScale = remember(uiScale, fontScale) { AppScale(uiScale, fontScale) }
         val scaledDensity = Density(
             density = baseDensity.density * uiScale,
             fontScale = baseDensity.fontScale * uiScale * fontScale
         )
 
-        CompositionLocalProvider(LocalDensity provides scaledDensity) {
+        CompositionLocalProvider(
+            LocalAppBaseDensity provides baseDensity,
+            LocalAppScale provides appScale,
+            LocalDensity provides scaledDensity
+        ) {
             AppBackground {
         val shouldAutoSignIn =
                 settings.autoSignIn && settings.rememberLogin && savedConfig != null
@@ -1759,23 +1767,19 @@ fun RootScreen(
         }
 
         if (showUiScaleDialog) {
-            CompositionLocalProvider(LocalDensity provides baseDensity) {
-                UiScaleDialog(
-                    currentScale = settings.uiScale,
-                    onScaleChange = { settingsViewModel.setUiScale(it) },
-                    onDismiss = { showUiScaleDialog = false }
-                )
-            }
+            UiScaleDialog(
+                currentScale = settings.uiScale,
+                onScaleChange = { settingsViewModel.setUiScale(it) },
+                onDismiss = { showUiScaleDialog = false }
+            )
         }
 
         if (showFontScaleDialog) {
-            CompositionLocalProvider(LocalDensity provides baseDensity) {
-                FontScaleDialog(
-                    currentScale = settings.fontScale,
-                    onScaleChange = { settingsViewModel.setFontScale(it) },
-                    onDismiss = { showFontScaleDialog = false }
-                )
-            }
+            FontScaleDialog(
+                currentScale = settings.fontScale,
+                onScaleChange = { settingsViewModel.setFontScale(it) },
+                onDismiss = { showFontScaleDialog = false }
+            )
         }
 
         PlayerScreen(
@@ -3154,7 +3158,7 @@ private fun MovieInfoDialog(
         onDismiss: () -> Unit
 ) {
     BackHandler(enabled = true) { onDismiss() }
-    Dialog(
+    AppDialog(
             onDismissRequest = onDismiss,
             properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
@@ -3229,6 +3233,16 @@ private fun MovieInfoDialog(
                             modifier = Modifier.fillMaxHeight().weight(1f),
                             verticalArrangement = Arrangement.spacedBy(DETAIL_ROW_SPACING)
                     ) {
+                        val description =
+                                info?.description?.takeIf { it.isNotBlank() }
+                                        ?: "No description available."
+                        var plotOverflow by remember { mutableStateOf(false) }
+                        val showReadMore = plotOverflow
+                        val readMoreInteraction = remember { MutableInteractionSource() }
+                        val isReadMoreFocused by readMoreInteraction.collectIsFocusedAsState()
+                        val readMoreFocusRequester = remember { FocusRequester() }
+                        var showPlotDialog by remember { mutableStateOf(false) }
+
                         MovieInfoRow(label = "Directed By:", value = info?.director)
                         MovieInfoRow(label = "Release Date:", value = releaseLabel)
                         MovieInfoRow(
@@ -3236,24 +3250,85 @@ private fun MovieInfoDialog(
                                 value = formatDuration(info?.duration)
                         )
                         MovieInfoRow(label = "Genre:", value = info?.genre)
-                        MovieInfoRow(label = "Cast:", value = info?.cast)
+                        MovieInfoRow(label = "Cast:", value = info?.cast, valueMaxLines = 1)
                         val ratingValue = ratingToStars(info?.rating)
                         if (ratingValue != null) {
                             RatingStarsRow(label = "Rating:", rating = ratingValue)
                         } else {
                             MovieInfoRow(label = "Rating:", value = null)
                         }
-                        val description =
-                                info?.description?.takeIf { it.isNotBlank() }
-                                        ?: "No description available."
                         Spacer(modifier = Modifier.height(DETAIL_SECTION_SPACING))
-                        Text(
-                                text = description,
-                                color = colors.textPrimary,
-                                fontSize = 13.sp,
-                                fontFamily = AppTheme.fontFamily,
-                                lineHeight = 18.sp
-                        )
+
+                        if (showReadMore) {
+                            Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.Bottom,
+                                    modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                        text = description,
+                                        color = colors.textPrimary,
+                                        fontSize = 13.sp,
+                                        fontFamily = AppTheme.fontFamily,
+                                        lineHeight = 18.sp,
+                                        maxLines = 3,
+                                        overflow = TextOverflow.Ellipsis,
+                                        onTextLayout = { plotOverflow = it.hasVisualOverflow },
+                                        modifier = Modifier.weight(1f)
+                                )
+                                Box(
+                                        modifier =
+                                                Modifier.focusRequester(readMoreFocusRequester)
+                                                        .focusable(interactionSource = readMoreInteraction)
+                                                        .onKeyEvent {
+                                                            if (it.type != KeyEventType.KeyDown) {
+                                                                false
+                                                            } else if (it.key == Key.Enter ||
+                                                                            it.key == Key.NumPadEnter ||
+                                                                            it.key == Key.DirectionCenter
+                                                            ) {
+                                                                showPlotDialog = true
+                                                                true
+                                                            } else {
+                                                                false
+                                                            }
+                                                        }
+                                                        .clip(RoundedCornerShape(6.dp))
+                                                        .then(
+                                                                if (isReadMoreFocused) {
+                                                                    Modifier.border(1.dp, colors.focus, RoundedCornerShape(6.dp))
+                                                                } else {
+                                                                    Modifier
+                                                                }
+                                                        )
+                                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                        .clickable(
+                                                                interactionSource = readMoreInteraction,
+                                                                indication = null
+                                                        ) { showPlotDialog = true }
+                                ) {
+                                    Text(
+                                            text = "Read more",
+                                            color = colors.accent,
+                                            fontSize = 12.sp,
+                                            fontFamily = AppTheme.fontFamily,
+                                            fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        } else {
+                            Text(
+                                    text = description,
+                                    color = colors.textPrimary,
+                                    fontSize = 13.sp,
+                                    fontFamily = AppTheme.fontFamily,
+                                    lineHeight = 18.sp,
+                                    maxLines = 4,
+                                    overflow = TextOverflow.Ellipsis,
+                                    onTextLayout = { plotOverflow = it.hasVisualOverflow }
+                            )
+                        }
+
                         Spacer(modifier = Modifier.height(DETAIL_ROW_SPACING))
                         Row(
                                 horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -3340,6 +3415,14 @@ private fun MovieInfoDialog(
                                     lineHeight = 13.sp
                             )
                         }
+
+                        if (showPlotDialog) {
+                            PlotDialog(
+                                    title = item.title,
+                                    plot = description,
+                                    onDismiss = { showPlotDialog = false }
+                            )
+                        }
                     }
                 }
             }
@@ -3348,7 +3431,11 @@ private fun MovieInfoDialog(
 }
 
 @Composable
-private fun MovieInfoRow(label: String, value: String?) {
+private fun MovieInfoRow(
+        label: String,
+        value: String?,
+        valueMaxLines: Int = Int.MAX_VALUE
+) {
     val displayValue = value?.takeIf { it.isNotBlank() } ?: "N/A"
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(
@@ -3362,7 +3449,9 @@ private fun MovieInfoRow(label: String, value: String?) {
                 color = AppTheme.colors.textPrimary,
                 fontSize = 13.sp,
                 fontFamily = AppTheme.fontFamily,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
+                maxLines = valueMaxLines,
+                overflow = if (valueMaxLines == Int.MAX_VALUE) TextOverflow.Clip else TextOverflow.Ellipsis
         )
     }
 }
@@ -7586,7 +7675,7 @@ fun ContinueWatchingScreen(
     }
 
     if (showClearDialog) {
-        Dialog(onDismissRequest = { showClearDialog = false }) {
+        AppDialog(onDismissRequest = { showClearDialog = false }) {
             val colors = AppTheme.colors
             Box(
                 modifier =
@@ -8809,7 +8898,7 @@ private fun SeasonSelectionDialog(
         }
     }
 
-    Dialog(
+    AppDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
@@ -8950,7 +9039,7 @@ private fun PlotDialog(
 
     LaunchedEffect(Unit) { closeFocusRequester.requestFocus() }
 
-    Dialog(
+    AppDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
@@ -9035,7 +9124,7 @@ private fun UpdatePromptDialog(
             updateFocusRequester.requestFocus()
         }
     }
-    Dialog(onDismissRequest = onLater) {
+    AppDialog(onDismissRequest = onLater) {
         Column(
             modifier = Modifier
                 .fillMaxWidth(0.7f)
