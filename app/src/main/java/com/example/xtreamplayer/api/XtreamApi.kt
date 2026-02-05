@@ -1036,29 +1036,48 @@ class XtreamApi(
     }
 
     private fun parseLivePrograms(raw: Any?): List<LiveProgramInfo> {
-        val objects = mutableListOf<JSONObject>()
+        val sourceEntries = mutableListOf<Pair<Int, JSONObject>>()
+        var sourceIsArray = false
         when (raw) {
             is JSONArray -> {
+                sourceIsArray = true
                 for (index in 0 until raw.length()) {
-                    raw.optJSONObject(index)?.let { objects += it }
+                    raw.optJSONObject(index)?.let { sourceEntries += index to it }
                 }
             }
             is JSONObject -> {
-                val keys = raw.keys()
-                while (keys.hasNext()) {
-                    val key = keys.next()
-                    raw.optJSONObject(key)?.let { objects += it }
+                // JSONObject key iteration order is not guaranteed; sort keys for stable ordering.
+                val keys = buildList {
+                    val iterator = raw.keys()
+                    while (iterator.hasNext()) add(iterator.next())
+                }.sorted()
+                keys.forEachIndexed { index, key ->
+                    raw.optJSONObject(key)?.let { sourceEntries += index to it }
                 }
             }
             else -> Unit
         }
-        val programs = objects.mapNotNull(::parseLiveProgram)
-        // Preserve API order when timestamps are partial/missing so now/next doesn't flip.
-        return if (programs.isNotEmpty() && programs.all { it.startTimeMs != null }) {
-            programs.sortedBy { it.startTimeMs }
-        } else {
-            programs
-        }
+        val parsed =
+            sourceEntries.mapNotNull { (sourceOrder, obj) ->
+                parseLiveProgram(obj)?.let { sourceOrder to it }
+            }
+        if (parsed.isEmpty()) return emptyList()
+        val hasMissingTimestamp = parsed.any { (_, program) -> program.startTimeMs == null }
+        val ordered =
+            if (sourceIsArray && hasMissingTimestamp) {
+                // Array payloads are usually already now/next ordered.
+                parsed
+            } else {
+                // For JSONObject payloads (or complete timestamps), keep deterministic ordering
+                // with timestamp priority and stable fallback.
+                parsed.sortedWith(
+                    compareBy<Pair<Int, LiveProgramInfo>>(
+                        { (_, program) -> program.startTimeMs ?: Long.MAX_VALUE },
+                        { (sourceOrder, _) -> sourceOrder }
+                    )
+                )
+            }
+        return ordered.map { (_, program) -> program }
     }
 
     private fun parseLiveProgram(obj: JSONObject): LiveProgramInfo? {
