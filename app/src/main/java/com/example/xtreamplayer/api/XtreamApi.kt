@@ -1052,9 +1052,13 @@ class XtreamApi(
             }
             else -> Unit
         }
-        return objects
-            .mapNotNull(::parseLiveProgram)
-            .sortedBy { it.startTimeMs ?: Long.MAX_VALUE }
+        val programs = objects.mapNotNull(::parseLiveProgram)
+        // Preserve API order when timestamps are partial/missing so now/next doesn't flip.
+        return if (programs.isNotEmpty() && programs.all { it.startTimeMs != null }) {
+            programs.sortedBy { it.startTimeMs }
+        } else {
+            programs
+        }
     }
 
     private fun parseLiveProgram(obj: JSONObject): LiveProgramInfo? {
