@@ -9150,7 +9150,8 @@ private fun UpdatePromptDialog(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth(0.7f)
+                .fillMaxWidth(0.55f)
+                .widthIn(min = 420.dp, max = 720.dp)
                 .clip(shape)
                 .background(
                     Brush.verticalGradient(
