@@ -1,6 +1,8 @@
 package com.example.xtreamplayer.content
 
 import android.content.Context
+import android.util.JsonReader
+import android.util.JsonToken
 import com.example.xtreamplayer.Section
 import com.example.xtreamplayer.auth.AuthConfig
 import kotlinx.coroutines.Dispatchers
@@ -248,9 +250,7 @@ class ContentCache(context: Context) {
         return withContext(Dispatchers.IO) {
             val file = seasonFullFile(seriesId, seasonLabel, config)
             if (!file.exists()) return@withContext null
-            val text = runCatching { file.readText() }.getOrNull() ?: return@withContext null
-            if (text.isBlank()) return@withContext null
-            parseIndexItems(text)
+            parseIndexItems(file)
         }
     }
 
@@ -274,9 +274,7 @@ class ContentCache(context: Context) {
         val file = sectionIndexFile(section, config)
         return withContext(Dispatchers.IO) {
             if (!file.exists()) return@withContext null
-            val text = runCatching { file.readText() }.getOrNull() ?: return@withContext null
-            if (text.isBlank()) return@withContext null
-            parseIndexItems(text)
+            parseIndexItems(file)
         }
     }
 
@@ -287,9 +285,7 @@ class ContentCache(context: Context) {
         val file = sectionIndexStagingFile(section, config)
         return withContext(Dispatchers.IO) {
             if (!file.exists()) return@withContext null
-            val text = runCatching { file.readText() }.getOrNull() ?: return@withContext null
-            if (text.isBlank()) return@withContext null
-            parseIndexItems(text)
+            parseIndexItems(file)
         }
     }
 
@@ -764,6 +760,134 @@ class ContentCache(context: Context) {
             }
             parseItemsFromArray(array)
         }.getOrNull()
+    }
+
+    private fun parseIndexItems(file: File): List<ContentItem>? {
+        return runCatching {
+            if (file.length() == 0L) return@runCatching null
+            file.inputStream().buffered().reader().use { streamReader ->
+                JsonReader(streamReader).use { reader ->
+                    when (reader.peek()) {
+                        JsonToken.BEGIN_ARRAY -> parseItemsFromReaderArray(reader)
+                        JsonToken.BEGIN_OBJECT -> parseItemsFromReaderObject(reader)
+                        else -> {
+                            reader.skipValue()
+                            emptyList()
+                        }
+                    }
+                }
+            }
+        }.getOrNull()
+    }
+
+    private fun parseItemsFromReaderObject(reader: JsonReader): List<ContentItem> {
+        reader.beginObject()
+        var parsedItems = emptyList<ContentItem>()
+        while (reader.hasNext()) {
+            when (reader.nextName()) {
+                "items" -> {
+                    parsedItems = if (reader.peek() == JsonToken.BEGIN_ARRAY) {
+                        parseItemsFromReaderArray(reader)
+                    } else {
+                        reader.skipValue()
+                        emptyList()
+                    }
+                }
+                else -> reader.skipValue()
+            }
+        }
+        reader.endObject()
+        return parsedItems
+    }
+
+    private fun parseItemsFromReaderArray(reader: JsonReader): List<ContentItem> {
+        val items = mutableListOf<ContentItem>()
+        reader.beginArray()
+        while (reader.hasNext()) {
+            parseContentItemFromReader(reader)?.let { items.add(it) }
+        }
+        reader.endArray()
+        return items
+    }
+
+    private fun parseContentItemFromReader(reader: JsonReader): ContentItem? {
+        if (reader.peek() != JsonToken.BEGIN_OBJECT) {
+            reader.skipValue()
+            return null
+        }
+
+        reader.beginObject()
+        var id: String? = null
+        var title: String? = null
+        var subtitle: String? = null
+        var imageUrl: String? = null
+        var sectionName: String? = null
+        var typeName: String? = null
+        var streamId: String? = null
+        var containerExtension: String? = null
+        var description: String? = null
+        var duration: String? = null
+        var rating: String? = null
+        var seasonLabel: String? = null
+        var episodeNumber: String? = null
+
+        while (reader.hasNext()) {
+            when (reader.nextName()) {
+                "id" -> id = readJsonString(reader)
+                "title" -> title = readJsonString(reader)
+                "subtitle" -> subtitle = readJsonString(reader)
+                "imageUrl" -> imageUrl = readJsonString(reader)
+                "section" -> sectionName = readJsonString(reader)
+                "contentType" -> typeName = readJsonString(reader)
+                "streamId" -> streamId = readJsonString(reader)
+                "containerExtension" -> containerExtension = readJsonString(reader)
+                "description" -> description = readJsonString(reader)
+                "duration" -> duration = readJsonString(reader)
+                "rating" -> rating = readJsonString(reader)
+                "seasonLabel" -> seasonLabel = readJsonString(reader)
+                "episodeNumber" -> episodeNumber = readJsonString(reader)
+                else -> reader.skipValue()
+            }
+        }
+        reader.endObject()
+
+        val resolvedSection = runCatching { Section.valueOf(sectionName.orEmpty()) }
+            .getOrNull() ?: Section.ALL
+        val resolvedType = runCatching { ContentType.valueOf(typeName.orEmpty()) }
+            .getOrNull() ?: ContentType.MOVIES
+        val safeId = id.orEmpty()
+
+        return ContentItem(
+            id = safeId,
+            title = title.orEmpty(),
+            subtitle = subtitle.orEmpty(),
+            imageUrl = imageUrl?.ifBlank { null },
+            section = resolvedSection,
+            contentType = resolvedType,
+            streamId = streamId?.ifBlank { safeId } ?: safeId,
+            containerExtension = containerExtension?.ifBlank { null },
+            description = description?.ifBlank { null },
+            duration = duration?.ifBlank { null },
+            rating = rating?.ifBlank { null },
+            seasonLabel = seasonLabel?.ifBlank { null },
+            episodeNumber = episodeNumber?.ifBlank { null }
+        )
+    }
+
+    private fun readJsonString(reader: JsonReader): String? {
+        return when (reader.peek()) {
+            JsonToken.STRING -> reader.nextString()
+            JsonToken.NUMBER -> reader.nextString()
+            JsonToken.BOOLEAN -> reader.nextBoolean().toString()
+            JsonToken.NULL -> {
+                reader.nextNull()
+                null
+            }
+            else -> {
+                reader.skipValue()
+                null
+            }
+        }
     }
 
     private fun parseItemsFromArray(array: JSONArray): List<ContentItem> {

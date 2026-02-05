@@ -113,7 +113,7 @@ class HistoryRepository(private val context: Context) {
     }
 
     private companion object {
-        const val MAX_HISTORY = 2000
+        const val MAX_HISTORY = 500
     }
 }
 

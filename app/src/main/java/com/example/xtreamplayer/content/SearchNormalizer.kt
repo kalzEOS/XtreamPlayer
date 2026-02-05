@@ -5,17 +5,28 @@ import android.util.LruCache
 object SearchNormalizer {
     private val diacriticsRegex = Regex("\\p{Mn}+")
     private val nonAlnumRegex = Regex("[^\\p{L}\\p{N}]+")
-    private val titleCache = LruCache<String, String>(200_000)
+    private const val TITLE_CACHE_MAX_ENTRIES = 75_000
+    private const val PREWARM_MAX_INSERTS = 5_000
+    private val titleCache = LruCache<String, String>(TITLE_CACHE_MAX_ENTRIES)
 
     fun clearCache() {
         titleCache.evictAll()
     }
 
     fun preWarmCache(titles: List<String>) {
+        if (titles.isEmpty()) return
+        val remainingCapacity = (titleCache.maxSize() - titleCache.size()).coerceAtLeast(0)
+        if (remainingCapacity == 0) return
+
+        val insertBudget = minOf(PREWARM_MAX_INSERTS, remainingCapacity)
+        var inserted = 0
         titles.forEach { title ->
+            if (inserted >= insertBudget) return@forEach
+            if (title.isBlank()) return@forEach
             if (titleCache.get(title) == null) {
                 val normalized = normalize(title)
                 titleCache.put(title, normalized)
+                inserted++
             }
         }
     }

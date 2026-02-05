@@ -19,6 +19,7 @@ import kotlinx.coroutines.delay
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.ResponseBody
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
@@ -31,6 +32,22 @@ import java.util.concurrent.TimeUnit
 class XtreamApi(
     private val client: OkHttpClient = OkHttpClient()
 ) {
+    private val pageClient: OkHttpClient =
+        client.newBuilder()
+            .readTimeout(60, TimeUnit.SECONDS)
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .build()
+    private val bulkClient: OkHttpClient =
+        client.newBuilder()
+            .readTimeout(5, TimeUnit.MINUTES)
+            .build()
+
+    private companion object {
+        const val MAX_SMALL_JSON_BYTES = 1L * 1024 * 1024
+        const val MAX_BULK_RESPONSE_BYTES = 64L * 1024 * 1024
+        const val MAX_BULK_ITEMS = 150_000
+    }
+
     suspend fun authenticate(config: AuthConfig): Result<Unit> {
         return withContext(Dispatchers.IO) {
             try {
@@ -43,7 +60,8 @@ class XtreamApi(
                             IllegalStateException("Login failed: ${response.code}")
                         )
                     }
-                    val body = response.body?.string().orEmpty()
+                    val body = response.body?.let { readJsonBodyWithLimit(it, MAX_SMALL_JSON_BYTES, "authenticate") }
+                        ?: return@withContext Result.failure(IllegalStateException("Empty response"))
                     val json = JSONObject(body)
                     val userInfo = json.optJSONObject("user_info")
                     val status = userInfo?.optString("status")?.lowercase() ?: ""
@@ -83,11 +101,6 @@ class XtreamApi(
             ) ?: return@withContext Result.failure(
                 IllegalArgumentException("Invalid service URL")
             )
-
-            val pageClient = client.newBuilder()
-                .readTimeout(60, TimeUnit.SECONDS)
-                .connectTimeout(30, TimeUnit.SECONDS)
-                .build()
 
             var lastError: Exception? = null
             repeat(3) { attempt ->
@@ -140,10 +153,6 @@ class XtreamApi(
                     )
                 Timber.d("Bulk fetch starting for $section")
                 val startTime = System.currentTimeMillis()
-                // Use extended timeout for bulk fetches (5 minutes)
-                val bulkClient = client.newBuilder()
-                    .readTimeout(5, java.util.concurrent.TimeUnit.MINUTES)
-                    .build()
                 val request = Request.Builder().url(url).get().build()
                 bulkClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
@@ -155,6 +164,14 @@ class XtreamApi(
                     val body = response.body ?: return@withContext Result.failure(
                         IllegalStateException("Empty response")
                     )
+                    val contentLength = body.contentLength()
+                    if (contentLength > MAX_BULK_RESPONSE_BYTES) {
+                        return@withContext Result.failure(
+                            IllegalStateException(
+                                "Bulk response too large ($contentLength bytes) for section=$section"
+                            )
+                        )
+                    }
                     body.charStream().use { stream ->
                         val reader = JsonReader(stream)
                         val items = parsePageAll(reader, section)
@@ -487,10 +504,11 @@ class XtreamApi(
                             IllegalStateException("Request failed: ${response.code}")
                         )
                     }
-                    val body = response.body?.string()
-                        ?: return@withContext Result.failure(
-                            IllegalStateException("Empty response")
-                        )
+                    val body = response.body?.let {
+                        readJsonBodyWithLimit(it, MAX_SMALL_JSON_BYTES, "fetchLiveNowNext")
+                    } ?: return@withContext Result.failure(
+                        IllegalStateException("Empty response")
+                    )
                     val json = JSONObject(body)
                     val listingsRaw = when {
                         json.has("epg_listings") -> json.opt("epg_listings")
@@ -535,10 +553,11 @@ class XtreamApi(
                             IllegalStateException("Request failed: ${response.code}")
                         )
                     }
-                    val body = response.body?.string()
-                        ?: return@withContext Result.failure(
-                            IllegalStateException("Empty response")
-                        )
+                    val body = response.body?.let {
+                        readJsonBodyWithLimit(it, MAX_SMALL_JSON_BYTES, "fetchVodInfo")
+                    } ?: return@withContext Result.failure(
+                        IllegalStateException("Empty response")
+                    )
                     val json = JSONObject(body)
                     val info = json.optJSONObject("info")
                     val movieData = json.optJSONObject("movie_data")
@@ -723,10 +742,11 @@ class XtreamApi(
                             IllegalStateException("Request failed: ${response.code}")
                         )
                     }
-                    val body = response.body?.string()
-                        ?: return@withContext Result.failure(
-                            IllegalStateException("Empty response")
-                        )
+                    val body = response.body?.let {
+                        readJsonBodyWithLimit(it, MAX_SMALL_JSON_BYTES, "fetchSeriesInfo")
+                    } ?: return@withContext Result.failure(
+                        IllegalStateException("Empty response")
+                    )
                     val json = JSONObject(body)
                     val info = json.optJSONObject("info")
 
@@ -779,6 +799,34 @@ class XtreamApi(
         return info?.optString("duration_secs").nullIfBlank()?.toLongOrNull()?.let {
             val minutes = (it / 60).coerceAtLeast(1)
             "${minutes}m"
+        }
+    }
+
+    private fun readJsonBodyWithLimit(body: ResponseBody, maxBytes: Long, operation: String): String {
+        val announcedSize = body.contentLength()
+        if (announcedSize > maxBytes) {
+            throw IllegalStateException(
+                "Response too large for $operation: ${announcedSize} bytes (limit=$maxBytes)"
+            )
+        }
+
+        body.byteStream().use { input ->
+            val buffer = ByteArray(8 * 1024)
+            val initialCapacity = maxOf(8 * 1024, maxBytes.coerceAtMost(64L * 1024L).toInt())
+            val output = java.io.ByteArrayOutputStream(initialCapacity)
+            var totalRead = 0L
+            while (true) {
+                val read = input.read(buffer)
+                if (read == -1) break
+                totalRead += read
+                if (totalRead > maxBytes) {
+                    throw IllegalStateException(
+                        "Response exceeded limit for $operation: $totalRead bytes (limit=$maxBytes)"
+                    )
+                }
+                output.write(buffer, 0, read)
+            }
+            return output.toString(Charsets.UTF_8.name())
         }
     }
 
@@ -1481,19 +1529,21 @@ class XtreamApi(
         }
         reader.beginArray()
 
-        // Pre-allocate with estimated capacity to avoid ArrayList resizing
-        // Resize doubles capacity each time = memory spikes
-        val items = ArrayList<ContentItem>(150000) // Estimate for large libraries
+        // Pre-allocate to reduce ArrayList resizing overhead for large libraries.
+        val items = ArrayList<ContentItem>(MAX_BULK_ITEMS)
         var count = 0
 
         while (reader.hasNext()) {
+            if (count >= MAX_BULK_ITEMS) {
+                throw IllegalStateException("Bulk payload exceeded max item limit ($MAX_BULK_ITEMS)")
+            }
             val item = mapper(reader)
             if (item != null) {
                 items.add(item)
                 count++
 
                 // Log progress every 10k items
-                if (count % 10000 == 0) {
+                if (count % 10000 == 0 && android.util.Log.isLoggable("XtreamApi", android.util.Log.DEBUG)) {
                     Timber.d("Parsed $count items...")
                 }
             }

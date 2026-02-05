@@ -23,6 +23,12 @@ class SubtitleRepository(
     private val context: Context,
     private val api: OpenSubtitlesApi
 ) {
+    @Volatile
+    private var subtitleFilesSnapshot: List<File>? = null
+
+    @Volatile
+    private var subtitleDirLastModified: Long = -1L
+
     private val subtitleDir: File
         get() = File(context.cacheDir, "subtitles").also { it.mkdirs() }
 
@@ -135,6 +141,7 @@ class SubtitleRepository(
             val fileName = "$baseName.$safeExt"
             val file = File(subtitleDir, fileName)
             file.writeBytes(finalBytes)
+            invalidateSubtitleFileSnapshot()
 
             Timber.d("Subtitle cached: ${file.absolutePath}")
 
@@ -188,9 +195,10 @@ class SubtitleRepository(
     }
 
     fun getCachedSubtitlesForMedia(mediaId: String): List<CachedSubtitle> {
-        return subtitleDir.listFiles()
-            ?.filter { it.name.startsWith("${mediaId}_") }
-            ?.map { file ->
+        return listSubtitleFiles()
+            .asSequence()
+            .filter { it.name.startsWith("${mediaId}_") }
+            .map { file ->
                 val language = file.nameWithoutExtension.substringAfterLast("_")
                 CachedSubtitle(
                     uri = Uri.fromFile(file),
@@ -198,7 +206,7 @@ class SubtitleRepository(
                     fileName = file.name
                 )
             }
-            ?: emptyList()
+            .toList()
     }
 
     private fun isZip(bytes: ByteArray): Boolean {
@@ -248,13 +256,34 @@ class SubtitleRepository(
     }
 
     fun clearCache() {
-        subtitleDir.listFiles()?.forEach { it.delete() }
+        listSubtitleFiles().forEach { it.delete() }
+        invalidateSubtitleFileSnapshot()
     }
 
     fun clearCacheForMedia(mediaId: String) {
-        subtitleDir.listFiles()
-            ?.filter { it.name.startsWith("${mediaId}_") }
-            ?.forEach { it.delete() }
+        listSubtitleFiles()
+            .filter { it.name.startsWith("${mediaId}_") }
+            .forEach { it.delete() }
+        invalidateSubtitleFileSnapshot()
+    }
+
+    private fun listSubtitleFiles(): List<File> {
+        val currentDir = subtitleDir
+        val currentModified = currentDir.lastModified()
+        val cached = subtitleFilesSnapshot
+        if (cached != null && subtitleDirLastModified == currentModified) {
+            return cached
+        }
+
+        val files = currentDir.listFiles()?.toList().orEmpty()
+        subtitleFilesSnapshot = files
+        subtitleDirLastModified = currentDir.lastModified()
+        return files
+    }
+
+    private fun invalidateSubtitleFileSnapshot() {
+        subtitleFilesSnapshot = null
+        subtitleDirLastModified = -1L
     }
 
     private companion object {

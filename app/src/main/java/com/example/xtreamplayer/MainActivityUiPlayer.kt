@@ -68,6 +68,16 @@ import java.util.Locale
 
 private const val LIVE_EPG_REFRESH_INTERVAL_MS = 60_000L
 private const val LIVE_EPG_CHANNEL_CHANGE_DEBOUNCE_MS = 250L
+private val LANGUAGE_PREFIX_REGEX = Regex("^\\s*[A-Z]{2,3}\\s*-\\s*")
+private val BRACKET_TEXT_REGEX = Regex("\\[[^\\]]*\\]")
+private val PAREN_TEXT_REGEX = Regex("\\([^\\)]*\\)")
+private val TRAILING_YEAR_DASH_REGEX = Regex("\\s+-\\s*\\d{4}\\s*$")
+private val TRAILING_YEAR_REGEX = Regex("\\s+\\d{4}\\s*$")
+private val TRAILING_SEASON_EPISODE_REGEX = Regex("\\s+S\\d+\\s*E\\d+.*$", RegexOption.IGNORE_CASE)
+private val MULTI_SPACE_REGEX = Regex("\\s+")
+private val SRT_TIME_PATTERN = Regex("""(\d{2}):(\d{2}):(\d{2}),(\d{3})""")
+private val VTT_TIME_PATTERN = Regex("""(?:(\d{2}):)?(\d{2}):(\d{2})[.](\d{3})""")
+private val ASS_TIME_PATTERN = Regex("""(\d+):(\d{2}):(\d{2})[.](\d{2})""")
 
 private data class ActiveSubtitle(
     val uri: Uri,
@@ -87,13 +97,13 @@ private data class ActiveSubtitle(
 private fun sanitizeSubtitleQuery(rawTitle: String): String {
     if (rawTitle.isBlank()) return rawTitle
     var query = rawTitle
-    query = query.replace(Regex("^\\s*[A-Z]{2,3}\\s*-\\s*"), "")
-    query = query.replace(Regex("\\[[^\\]]*\\]"), "")
-    query = query.replace(Regex("\\([^\\)]*\\)"), "")
-    query = query.replace(Regex("\\s+-\\s*\\d{4}\\s*$"), "")
-    query = query.replace(Regex("\\s+\\d{4}\\s*$"), "")
-    query = query.replace(Regex("\\s+S\\d+\\s*E\\d+.*$", RegexOption.IGNORE_CASE), "")
-    query = query.replace(Regex("\\s+"), " ").trim()
+    query = query.replace(LANGUAGE_PREFIX_REGEX, "")
+    query = query.replace(BRACKET_TEXT_REGEX, "")
+    query = query.replace(PAREN_TEXT_REGEX, "")
+    query = query.replace(TRAILING_YEAR_DASH_REGEX, "")
+    query = query.replace(TRAILING_YEAR_REGEX, "")
+    query = query.replace(TRAILING_SEASON_EPISODE_REGEX, "")
+    query = query.replace(MULTI_SPACE_REGEX, " ").trim()
     return if (query.isBlank()) rawTitle.trim() else query
 }
 
@@ -160,9 +170,7 @@ private fun applySubtitleOffset(
 private fun applySrtOffset(text: String, offsetMs: Long): String {
     if (offsetMs == 0L) return text
 
-    val timePattern = Regex("""(\d{2}):(\d{2}):(\d{2}),(\d{3})""")
-
-    return timePattern.replace(text) { match ->
+    return SRT_TIME_PATTERN.replace(text) { match ->
         val hours = match.groupValues[1].toInt()
         val minutes = match.groupValues[2].toInt()
         val seconds = match.groupValues[3].toInt()
@@ -176,13 +184,12 @@ private fun applySrtOffset(text: String, offsetMs: Long): String {
         val newSeconds = ((adjustedMs % 60000) / 1000).toInt()
         val newMillis = (adjustedMs % 1000).toInt()
 
-        String.format("%02d:%02d:%02d,%03d", newHours, newMinutes, newSeconds, newMillis)
+        formatSrtTimestamp(newHours, newMinutes, newSeconds, newMillis)
     }
 }
 
 private fun applyVttOffset(text: String, offsetMs: Long): String {
-    val timePattern = Regex("""(?:(\d{2}):)?(\d{2}):(\d{2})[.](\d{3})""")
-    return timePattern.replace(text) { match ->
+    return VTT_TIME_PATTERN.replace(text) { match ->
         val hasHours = match.groupValues[1].isNotEmpty()
         val hours = match.groupValues[1].toIntOrNull() ?: 0
         val minutes = match.groupValues[2].toInt()
@@ -195,17 +202,16 @@ private fun applyVttOffset(text: String, offsetMs: Long): String {
         val newSeconds = ((adjustedMs % 60000) / 1000).toInt()
         val newMillis = (adjustedMs % 1000).toInt()
         if (hasHours || newHours > 0) {
-            String.format("%02d:%02d:%02d.%03d", newHours, newMinutes, newSeconds, newMillis)
+            formatVttTimestamp(newHours, newMinutes, newSeconds, newMillis)
         } else {
             val totalMinutes = (adjustedMs / 60000).toInt()
-            String.format("%02d:%02d.%03d", totalMinutes, newSeconds, newMillis)
+            formatVttTimestampNoHours(totalMinutes, newSeconds, newMillis)
         }
     }
 }
 
 private fun applyAssOffset(text: String, offsetMs: Long): String {
-    val timePattern = Regex("""(\d+):(\d{2}):(\d{2})[.](\d{2})""")
-    return timePattern.replace(text) { match ->
+    return ASS_TIME_PATTERN.replace(text) { match ->
         val hours = match.groupValues[1].toInt()
         val minutes = match.groupValues[2].toInt()
         val seconds = match.groupValues[3].toInt()
@@ -216,7 +222,59 @@ private fun applyAssOffset(text: String, offsetMs: Long): String {
         val newMinutes = ((adjustedMs % 3600000) / 60000).toInt()
         val newSeconds = ((adjustedMs % 60000) / 1000).toInt()
         val newCentis = ((adjustedMs % 1000) / 10).toInt()
-        String.format("%d:%02d:%02d.%02d", newHours, newMinutes, newSeconds, newCentis)
+        formatAssTimestamp(newHours, newMinutes, newSeconds, newCentis)
+    }
+}
+
+private fun StringBuilder.appendPadded(value: Int, width: Int) {
+    val text = value.toString()
+    repeat((width - text.length).coerceAtLeast(0)) { append('0') }
+    append(text)
+}
+
+private fun formatSrtTimestamp(hours: Int, minutes: Int, seconds: Int, millis: Int): String {
+    return buildString(12) {
+        appendPadded(hours, 2)
+        append(':')
+        appendPadded(minutes, 2)
+        append(':')
+        appendPadded(seconds, 2)
+        append(',')
+        appendPadded(millis, 3)
+    }
+}
+
+private fun formatVttTimestamp(hours: Int, minutes: Int, seconds: Int, millis: Int): String {
+    return buildString(12) {
+        appendPadded(hours, 2)
+        append(':')
+        appendPadded(minutes, 2)
+        append(':')
+        appendPadded(seconds, 2)
+        append('.')
+        appendPadded(millis, 3)
+    }
+}
+
+private fun formatVttTimestampNoHours(totalMinutes: Int, seconds: Int, millis: Int): String {
+    return buildString(9) {
+        appendPadded(totalMinutes, 2)
+        append(':')
+        appendPadded(seconds, 2)
+        append('.')
+        appendPadded(millis, 3)
+    }
+}
+
+private fun formatAssTimestamp(hours: Int, minutes: Int, seconds: Int, centis: Int): String {
+    return buildString(11) {
+        append(hours)
+        append(':')
+        appendPadded(minutes, 2)
+        append(':')
+        appendPadded(seconds, 2)
+        append('.')
+        appendPadded(centis, 2)
     }
 }
 
@@ -483,7 +541,9 @@ internal fun PlayerOverlay(
                 if (mediaId.isBlank()) {
                     null
                 } else {
-                    subtitleRepository.getCachedSubtitlesForMedia(mediaId).firstOrNull()?.let {
+                    withContext(Dispatchers.IO) {
+                        subtitleRepository.getCachedSubtitlesForMedia(mediaId)
+                    }.firstOrNull()?.let {
                             cached ->
                         val originalContent = loadSubtitleContent(cached.uri)
                         ActiveSubtitle(
@@ -509,7 +569,9 @@ internal fun PlayerOverlay(
 
     LaunchedEffect(showSubtitleOptionsDialog, mediaId) {
         if (showSubtitleOptionsDialog && activeSubtitle == null && mediaId.isNotBlank()) {
-            subtitleRepository.getCachedSubtitlesForMedia(mediaId).firstOrNull()?.let { cached ->
+            withContext(Dispatchers.IO) {
+                subtitleRepository.getCachedSubtitlesForMedia(mediaId)
+            }.firstOrNull()?.let { cached ->
                 val originalContent = loadSubtitleContent(cached.uri)
                 activeSubtitle =
                     ActiveSubtitle(
