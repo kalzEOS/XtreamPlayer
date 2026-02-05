@@ -53,7 +53,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import android.content.Context
 import android.view.inputmethod.InputMethodManager
@@ -114,7 +113,7 @@ fun SubtitleSearchDialog(
         searchFocusRequester.requestFocus()
     }
 
-    Dialog(
+    AppDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
             dismissOnBackPress = true,
@@ -503,7 +502,7 @@ fun SubtitleOptionsDialog(
         primaryFocusRequester.requestFocus()
     }
 
-    Dialog(
+    AppDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
             dismissOnBackPress = true,
@@ -620,7 +619,7 @@ fun ApiKeyInputDialog(
         inputFocusRequester.requestFocus()
     }
 
-    Dialog(
+    AppDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
             dismissOnBackPress = true,
@@ -909,7 +908,7 @@ fun AudioTrackDialog(
         closeFocusRequester.requestFocus()
     }
 
-    Dialog(
+    AppDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
@@ -1106,7 +1105,7 @@ fun AudioBoostDialog(
         closeFocusRequester.requestFocus()
     }
 
-    Dialog(
+    AppDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
@@ -1218,7 +1217,7 @@ fun PlaybackSettingsDialog(
         audioFocusRequester.requestFocus()
     }
 
-    Dialog(
+    AppDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
@@ -1306,7 +1305,7 @@ fun PlaybackSpeedDialog(
         closeFocusRequester.requestFocus()
     }
 
-    Dialog(
+    AppDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
@@ -1416,7 +1415,7 @@ fun VideoResolutionDialog(
         closeFocusRequester.requestFocus()
     }
 
-    Dialog(
+    AppDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
@@ -1637,7 +1636,7 @@ fun SubtitleOffsetDialog(
     onOffsetChange: (Long) -> Unit,
     onDismiss: () -> Unit
 ) {
-    Dialog(
+    AppDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {

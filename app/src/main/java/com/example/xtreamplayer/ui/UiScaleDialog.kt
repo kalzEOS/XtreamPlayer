@@ -41,7 +41,6 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.xtreamplayer.ui.theme.AppTheme
 import com.example.xtreamplayer.settings.displayToUiScale
@@ -92,7 +91,7 @@ fun UiScaleDialog(
         requestFocusWithFrames(requester)
     }
 
-    Dialog(
+    AppDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {

@@ -44,7 +44,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.xtreamplayer.settings.AppThemeOption
 import com.example.xtreamplayer.ui.theme.AppTheme
@@ -74,7 +73,7 @@ fun ThemeSelectionDialog(
         }
     }
 
-    Dialog(
+    AppDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
