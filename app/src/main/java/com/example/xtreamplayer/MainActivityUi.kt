@@ -3122,6 +3122,23 @@ private fun RowScope.PreviewPanel(
 }
 
 @Composable
+private fun FullscreenSeriesDetailsDialog(
+        onDismissRequest: () -> Unit,
+        content: @Composable () -> Unit
+) {
+    AppDialog(
+            onDismissRequest = onDismissRequest,
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+                modifier = Modifier.fillMaxSize().background(AppTheme.colors.surface)
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
 private fun MovieInfoDialog(
         item: ContentItem,
         info: MovieInfo?,
@@ -5145,40 +5162,43 @@ fun SectionScreen(
                                 .padding(20.dp)
         ) {
             if (selectedSeries != null) {
-                SeriesSeasonsScreen(
-                        seriesItem = selectedSeries!!,
-                        contentRepository = contentRepository,
-                        authConfig = authConfig,
-                        continueWatchingEntries = continueWatchingEntries,
-                        contentItemFocusRequester = contentItemFocusRequester,
-                        resumeFocusId = resumeFocusId,
-                        resumeFocusRequester = resumeFocusRequester,
-                        episodesFocusRequester = episodesFocusRequester,
-                        pendingEpisodeFocus = pendingEpisodeFocus,
-                        onEpisodeFocusHandled = { pendingEpisodeFocus = false },
-                        onItemFocused = onItemFocused,
-                        onPlay = { playItem, items ->
-                            onSeriesPlaybackStart(selectedSeries!!)
-                            onPlay(playItem, items)
-                        },
-                        onPlayWithPosition = { playItem, items, position ->
-                            onSeriesPlaybackStart(selectedSeries!!)
-                            onPlayWithPosition(playItem, items, position)
-                        },
-                        onMoveLeft = onMoveLeft,
-                        onBack = {
-                            onItemFocused(selectedSeries!!)
-                            runCatching { contentItemFocusRequester.requestFocus() }
-                            pendingSeriesReturnFocus = true
-                            selectedSeries = null
-                            pendingSeriesInfo = null
-                            pendingEpisodeFocus = false
-                        },
-                        onToggleFavorite = onToggleFavorite,
-                        onRemoveContinueWatching = onRemoveContinueWatching,
-                        isItemFavorite = isItemFavorite,
-                        prefetchedInfo = pendingSeriesInfo
-                )
+                val closeSeriesDetails = {
+                    onItemFocused(selectedSeries!!)
+                    runCatching { contentItemFocusRequester.requestFocus() }
+                    pendingSeriesReturnFocus = true
+                    selectedSeries = null
+                    pendingSeriesInfo = null
+                    pendingEpisodeFocus = false
+                }
+                FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
+                    SeriesSeasonsScreen(
+                            seriesItem = selectedSeries!!,
+                            contentRepository = contentRepository,
+                            authConfig = authConfig,
+                            continueWatchingEntries = continueWatchingEntries,
+                            contentItemFocusRequester = contentItemFocusRequester,
+                            resumeFocusId = resumeFocusId,
+                            resumeFocusRequester = resumeFocusRequester,
+                            episodesFocusRequester = episodesFocusRequester,
+                            pendingEpisodeFocus = pendingEpisodeFocus,
+                            onEpisodeFocusHandled = { pendingEpisodeFocus = false },
+                            onItemFocused = onItemFocused,
+                            onPlay = { playItem, items ->
+                                onSeriesPlaybackStart(selectedSeries!!)
+                                onPlay(playItem, items)
+                            },
+                            onPlayWithPosition = { playItem, items, position ->
+                                onSeriesPlaybackStart(selectedSeries!!)
+                                onPlayWithPosition(playItem, items, position)
+                            },
+                            onMoveLeft = {},
+                            onBack = closeSeriesDetails,
+                            onToggleFavorite = onToggleFavorite,
+                            onRemoveContinueWatching = onRemoveContinueWatching,
+                            isItemFavorite = isItemFavorite,
+                            prefetchedInfo = pendingSeriesInfo
+                    )
+                }
             } else {
                 Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -6084,40 +6104,43 @@ fun FavoritesScreen(
             }
             Spacer(modifier = Modifier.height(8.dp))
             if (selectedSeries != null) {
-                SeriesSeasonsScreen(
-                        seriesItem = selectedSeries!!,
-                        contentRepository = contentRepository,
-                        authConfig = authConfig,
-                        continueWatchingEntries = continueWatchingEntries,
-                        contentItemFocusRequester = contentItemFocusRequester,
-                        resumeFocusId = resumeFocusId,
-                        resumeFocusRequester = resumeFocusRequester,
-                        episodesFocusRequester = episodesFocusRequester,
-                        pendingEpisodeFocus = pendingEpisodeFocus,
-                        onEpisodeFocusHandled = { pendingEpisodeFocus = false },
-                        onItemFocused = onItemFocused,
-                        onPlay = { playItem, items ->
-                            onSeriesPlaybackStart(selectedSeries!!)
-                            onPlay(playItem, items)
-                        },
-                        onPlayWithPosition = { playItem, items, position ->
-                            onSeriesPlaybackStart(selectedSeries!!)
-                            onPlayWithPosition(playItem, items, position)
-                        },
-                        onMoveLeft = onMoveLeft,
-                        onBack = {
-                            onItemFocused(selectedSeries!!)
-                            runCatching { contentItemFocusRequester.requestFocus() }
-                            pendingSeriesReturnFocus = true
-                            selectedSeries = null
-                            pendingSeriesInfo = null
-                            pendingEpisodeFocus = false
-                        },
-                        onToggleFavorite = onToggleFavorite,
-                        onRemoveContinueWatching = onRemoveContinueWatching,
-                        isItemFavorite = isItemFavorite,
-                        prefetchedInfo = pendingSeriesInfo
-                )
+                val closeSeriesDetails = {
+                    onItemFocused(selectedSeries!!)
+                    runCatching { contentItemFocusRequester.requestFocus() }
+                    pendingSeriesReturnFocus = true
+                    selectedSeries = null
+                    pendingSeriesInfo = null
+                    pendingEpisodeFocus = false
+                }
+                FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
+                    SeriesSeasonsScreen(
+                            seriesItem = selectedSeries!!,
+                            contentRepository = contentRepository,
+                            authConfig = authConfig,
+                            continueWatchingEntries = continueWatchingEntries,
+                            contentItemFocusRequester = contentItemFocusRequester,
+                            resumeFocusId = resumeFocusId,
+                            resumeFocusRequester = resumeFocusRequester,
+                            episodesFocusRequester = episodesFocusRequester,
+                            pendingEpisodeFocus = pendingEpisodeFocus,
+                            onEpisodeFocusHandled = { pendingEpisodeFocus = false },
+                            onItemFocused = onItemFocused,
+                            onPlay = { playItem, items ->
+                                onSeriesPlaybackStart(selectedSeries!!)
+                                onPlay(playItem, items)
+                            },
+                            onPlayWithPosition = { playItem, items, position ->
+                                onSeriesPlaybackStart(selectedSeries!!)
+                                onPlayWithPosition(playItem, items, position)
+                            },
+                            onMoveLeft = {},
+                            onBack = closeSeriesDetails,
+                            onToggleFavorite = onToggleFavorite,
+                            onRemoveContinueWatching = onRemoveContinueWatching,
+                            isItemFavorite = isItemFavorite,
+                            prefetchedInfo = pendingSeriesInfo
+                    )
+                }
             } else if (activeView == FavoritesView.MENU) {
                 LazyVerticalGrid(
                         columns = GridCells.Fixed(2),
@@ -6323,38 +6346,41 @@ fun FavoritesScreen(
                     }
 
                     if (selectedSeries != null) {
-                        SeriesSeasonsScreen(
-                                seriesItem = selectedSeries!!,
-                                contentRepository = contentRepository,
-                                authConfig = authConfig,
-                                continueWatchingEntries = continueWatchingEntries,
-                                contentItemFocusRequester = contentItemFocusRequester,
-                                resumeFocusId = resumeFocusId,
-                                resumeFocusRequester = resumeFocusRequester,
-                                episodesFocusRequester = episodesFocusRequester,
-                                pendingEpisodeFocus = pendingEpisodeFocus,
-                                onEpisodeFocusHandled = { pendingEpisodeFocus = false },
-                                onItemFocused = onItemFocused,
-                                onPlay = { playItem, items ->
-                                    onSeriesPlaybackStart(selectedSeries!!)
-                                    onPlay(playItem, items)
-                                },
-                                onPlayWithPosition = { playItem, items, position ->
-                                    onSeriesPlaybackStart(selectedSeries!!)
-                                    onPlayWithPosition(playItem, items, position)
-                                },
-                                onMoveLeft = onMoveLeft,
-                                onBack = {
-                                    onItemFocused(selectedSeries!!)
-                                    runCatching { contentItemFocusRequester.requestFocus() }
-                                    pendingSeriesReturnFocus = true
-                                    selectedSeries = null
-                                    pendingEpisodeFocus = false
-                                },
-                                onToggleFavorite = onToggleFavorite,
-                                onRemoveContinueWatching = onRemoveContinueWatching,
-                                isItemFavorite = isItemFavorite
-                        )
+                        val closeSeriesDetails = {
+                            onItemFocused(selectedSeries!!)
+                            runCatching { contentItemFocusRequester.requestFocus() }
+                            pendingSeriesReturnFocus = true
+                            selectedSeries = null
+                            pendingEpisodeFocus = false
+                        }
+                        FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
+                            SeriesSeasonsScreen(
+                                    seriesItem = selectedSeries!!,
+                                    contentRepository = contentRepository,
+                                    authConfig = authConfig,
+                                    continueWatchingEntries = continueWatchingEntries,
+                                    contentItemFocusRequester = contentItemFocusRequester,
+                                    resumeFocusId = resumeFocusId,
+                                    resumeFocusRequester = resumeFocusRequester,
+                                    episodesFocusRequester = episodesFocusRequester,
+                                    pendingEpisodeFocus = pendingEpisodeFocus,
+                                    onEpisodeFocusHandled = { pendingEpisodeFocus = false },
+                                    onItemFocused = onItemFocused,
+                                    onPlay = { playItem, items ->
+                                        onSeriesPlaybackStart(selectedSeries!!)
+                                        onPlay(playItem, items)
+                                    },
+                                    onPlayWithPosition = { playItem, items, position ->
+                                        onSeriesPlaybackStart(selectedSeries!!)
+                                        onPlayWithPosition(playItem, items, position)
+                                    },
+                                    onMoveLeft = {},
+                                    onBack = closeSeriesDetails,
+                                    onToggleFavorite = onToggleFavorite,
+                                    onRemoveContinueWatching = onRemoveContinueWatching,
+                                    isItemFavorite = isItemFavorite
+                            )
+                        }
                     } else {
                         // Focus is managed by user navigation - no auto-focus on content load
                         Text(
@@ -7195,42 +7221,44 @@ fun CategorySectionScreen(
 
                     // SeriesSeasonsScreen overlay - shown on top when selected
                     if (selectedSeries != null) {
-                        SeriesSeasonsScreen(
-                                seriesItem = selectedSeries!!,
-                                contentRepository = contentRepository,
-                                authConfig = authConfig,
-                                continueWatchingEntries = continueWatchingEntries,
-                                contentItemFocusRequester = contentItemFocusRequester,
-                                resumeFocusId = resumeFocusId,
-                                resumeFocusRequester = resumeFocusRequester,
-                                episodesFocusRequester = episodesFocusRequester,
-                                pendingEpisodeFocus = pendingEpisodeFocus,
-                                onEpisodeFocusHandled = { pendingEpisodeFocus = false },
-                                onItemFocused = onItemFocused,
-                                onPlay = { playItem, items ->
-                                    onSeriesPlaybackStart(selectedSeries!!)
-                                    onPlay(playItem, items)
-                                },
-                                onPlayWithPosition = { playItem, items, position ->
-                                    onSeriesPlaybackStart(selectedSeries!!)
-                                    onPlayWithPosition(playItem, items, position)
-                                },
-                                onMoveLeft = onMoveLeft,
-                                onBack = {
-                                    onItemFocused(selectedSeries!!)
-                                    runCatching { contentItemFocusRequester.requestFocus() }
-                                    pendingSeriesReturnFocus = true
-                                    selectedSeries = null
-                                    pendingSeriesInfo = null
-                                    pendingEpisodeFocus = false
-                                },
-                                onToggleFavorite = onToggleFavorite,
-                                onRemoveContinueWatching = onRemoveContinueWatching,
-                                isItemFavorite = isItemFavorite,
-                                prefetchedInfo = pendingSeriesInfo,
-                                forceDarkText = forceDarkText,
-                                onMoveUpFromTop = { searchFocusRequester.requestFocus() }
-                        )
+                        val closeSeriesDetails = {
+                            onItemFocused(selectedSeries!!)
+                            runCatching { contentItemFocusRequester.requestFocus() }
+                            pendingSeriesReturnFocus = true
+                            selectedSeries = null
+                            pendingSeriesInfo = null
+                            pendingEpisodeFocus = false
+                        }
+                        FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
+                            SeriesSeasonsScreen(
+                                    seriesItem = selectedSeries!!,
+                                    contentRepository = contentRepository,
+                                    authConfig = authConfig,
+                                    continueWatchingEntries = continueWatchingEntries,
+                                    contentItemFocusRequester = contentItemFocusRequester,
+                                    resumeFocusId = resumeFocusId,
+                                    resumeFocusRequester = resumeFocusRequester,
+                                    episodesFocusRequester = episodesFocusRequester,
+                                    pendingEpisodeFocus = pendingEpisodeFocus,
+                                    onEpisodeFocusHandled = { pendingEpisodeFocus = false },
+                                    onItemFocused = onItemFocused,
+                                    onPlay = { playItem, items ->
+                                        onSeriesPlaybackStart(selectedSeries!!)
+                                        onPlay(playItem, items)
+                                    },
+                                    onPlayWithPosition = { playItem, items, position ->
+                                        onSeriesPlaybackStart(selectedSeries!!)
+                                        onPlayWithPosition(playItem, items, position)
+                                    },
+                                    onMoveLeft = {},
+                                    onBack = closeSeriesDetails,
+                                    onToggleFavorite = onToggleFavorite,
+                                    onRemoveContinueWatching = onRemoveContinueWatching,
+                                    isItemFavorite = isItemFavorite,
+                                    prefetchedInfo = pendingSeriesInfo,
+                                    forceDarkText = forceDarkText
+                            )
+                        }
                     }
                 }
             } else if (isLoading) {
@@ -7517,74 +7545,110 @@ fun ContinueWatchingScreen(
                                 .border(1.dp, AppTheme.colors.border, shape)
                                 .padding(20.dp)
         ) {
-            Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                        text = title,
-                        color = AppTheme.colors.textPrimary,
-                        fontSize = 20.sp,
-                        fontFamily = AppTheme.fontFamily,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp,
-                        modifier = Modifier.weight(1f)
-                )
-                if (hasItems) {
-                    FocusableButton(
-                            onClick = { showClearDialog = true },
-                            colors =
-                                    ButtonDefaults.buttonColors(
-                                            containerColor = AppTheme.colors.surfaceAlt,
-                                            contentColor = AppTheme.colors.textPrimary
-                                    ),
-                            modifier = Modifier.height(36.dp)
-                    ) {
-                        Text(
-                                text = "Clear all",
-                                fontSize = 12.sp,
-                                fontFamily = AppTheme.fontFamily,
-                                fontWeight = FontWeight.SemiBold
-                        )
+            if (selectedSeries != null) {
+                val closeSeriesDetails = {
+                    selectedSeries = null
+                    pendingSeriesInfo = null
+                    pendingEpisodeFocus = false
+                    runCatching { contentItemFocusRequester.requestFocus() }
+                    Unit
+                }
+                FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
+                    SeriesSeasonsScreen(
+                            seriesItem = selectedSeries!!,
+                            contentRepository = contentRepository,
+                            authConfig = authConfig,
+                            continueWatchingEntries = continueWatchingItems,
+                            showClearContinueWatching = true,
+                            contentItemFocusRequester = contentItemFocusRequester,
+                            resumeFocusId = resumeFocusId,
+                            resumeFocusRequester = resumeFocusRequester,
+                            episodesFocusRequester = episodesFocusRequester,
+                            pendingEpisodeFocus = pendingEpisodeFocus,
+                            onEpisodeFocusHandled = { pendingEpisodeFocus = false },
+                            onItemFocused = onItemFocused,
+                            onPlay = { playItem, items ->
+                                onSeriesPlaybackStart(selectedSeries!!)
+                                onPlayWithPosition(playItem, items, null)
+                            },
+                            onPlayWithPosition = { playItem, items, position ->
+                                onSeriesPlaybackStart(selectedSeries!!)
+                                onPlayWithPosition(playItem, items, position)
+                            },
+                            onMoveLeft = {},
+                            onBack = closeSeriesDetails,
+                            onToggleFavorite = onToggleFavorite,
+                            onRemoveContinueWatching = onRemoveEntry,
+                            isItemFavorite = isItemFavorite,
+                            prefetchedInfo = pendingSeriesInfo
+                    )
+                }
+            } else {
+                Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                            text = title,
+                            color = AppTheme.colors.textPrimary,
+                            fontSize = 20.sp,
+                            fontFamily = AppTheme.fontFamily,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp,
+                            modifier = Modifier.weight(1f)
+                    )
+                    if (hasItems) {
+                        FocusableButton(
+                                onClick = { showClearDialog = true },
+                                colors =
+                                        ButtonDefaults.buttonColors(
+                                                containerColor = AppTheme.colors.surfaceAlt,
+                                                contentColor = AppTheme.colors.textPrimary
+                                        ),
+                                modifier = Modifier.height(36.dp)
+                        ) {
+                            Text(
+                                    text = "Clear all",
+                                    fontSize = 12.sp,
+                                    fontFamily = AppTheme.fontFamily,
+                                    fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
-            }
 
-            Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-            if (displayEntries.isEmpty()) {
-                Text(
-                        text = "No items in progress",
-                        color = AppTheme.colors.textSecondary,
-                        fontSize = 14.sp,
-                        fontFamily = AppTheme.fontFamily,
-                        letterSpacing = 0.6.sp,
-                        modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
-                )
-            } else {
-                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                if (displayEntries.isEmpty()) {
+                    Text(
+                            text = "No items in progress",
+                            color = AppTheme.colors.textSecondary,
+                            fontSize = 14.sp,
+                            fontFamily = AppTheme.fontFamily,
+                            letterSpacing = 0.6.sp,
+                            modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
+                    )
+                } else {
                     LazyVerticalGrid(
                             columns = GridCells.Fixed(columns),
                             verticalArrangement = Arrangement.spacedBy(16.dp),
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
-                            modifier = Modifier.fillMaxSize()
-                                    .alpha(if (selectedSeries != null) 0f else 1f),
-                            userScrollEnabled = selectedSeries == null
+                            modifier = Modifier.fillMaxWidth().weight(1f)
                     ) {
                         items(
                                 count = displayEntries.size,
                                 key = { index -> displayEntries[index].key }
                         ) { index ->
-                        val entry = displayEntries[index]
-                        val resolvedParent = resolvedParents[entry.key]
-                        val displayItem = resolvedParent ?: entry.displayItem
-                        val item = displayItem
-                        val requester =
-                                when {
-                                    item.id == resumeFocusId -> resumeFocusRequester
-                                    index == 0 -> contentItemFocusRequester
-                                    else -> null
-                                }
+                            val entry = displayEntries[index]
+                            val resolvedParent = resolvedParents[entry.key]
+                            val displayItem = resolvedParent ?: entry.displayItem
+                            val item = displayItem
+                            val requester =
+                                    when {
+                                        item.id == resumeFocusId -> resumeFocusRequester
+                                        index == 0 -> contentItemFocusRequester
+                                        else -> null
+                                    }
                             val isLeftEdge = index % columns == 0
 
                             val progressPercent =
@@ -7630,42 +7694,6 @@ fun ContinueWatchingScreen(
                                     onRemove = { entry.sourceItems.forEach(onRemoveEntry) }
                             )
                         }
-                    }
-
-                    if (selectedSeries != null) {
-                        SeriesSeasonsScreen(
-                                seriesItem = selectedSeries!!,
-                                contentRepository = contentRepository,
-                                authConfig = authConfig,
-                                continueWatchingEntries = continueWatchingItems,
-                                showClearContinueWatching = true,
-                                contentItemFocusRequester = contentItemFocusRequester,
-                                resumeFocusId = resumeFocusId,
-                                resumeFocusRequester = resumeFocusRequester,
-                                episodesFocusRequester = episodesFocusRequester,
-                                pendingEpisodeFocus = pendingEpisodeFocus,
-                                onEpisodeFocusHandled = { pendingEpisodeFocus = false },
-                                onItemFocused = onItemFocused,
-                                onPlay = { playItem, items ->
-                                    onSeriesPlaybackStart(selectedSeries!!)
-                                    onPlayWithPosition(playItem, items, null)
-                                },
-                                onPlayWithPosition = { playItem, items, position ->
-                                    onSeriesPlaybackStart(selectedSeries!!)
-                                    onPlayWithPosition(playItem, items, position)
-                                },
-                                onMoveLeft = onMoveLeft,
-                                onBack = {
-                                    selectedSeries = null
-                                    pendingSeriesInfo = null
-                                    pendingEpisodeFocus = false
-                                    runCatching { contentItemFocusRequester.requestFocus() }
-                                },
-                                onToggleFavorite = onToggleFavorite,
-                                onRemoveContinueWatching = onRemoveEntry,
-                                isItemFavorite = isItemFavorite,
-                                prefetchedInfo = pendingSeriesInfo
-                        )
                     }
                 }
             }
@@ -7985,7 +8013,7 @@ fun SeriesSeasonsScreen(
 
     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
     val availableHeight = (screenHeight - topInsetDp).coerceAtLeast(320.dp)
-    val collapsedEpisodesHeight = 150.dp
+    val collapsedEpisodesHeight = 240.dp
     val reservedBelowHeader = collapsedEpisodesHeight + 96.dp
     val headerMaxByRatio = availableHeight * 0.34f
     val headerMaxByReserve = availableHeight - reservedBelowHeader
@@ -8725,6 +8753,11 @@ private fun SeriesEpisodeRow(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
+    val rowFallbackFocusRequester = remember(item.id) { FocusRequester() }
+    val rowFocusRequester = focusRequester ?: rowFallbackFocusRequester
+    val readMoreFocusRequester = remember(item.id) { FocusRequester() }
+    val readMoreInteraction = remember { MutableInteractionSource() }
+    val isReadMoreFocused by readMoreInteraction.collectIsFocusedAsState()
     val shape = RoundedCornerShape(12.dp)
     val colors = AppTheme.colors
     val borderColor = if (isFocused) colors.focus else colors.border
@@ -8735,6 +8768,13 @@ private fun SeriesEpisodeRow(
     val durationLabel = formatDuration(item.duration)
     val description =
             item.description?.takeIf { it.isNotBlank() } ?: "No description available."
+    var descriptionOverflow by remember(item.id, description) { mutableStateOf(false) }
+    var showEpisodePlotDialog by remember(item.id) { mutableStateOf(false) }
+    val showEpisodeReadMore =
+        remember(description, descriptionOverflow) {
+            description != "No description available." &&
+                (descriptionOverflow || description.length > 120)
+        }
     val context = LocalContext.current
     val imageRequest =
             remember(item.imageUrl) {
@@ -8755,19 +8795,16 @@ private fun SeriesEpisodeRow(
     Box(
             modifier =
                     Modifier.fillMaxWidth()
-                            .then(
-                                    if (focusRequester != null) {
-                                        Modifier.focusRequester(focusRequester)
-                                    } else {
-                                        Modifier
-                                    }
-                            )
+                            .focusRequester(rowFocusRequester)
                             .focusable(interactionSource = interactionSource)
                             .onKeyEvent {
                                 if (it.type != KeyEventType.KeyDown) {
                                     false
                                 } else if (it.key == Key.DirectionLeft && onMoveLeft != null) {
                                     onMoveLeft()
+                                    true
+                                } else if (it.key == Key.DirectionRight && showEpisodeReadMore) {
+                                    readMoreFocusRequester.requestFocus()
                                     true
                                 } else if (it.key == Key.DirectionUp && onMoveUp != null) {
                                     onMoveUp()
@@ -8842,17 +8879,95 @@ private fun SeriesEpisodeRow(
                         EpisodeMetaChip(label = durationLabel)
                     }
                 }
-                Text(
-                        text = description,
-                        color = subtitleColor,
-                        fontSize = 12.sp,
-                        fontFamily = AppTheme.fontFamily,
-                        lineHeight = 16.sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                )
+                if (showEpisodeReadMore) {
+                    Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.Bottom,
+                            modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                                text = description,
+                                color = subtitleColor,
+                                fontSize = 12.sp,
+                                fontFamily = AppTheme.fontFamily,
+                                lineHeight = 16.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                onTextLayout = { descriptionOverflow = it.hasVisualOverflow },
+                                modifier = Modifier.weight(1f)
+                        )
+                        Box(
+                                modifier =
+                                        Modifier.focusRequester(readMoreFocusRequester)
+                                                .focusable(interactionSource = readMoreInteraction)
+                                                .onKeyEvent {
+                                                    if (it.type != KeyEventType.KeyDown) {
+                                                        false
+                                                    } else if (it.key == Key.DirectionLeft) {
+                                                        rowFocusRequester.requestFocus()
+                                                        true
+                                                    } else if (it.key == Key.DirectionUp && onMoveUp != null) {
+                                                        onMoveUp()
+                                                        true
+                                                    } else if (it.key == Key.Enter ||
+                                                                    it.key == Key.NumPadEnter ||
+                                                                    it.key == Key.DirectionCenter
+                                                    ) {
+                                                        showEpisodePlotDialog = true
+                                                        true
+                                                    } else {
+                                                        false
+                                                    }
+                                                }
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .then(
+                                                        if (isReadMoreFocused) {
+                                                            Modifier.border(
+                                                                    1.dp,
+                                                                    colors.focus,
+                                                                    RoundedCornerShape(6.dp)
+                                                            )
+                                                        } else {
+                                                            Modifier
+                                                        }
+                                                )
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                .clickable(
+                                                        interactionSource = readMoreInteraction,
+                                                        indication = null
+                                                ) { showEpisodePlotDialog = true }
+                        ) {
+                            Text(
+                                    text = "Read more",
+                                    color = colors.accent,
+                                    fontSize = 12.sp,
+                                    fontFamily = AppTheme.fontFamily,
+                                    fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                } else {
+                    Text(
+                            text = description,
+                            color = subtitleColor,
+                            fontSize = 12.sp,
+                            fontFamily = AppTheme.fontFamily,
+                            lineHeight = 16.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            onTextLayout = { descriptionOverflow = it.hasVisualOverflow }
+                    )
+                }
             }
         }
+    }
+
+    if (showEpisodePlotDialog) {
+        PlotDialog(
+                title = item.title,
+                plot = description,
+                onDismiss = { showEpisodePlotDialog = false }
+        )
     }
 }
 
