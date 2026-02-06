@@ -33,7 +33,7 @@ class ContentRepository(
         const val FAST_START_PAGE_SIZE = 400
         const val FAST_START_PAGES = 2
         const val BACKGROUND_PAGE_SIZE = 400
-        const val BACKGROUND_SAVE_INTERVAL = 10
+        const val BACKGROUND_SAVE_INTERVAL = 25
         const val BACKGROUND_THROTTLE_MS = 200L
         const val BOOST_PAGE_SIZE = 400
         const val LIVE_EPG_CACHE_TTL_MS = 20_000L
@@ -413,14 +413,15 @@ class ContentRepository(
         seriesId: String,
         authConfig: AuthConfig
     ): List<ContentItem> {
-        val cachedSeries = seriesEpisodesMutex.withLock { seriesEpisodesCache[seriesId] }
+        val key = "${accountKey(authConfig)}|$seriesId"
+        val cachedSeries = seriesEpisodesMutex.withLock { seriesEpisodesCache[key] }
         if (cachedSeries != null) {
             return cachedSeries
         }
         val result = api.fetchSeriesEpisodesPage(authConfig, seriesId, 0, Int.MAX_VALUE)
         val pageData = result.getOrElse { throw it }
         val fullList = pageData.items
-        seriesEpisodesMutex.withLock { seriesEpisodesCache[seriesId] = fullList }
+        seriesEpisodesMutex.withLock { seriesEpisodesCache[key] = fullList }
         return fullList
     }
 
@@ -784,11 +785,6 @@ class ContentRepository(
                 }
             }
             matchIndex = matchResult.second
-            // Early termination: if requesting page 2+ but first page has no matches, stop
-            if (rawPage == 0 && page > 0 && matchIndex == 0) {
-                endReached = true
-                break
-            }
             if (pageData.endReached) {
                 endReached = true
                 break

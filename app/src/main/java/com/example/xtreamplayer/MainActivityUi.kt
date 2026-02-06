@@ -417,35 +417,50 @@ fun RootScreen(
     val contentItemFocusRequester = remember { FocusRequester() }
     val localFiles = remember { mutableStateListOf<LocalFileItem>() }
 
+    fun scanLocalMedia(
+            replaceExisting: Boolean,
+            emptyMessage: String,
+            successMessage: (videoCount: Int, audioCount: Int) -> String
+    ) {
+        coroutineScope.launch {
+            val scanned = withContext(Dispatchers.IO) { scanMediaStoreMedia(context) }
+            if (replaceExisting) {
+                localFiles.clear()
+                localFiles.addAll(scanned)
+            } else {
+                scanned.forEach { item ->
+                    if (localFiles.none { it.uri == item.uri }) {
+                        localFiles.add(item)
+                    }
+                }
+            }
+            if (scanned.isEmpty()) {
+                Toast.makeText(context, emptyMessage, Toast.LENGTH_SHORT).show()
+            } else {
+                val videoCount = scanned.count { it.mediaType == LocalMediaType.VIDEO }
+                val audioCount = scanned.count { it.mediaType == LocalMediaType.AUDIO }
+                Toast.makeText(
+                        context,
+                        successMessage(videoCount, audioCount),
+                        Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
     val storagePermissionLauncher =
             rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestMultiplePermissions()
             ) { permissions ->
                 val allGranted = permissions.values.all { it }
                 if (allGranted) {
-                    val scanned = scanMediaStoreMedia(context)
-                    scanned.forEach { item ->
-                        if (localFiles.none { it.uri == item.uri }) {
-                            localFiles.add(item)
-                        }
-                    }
-                    if (scanned.isEmpty()) {
-                        Toast.makeText(
-                                        context,
-                                        "No media files found on device",
-                                        Toast.LENGTH_SHORT
-                                )
-                                .show()
-                    } else {
-                        val videoCount = scanned.count { it.mediaType == LocalMediaType.VIDEO }
-                        val audioCount = scanned.count { it.mediaType == LocalMediaType.AUDIO }
-                        Toast.makeText(
-                                        context,
-                                        "Found $videoCount video(s), $audioCount audio file(s)",
-                                        Toast.LENGTH_SHORT
-                                )
-                                .show()
-                    }
+                    scanLocalMedia(
+                            replaceExisting = false,
+                            emptyMessage = "No media files found on device",
+                            successMessage = { videoCount, audioCount ->
+                                "Found $videoCount video(s), $audioCount audio file(s)"
+                            }
+                    )
                 } else {
                     Toast.makeText(context, "Storage permission denied", Toast.LENGTH_SHORT).show()
                 }
@@ -1674,63 +1689,26 @@ fun RootScreen(
                         resumeFocusRequester = resumeFocusRequester,
                         onPickFiles = {
                             if (hasStoragePermission(context)) {
-                                val scanned = scanMediaStoreMedia(context)
-                                scanned.forEach { item ->
-                                    if (localFiles.none { it.uri == item.uri }) {
-                                        localFiles.add(item)
-                                    }
-                                }
-                                if (scanned.isEmpty()) {
-                                    Toast.makeText(
-                                                    context,
-                                                    "No media files found on device",
-                                                    Toast.LENGTH_SHORT
-                                    )
-                                            .show()
-                                } else {
-                                    val videoCount =
-                                            scanned.count { it.mediaType == LocalMediaType.VIDEO }
-                                    val audioCount =
-                                            scanned.count { it.mediaType == LocalMediaType.AUDIO }
-                                    Toast.makeText(
-                                                    context,
-                                                    "Found $videoCount video(s), $audioCount audio file(s)",
-                                                    Toast.LENGTH_SHORT
-                                    )
-                                            .show()
-                                }
+                                scanLocalMedia(
+                                        replaceExisting = false,
+                                        emptyMessage = "No media files found on device",
+                                        successMessage = { videoCount, audioCount ->
+                                            "Found $videoCount video(s), $audioCount audio file(s)"
+                                        }
+                                )
                             } else {
                                 storagePermissionLauncher.launch(getRequiredMediaPermissions())
                             }
                         },
                         onRefresh = {
                             if (hasStoragePermission(context)) {
-                                localFiles.clear()
-                                val scanned = scanMediaStoreMedia(context)
-                                localFiles.addAll(scanned)
-                                if (scanned.isEmpty()) {
-                                    Toast.makeText(
-                                                    context,
-                                                    "No media files found",
-                                                    Toast.LENGTH_SHORT
-                                    )
-                                            .show()
-                                } else {
-                                    val videoCount =
-                                            scanned.count {
-                                                it.mediaType == LocalMediaType.VIDEO
-                                            }
-                                    val audioCount =
-                                            scanned.count {
-                                                it.mediaType == LocalMediaType.AUDIO
-                                            }
-                                    Toast.makeText(
-                                                    context,
-                                                    "Refreshed: $videoCount video(s), $audioCount audio file(s)",
-                                                    Toast.LENGTH_SHORT
-                                    )
-                                            .show()
-                                }
+                                scanLocalMedia(
+                                        replaceExisting = true,
+                                        emptyMessage = "No media files found",
+                                        successMessage = { videoCount, audioCount ->
+                                            "Refreshed: $videoCount video(s), $audioCount audio file(s)"
+                                        }
+                                )
                             } else {
                                 Toast.makeText(
                                                 context,

@@ -43,3 +43,10 @@
 
 # Keep Timber
 -keep class timber.log.** { *; }
+
+# Strip verbose Timber calls in release builds to reduce runtime overhead.
+-assumenosideeffects class timber.log.Timber {
+    public static *** d(...);
+    public static *** v(...);
+    public static *** i(...);
+}

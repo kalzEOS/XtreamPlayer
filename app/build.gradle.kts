@@ -1,6 +1,7 @@
 import java.io.FileInputStream
 import java.util.Properties
 import org.gradle.api.provider.Property
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.application)
@@ -12,9 +13,7 @@ plugins {
 
 android {
     namespace = "com.example.xtreamplayer"
-    compileSdk {
-        version = release(36)
-    }
+    compileSdk = 36
 
     val keystorePropsFile = rootProject.file("keystore.properties")
     val keystoreProps = Properties()
@@ -27,8 +26,8 @@ android {
         applicationId = "com.example.xtreamplayer"
         minSdk = 24
         targetSdk = 36
-        versionCode = 68
-        versionName = "2.6.7"
+        versionCode = 69
+        versionName = "2.6.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -70,11 +69,14 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-    kotlinOptions {
-        jvmTarget = "11"
-    }
     buildFeatures {
         compose = true
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_11)
     }
 }
 
@@ -83,9 +85,10 @@ androidComponents {
         variant.outputs.forEach { output ->
             // Use reflection to avoid tying to a specific AGP output type.
             val outputFileName = runCatching {
+                @Suppress("UNCHECKED_CAST")
                 output::class.java.getMethod("getOutputFileName").invoke(output) as Property<String>
             }.getOrNull()
-            outputFileName?.set("Xtream Playerv2.6.7.apk")
+            outputFileName?.set("Xtream Playerv2.6.8.apk")
         }
     }
 }
@@ -103,7 +106,6 @@ dependencies {
     implementation(libs.androidx.paging.runtime)
     implementation(libs.androidx.paging.compose)
     implementation(libs.okhttp)
-    implementation(libs.okhttp.logging)
     implementation(libs.coil.compose)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))

@@ -51,7 +51,9 @@ import com.example.xtreamplayer.ui.components.SideNav
 import com.example.xtreamplayer.ui.theme.AppTheme
 import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 @Composable
@@ -314,12 +316,17 @@ Row(modifier = Modifier.fillMaxSize()) {
                         onClearCache = {
                             coroutineScope.launch {
                                 val contentBytes = contentRepository.diskCacheSizeBytes()
-                                val cacheBytes = cacheDirSizeBytes(context.cacheDir)
+                                val cacheBytes =
+                                    withContext(Dispatchers.IO) {
+                                        cacheDirSizeBytes(context.cacheDir)
+                                    }
                                 val bytes = contentBytes + cacheBytes
                                 contentRepository.clearCache()
                                 contentRepository.clearDiskCache()
-                                subtitleRepository.clearCache()
-                                clearCacheDir(context.cacheDir)
+                                withContext(Dispatchers.IO) {
+                                    subtitleRepository.clearCache()
+                                    clearCacheDir(context.cacheDir)
+                                }
                                 playbackEngine.player.stop()
                                 playbackEngine.player.clearMediaItems()
                                 cacheClearNonce++
