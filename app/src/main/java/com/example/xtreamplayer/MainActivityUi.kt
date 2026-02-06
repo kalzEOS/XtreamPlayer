@@ -9130,7 +9130,7 @@ private fun UpdatePromptDialog(
         Column(
             modifier = Modifier
                 // Keep this dialog narrower so it feels centered on large TV screens.
-                .fillMaxWidth(0.50f)
+                .fillMaxWidth(0.40f)
                 .widthIn(min = 360.dp, max = 680.dp)
                 .clip(shape)
                 .background(colors.surface)
