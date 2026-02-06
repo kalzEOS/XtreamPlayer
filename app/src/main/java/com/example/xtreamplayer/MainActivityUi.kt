@@ -9114,8 +9114,9 @@ private fun UpdatePromptDialog(
     onLater: () -> Unit
 ) {
     val colors = AppTheme.colors
-    val shape = RoundedCornerShape(18.dp)
+    val shape = RoundedCornerShape(16.dp)
     val updateFocusRequester = remember { FocusRequester() }
+    val laterFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(isDownloading) {
         if (!isDownloading) {
@@ -9128,36 +9129,55 @@ private fun UpdatePromptDialog(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth(0.55f)
-                .widthIn(min = 420.dp, max = 720.dp)
+                .fillMaxWidth(0.62f)
+                .widthIn(min = 440.dp, max = 820.dp)
                 .clip(shape)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(colors.background, colors.backgroundAlt)
-                    )
-                )
-                .border(1.dp, colors.border, shape)
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .background(colors.surface)
+                .border(1.dp, colors.borderStrong, shape)
+                .padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
                 text = "Update available",
                 color = colors.textPrimary,
-                fontSize = 16.sp,
+                fontSize = 22.sp,
                 fontFamily = AppTheme.fontFamily,
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "Latest: v${release.versionName}",
+                text = "Version ${release.versionName} is ready to install.",
                 color = colors.textSecondary,
-                fontSize = 12.sp,
+                fontSize = 14.sp,
                 fontFamily = AppTheme.fontFamily
             )
+            Spacer(modifier = Modifier.height(4.dp))
             if (isDownloading) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(colors.backgroundAlt)
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Downloading update...",
+                        color = colors.textSecondary,
+                        fontSize = 13.sp,
+                        fontFamily = AppTheme.fontFamily
+                    )
+                    LinearProgressIndicator(
+                        progress = { 0.35f },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = colors.accent,
+                        trackColor = colors.surfaceAlt
+                    )
+                }
+            } else {
                 Text(
-                    text = "Downloading update...",
-                    color = colors.textSecondary,
-                    fontSize = 11.sp,
+                    text = "Install now or choose Later.",
+                    color = colors.textTertiary,
+                    fontSize = 13.sp,
                     fontFamily = AppTheme.fontFamily
                 )
             }
@@ -9170,19 +9190,23 @@ private fun UpdatePromptDialog(
                     enabled = !isDownloading,
                     modifier = Modifier
                         .weight(1f)
-                        .height(44.dp)
+                        .height(52.dp)
                         .focusRequester(updateFocusRequester),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = colors.accent,
-                        contentColor = colors.textOnAccent
+                        contentColor = colors.textOnAccent,
+                        disabledContainerColor = colors.surfaceAlt,
+                        disabledContentColor = colors.textTertiary
                     ),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    focusBorderWidth = 1.dp,
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
                 ) {
                     Text(
-                        text = if (isDownloading) "Updating" else "Update",
+                        text = if (isDownloading) "Updating..." else "Update now",
                         fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 9.sp,
+                        fontSize = 14.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -9192,18 +9216,23 @@ private fun UpdatePromptDialog(
                     enabled = !isDownloading,
                     modifier = Modifier
                         .weight(1f)
-                        .height(44.dp),
+                        .height(52.dp)
+                        .focusRequester(laterFocusRequester),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = colors.surfaceAlt,
-                        contentColor = colors.textPrimary
+                        contentColor = colors.textPrimary,
+                        disabledContainerColor = colors.surfaceAlt,
+                        disabledContentColor = colors.textTertiary
                     ),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    focusBorderWidth = 1.dp,
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
                 ) {
                     Text(
                         text = "Later",
                         fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 9.sp,
+                        fontSize = 14.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
