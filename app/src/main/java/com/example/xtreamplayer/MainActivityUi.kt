@@ -180,7 +180,6 @@ import javax.inject.Inject
 import java.util.Locale
 import java.io.File
 import android.provider.Settings
-import androidx.core.content.FileProvider
 import okhttp3.OkHttpClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -666,14 +665,9 @@ fun RootScreen(
         }
     }
 
-    fun launchApkInstall(file: File) {
-        val uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            file
-        )
+    fun launchApkInstall(apkUri: Uri) {
         val intent = Intent(Intent.ACTION_VIEW)
-            .setDataAndType(uri, "application/vnd.android.package-archive")
+            .setDataAndType(apkUri, "application/vnd.android.package-archive")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
     }
@@ -723,11 +717,11 @@ fun RootScreen(
         if (updateUiState.inProgress) return
         updateUiState = updateUiState.copy(inProgress = true)
         coroutineScope.launch {
-            val file = runCatching {
+            val apkUri = runCatching {
                 downloadUpdateApk(context, release, updateHttpClient)
             }.getOrNull()
             updateUiState = updateUiState.copy(inProgress = false)
-            if (file == null) {
+            if (apkUri == null) {
                 Toast.makeText(context, "Update download failed", Toast.LENGTH_SHORT).show()
                 return@launch
             }
@@ -735,7 +729,7 @@ fun RootScreen(
                 return@launch
             }
             updateUiState = updateUiState.copy(showDialog = false)
-            launchApkInstall(file)
+            launchApkInstall(apkUri)
         }
     }
     LaunchedEffect(accountKey) {
@@ -8030,13 +8024,25 @@ fun SeriesSeasonsScreen(
     val posterWidth = posterHeight * 0.68f
     val containerPadding = 20.dp
     val headerSpacer = 10.dp
+    val appScale = LocalAppScale.current
+    val baseDensity = LocalAppBaseDensity.current ?: LocalDensity.current
+    val seriesDetailsScale = remember(appScale.uiScale) {
+        (1.05f * (1f + (appScale.uiScale - 1f) * 0.5f)).coerceIn(0.9f, 1.25f)
+    }
+    val seriesDetailsDensity = remember(seriesDetailsScale, baseDensity, appScale.fontScale) {
+        Density(
+            density = baseDensity.density * seriesDetailsScale,
+            fontScale = baseDensity.fontScale * seriesDetailsScale * appScale.fontScale
+        )
+    }
 
-    Column(
-        modifier =
-            Modifier.fillMaxSize()
-                .background(colors.surface)
-                .padding(containerPadding)
-    ) {
+    CompositionLocalProvider(LocalDensity provides seriesDetailsDensity) {
+        Column(
+            modifier =
+                Modifier.fillMaxSize()
+                    .background(colors.surface)
+                    .padding(containerPadding)
+        ) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = seriesItem.title,
@@ -8655,15 +8661,9 @@ fun SeriesSeasonsScreen(
                         fontFamily = AppTheme.fontFamily
                     )
                 } else {
-                    val listModifier =
-                        if (episodesExpanded) {
-                            Modifier.fillMaxWidth().weight(1f)
-                        } else {
-                            Modifier.fillMaxWidth().height(collapsedEpisodesHeight)
-                        }
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = listModifier
+                        modifier = Modifier.fillMaxWidth().weight(1f)
                     ) {
                         items(
                             count = displayEpisodes.size,
@@ -8732,6 +8732,7 @@ fun SeriesSeasonsScreen(
                 }
             }
         }
+    }
     }
 }
 
