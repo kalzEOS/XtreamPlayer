@@ -9129,8 +9129,8 @@ private fun UpdatePromptDialog(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth(0.62f)
-                .widthIn(min = 440.dp, max = 820.dp)
+                .fillMaxWidth(0.50f)
+                .widthIn(min = 360.dp, max = 680.dp)
                 .clip(shape)
                 .background(colors.surface)
                 .border(1.dp, colors.borderStrong, shape)
