@@ -686,12 +686,12 @@ internal fun PlayerOverlay(
         }
     }
 
-    val openSubtitleTimingDialog: () -> Unit = open@{
-        val subtitle =
-            activeSubtitle ?: subtitleRepository
-                .getCachedSubtitlesForMedia(mediaId)
-                .firstOrNull()
-                ?.let { cached ->
+    val openSubtitleTimingDialog: () -> Unit = {
+        subtitleCoroutineScope.launch {
+            val subtitle =
+                activeSubtitle ?: withContext(Dispatchers.IO) {
+                    subtitleRepository.getCachedSubtitlesForMedia(mediaId)
+                }.firstOrNull()?.let { cached ->
                     ActiveSubtitle(
                         uri = cached.uri,
                         language = cached.language,
@@ -700,23 +700,24 @@ internal fun PlayerOverlay(
                         originalContent = null
                     )
                 }
-        if (subtitle == null) {
-            Toast.makeText(
-                context,
-                "No subtitle available for timing adjustment",
-                Toast.LENGTH_SHORT
-            ).show()
-            return@open
-        }
-        if (!isOffsetSupported(subtitle.fileName)) {
-            Toast.makeText(
-                context,
-                "Subtitle format not supported for timing adjustment",
-                Toast.LENGTH_SHORT
-            ).show()
-            return@open
-        }
-        subtitleCoroutineScope.launch {
+
+            if (subtitle == null) {
+                Toast.makeText(
+                    context,
+                    "No subtitle available for timing adjustment",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return@launch
+            }
+            if (!isOffsetSupported(subtitle.fileName)) {
+                Toast.makeText(
+                    context,
+                    "Subtitle format not supported for timing adjustment",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return@launch
+            }
+
             val withContent =
                 if (subtitle.originalContent != null) {
                     subtitle
@@ -986,43 +987,43 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                                         subtitle = subtitle,
                                         mediaId = mediaId
                                 )
-                        result.fold(
-                                onSuccess = { cachedSubtitle ->
-                                    android.util.Log.d("PlayerOverlay", "Subtitle downloaded successfully: uri=${cachedSubtitle.uri}, language=${cachedSubtitle.language}, fileName=${cachedSubtitle.fileName}")
-                                    // Read original content for offset adjustment
-                                    val originalContent = try {
-                                        java.io.File(cachedSubtitle.uri.path ?: "").readBytes()
-                                    } catch (e: Exception) {
-                                        null
+                        if (result.isSuccess) {
+                            val cachedSubtitle = result.getOrThrow()
+                            // Read original content for offset adjustment
+                            val originalContent =
+                                    withContext(Dispatchers.IO) {
+                                        try {
+                                            java.io.File(cachedSubtitle.uri.path ?: "").readBytes()
+                                        } catch (e: Exception) {
+                                            null
+                                        }
                                     }
-                                    activeSubtitle =
-                                            ActiveSubtitle(
-                                                    uri = cachedSubtitle.uri,
-                                                    language = cachedSubtitle.language,
-                                                    label = subtitle.release,
-                                                    fileName = cachedSubtitle.fileName,
-                                                    originalContent = originalContent
-                                            )
-                                    subtitleOffsetMs = 0L  // Reset offset for new subtitle
-                                    val mimeType = subtitleMimeType(cachedSubtitle.fileName)
-                                    android.util.Log.d("PlayerOverlay", "Adding subtitle to player: mimeType=$mimeType")
-                                    playbackEngine.addSubtitle(
-                                            subtitleUri = cachedSubtitle.uri,
+                            activeSubtitle =
+                                    ActiveSubtitle(
+                                            uri = cachedSubtitle.uri,
                                             language = cachedSubtitle.language,
                                             label = subtitle.release,
-                                            mimeType = mimeType
+                                            fileName = cachedSubtitle.fileName,
+                                            originalContent = originalContent
                                     )
-                                    subtitlesEnabled = true
-                                    showSubtitleDialog = false
-                                    subtitleDialogState = SubtitleDialogState.Idle
-                                },
-                                onFailure = { error ->
-                                    subtitleDialogState =
-                                            SubtitleDialogState.Error(
-                                                    error.message ?: "Download failed"
-                                            )
-                                }
-                        )
+                            subtitleOffsetMs = 0L  // Reset offset for new subtitle
+                            val mimeType = subtitleMimeType(cachedSubtitle.fileName)
+                            playbackEngine.addSubtitle(
+                                    subtitleUri = cachedSubtitle.uri,
+                                    language = cachedSubtitle.language,
+                                    label = subtitle.release,
+                                    mimeType = mimeType
+                            )
+                            subtitlesEnabled = true
+                            showSubtitleDialog = false
+                            subtitleDialogState = SubtitleDialogState.Idle
+                        } else {
+                            val error = result.exceptionOrNull()
+                            subtitleDialogState =
+                                    SubtitleDialogState.Error(
+                                            error?.message ?: "Download failed"
+                                    )
+                        }
                     }
                 },
                 onToggleSubtitles = { toggleSubtitles() },
