@@ -21,13 +21,13 @@ android {
     if (hasKeystoreProps) {
         keystoreProps.load(FileInputStream(keystorePropsFile))
     }
-
+//testing comment
     defaultConfig {
         applicationId = "com.example.xtreamplayer"
         minSdk = 24
         targetSdk = 36
-        versionCode = 69
-        versionName = "2.6.8"
+        versionCode = 70
+        versionName = "2.6.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -88,7 +88,7 @@ androidComponents {
                 @Suppress("UNCHECKED_CAST")
                 output::class.java.getMethod("getOutputFileName").invoke(output) as Property<String>
             }.getOrNull()
-            outputFileName?.set("Xtream Playerv2.6.8.apk")
+            outputFileName?.set("Xtream Playerv2.6.9.apk")
         }
     }
 }
