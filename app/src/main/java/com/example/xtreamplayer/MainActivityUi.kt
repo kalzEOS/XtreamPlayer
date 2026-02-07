@@ -3789,7 +3789,7 @@ private fun StaticContentList(
     ) {
         items(
                 count = items.size,
-                key = { index -> items[index].id }
+                key = { index -> "${items[index].id}-$index" }
         ) { index ->
             val item = items[index]
             val requester =
@@ -3859,7 +3859,9 @@ private fun PagedContentList(
     ) {
         items(
                 count = lazyItems.itemCount,
-                key = { index -> lazyItems[index]?.id ?: "item-$index" }
+                key = { index ->
+                    lazyItems[index]?.let { "${it.id}-$index" } ?: "item-$index"
+                }
         ) { index ->
             val item = lazyItems[index]
             if (item != null) {
@@ -5209,17 +5211,24 @@ fun SectionScreen(
                                 .padding(20.dp)
         ) {
             if (selectedSeries != null) {
+                val activeSeries = selectedSeries!!
                 val closeSeriesDetails = {
-                    onItemFocused(selectedSeries!!)
+                    onItemFocused(activeSeries)
                     runCatching { contentItemFocusRequester.requestFocus() }
                     pendingSeriesReturnFocus = true
                     selectedSeries = null
                     pendingSeriesInfo = null
                     pendingEpisodeFocus = false
                 }
+                val dismissSeriesDetailsForPlayback = {
+                    selectedSeries = null
+                    pendingSeriesInfo = null
+                    pendingEpisodeFocus = false
+                    pendingSeriesReturnFocus = false
+                }
                 FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
                     SeriesSeasonsScreen(
-                            seriesItem = selectedSeries!!,
+                            seriesItem = activeSeries,
                             contentRepository = contentRepository,
                             authConfig = authConfig,
                             continueWatchingEntries = continueWatchingEntries,
@@ -5231,11 +5240,13 @@ fun SectionScreen(
                             onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                             onItemFocused = onItemFocused,
                             onPlay = { playItem, items ->
-                                onSeriesPlaybackStart(selectedSeries!!)
+                                dismissSeriesDetailsForPlayback()
+                                onSeriesPlaybackStart(activeSeries)
                                 onPlay(playItem, items)
                             },
                             onPlayWithPosition = { playItem, items, position ->
-                                onSeriesPlaybackStart(selectedSeries!!)
+                                dismissSeriesDetailsForPlayback()
+                                onSeriesPlaybackStart(activeSeries)
                                 onPlayWithPosition(playItem, items, position)
                             },
                             onMoveLeft = {},
@@ -5324,7 +5335,9 @@ fun SectionScreen(
                     ) {
                         items(
                                 count = lazyItems.itemCount,
-                                key = { index -> lazyItems[index]?.id ?: "item-$index" }
+                                key = { index ->
+                                    lazyItems[index]?.let { "${it.id}-$index" } ?: "item-$index"
+                                }
                         ) { index ->
                             val item = lazyItems[index]
                             val requester =
@@ -6151,17 +6164,24 @@ fun FavoritesScreen(
             }
             Spacer(modifier = Modifier.height(8.dp))
             if (selectedSeries != null) {
+                val activeSeries = selectedSeries!!
                 val closeSeriesDetails = {
-                    onItemFocused(selectedSeries!!)
+                    onItemFocused(activeSeries)
                     runCatching { contentItemFocusRequester.requestFocus() }
                     pendingSeriesReturnFocus = true
                     selectedSeries = null
                     pendingSeriesInfo = null
                     pendingEpisodeFocus = false
                 }
+                val dismissSeriesDetailsForPlayback = {
+                    selectedSeries = null
+                    pendingSeriesInfo = null
+                    pendingEpisodeFocus = false
+                    pendingSeriesReturnFocus = false
+                }
                 FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
                     SeriesSeasonsScreen(
-                            seriesItem = selectedSeries!!,
+                            seriesItem = activeSeries,
                             contentRepository = contentRepository,
                             authConfig = authConfig,
                             continueWatchingEntries = continueWatchingEntries,
@@ -6173,11 +6193,13 @@ fun FavoritesScreen(
                             onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                             onItemFocused = onItemFocused,
                             onPlay = { playItem, items ->
-                                onSeriesPlaybackStart(selectedSeries!!)
+                                dismissSeriesDetailsForPlayback()
+                                onSeriesPlaybackStart(activeSeries)
                                 onPlay(playItem, items)
                             },
                             onPlayWithPosition = { playItem, items, position ->
-                                onSeriesPlaybackStart(selectedSeries!!)
+                                dismissSeriesDetailsForPlayback()
+                                onSeriesPlaybackStart(activeSeries)
                                 onPlayWithPosition(playItem, items, position)
                             },
                             onMoveLeft = {},
@@ -6272,7 +6294,7 @@ fun FavoritesScreen(
                     ) {
                         items(
                                 count = sortedContent.size,
-                                key = { index -> sortedContent[index].id }
+                                key = { index -> "${sortedContent[index].id}-$index" }
                         ) { index ->
                             val item = sortedContent[index]
                             val requester =
@@ -6393,16 +6415,23 @@ fun FavoritesScreen(
                     }
 
                     if (selectedSeries != null) {
+                        val activeSeries = selectedSeries!!
                         val closeSeriesDetails = {
-                            onItemFocused(selectedSeries!!)
+                            onItemFocused(activeSeries)
                             runCatching { contentItemFocusRequester.requestFocus() }
                             pendingSeriesReturnFocus = true
                             selectedSeries = null
                             pendingEpisodeFocus = false
                         }
+                        val dismissSeriesDetailsForPlayback = {
+                            selectedSeries = null
+                            pendingSeriesInfo = null
+                            pendingEpisodeFocus = false
+                            pendingSeriesReturnFocus = false
+                        }
                         FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
                             SeriesSeasonsScreen(
-                                    seriesItem = selectedSeries!!,
+                                    seriesItem = activeSeries,
                                     contentRepository = contentRepository,
                                     authConfig = authConfig,
                                     continueWatchingEntries = continueWatchingEntries,
@@ -6414,11 +6443,13 @@ fun FavoritesScreen(
                                     onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                                     onItemFocused = onItemFocused,
                                     onPlay = { playItem, items ->
-                                        onSeriesPlaybackStart(selectedSeries!!)
+                                        dismissSeriesDetailsForPlayback()
+                                        onSeriesPlaybackStart(activeSeries)
                                         onPlay(playItem, items)
                                     },
                                     onPlayWithPosition = { playItem, items, position ->
-                                        onSeriesPlaybackStart(selectedSeries!!)
+                                        dismissSeriesDetailsForPlayback()
+                                        onSeriesPlaybackStart(activeSeries)
                                         onPlayWithPosition(playItem, items, position)
                                     },
                                     onMoveLeft = {},
@@ -6490,7 +6521,8 @@ fun FavoritesScreen(
                                 items(
                                         count = lazyItems.itemCount,
                                         key = { index ->
-                                            lazyItems[index]?.id ?: "fav-cat-item-$index"
+                                            lazyItems[index]?.let { "${it.id}-$index" }
+                                                ?: "fav-cat-item-$index"
                                         }
                                 ) { index ->
                                     val item = lazyItems[index]
@@ -7168,7 +7200,10 @@ fun CategorySectionScreen(
                             ) {
                                 items(
                                         count = lazyItems.itemCount,
-                                        key = { index -> lazyItems[index]?.id ?: "cat-item-$index" }
+                                        key = { index ->
+                                            lazyItems[index]?.let { "${it.id}-$index" }
+                                                ?: "cat-item-$index"
+                                        }
                                 ) { index ->
                                     val item = lazyItems[index]
                             val isLeftEdge = index % posterColumns == 0
@@ -7268,17 +7303,24 @@ fun CategorySectionScreen(
 
                     // SeriesSeasonsScreen overlay - shown on top when selected
                     if (selectedSeries != null) {
+                        val activeSeries = selectedSeries!!
                         val closeSeriesDetails = {
-                            onItemFocused(selectedSeries!!)
+                            onItemFocused(activeSeries)
                             runCatching { contentItemFocusRequester.requestFocus() }
                             pendingSeriesReturnFocus = true
                             selectedSeries = null
                             pendingSeriesInfo = null
                             pendingEpisodeFocus = false
                         }
+                        val dismissSeriesDetailsForPlayback = {
+                            selectedSeries = null
+                            pendingSeriesInfo = null
+                            pendingEpisodeFocus = false
+                            pendingSeriesReturnFocus = false
+                        }
                         FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
                             SeriesSeasonsScreen(
-                                    seriesItem = selectedSeries!!,
+                                    seriesItem = activeSeries,
                                     contentRepository = contentRepository,
                                     authConfig = authConfig,
                                     continueWatchingEntries = continueWatchingEntries,
@@ -7290,11 +7332,13 @@ fun CategorySectionScreen(
                                     onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                                     onItemFocused = onItemFocused,
                                     onPlay = { playItem, items ->
-                                        onSeriesPlaybackStart(selectedSeries!!)
+                                        dismissSeriesDetailsForPlayback()
+                                        onSeriesPlaybackStart(activeSeries)
                                         onPlay(playItem, items)
                                     },
                                     onPlayWithPosition = { playItem, items, position ->
-                                        onSeriesPlaybackStart(selectedSeries!!)
+                                        dismissSeriesDetailsForPlayback()
+                                        onSeriesPlaybackStart(activeSeries)
                                         onPlayWithPosition(playItem, items, position)
                                     },
                                     onMoveLeft = {},
@@ -7593,6 +7637,7 @@ fun ContinueWatchingScreen(
                                 .padding(20.dp)
         ) {
             if (selectedSeries != null) {
+                val activeSeries = selectedSeries!!
                 val closeSeriesDetails = {
                     selectedSeries = null
                     pendingSeriesInfo = null
@@ -7600,9 +7645,14 @@ fun ContinueWatchingScreen(
                     runCatching { contentItemFocusRequester.requestFocus() }
                     Unit
                 }
+                val dismissSeriesDetailsForPlayback = {
+                    selectedSeries = null
+                    pendingSeriesInfo = null
+                    pendingEpisodeFocus = false
+                }
                 FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
                     SeriesSeasonsScreen(
-                            seriesItem = selectedSeries!!,
+                            seriesItem = activeSeries,
                             contentRepository = contentRepository,
                             authConfig = authConfig,
                             continueWatchingEntries = continueWatchingItems,
@@ -7615,11 +7665,13 @@ fun ContinueWatchingScreen(
                             onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                             onItemFocused = onItemFocused,
                             onPlay = { playItem, items ->
-                                onSeriesPlaybackStart(selectedSeries!!)
+                                dismissSeriesDetailsForPlayback()
+                                onSeriesPlaybackStart(activeSeries)
                                 onPlayWithPosition(playItem, items, null)
                             },
                             onPlayWithPosition = { playItem, items, position ->
-                                onSeriesPlaybackStart(selectedSeries!!)
+                                dismissSeriesDetailsForPlayback()
+                                onSeriesPlaybackStart(activeSeries)
                                 onPlayWithPosition(playItem, items, position)
                             },
                             onMoveLeft = {},
@@ -8063,7 +8115,7 @@ fun SeriesSeasonsScreen(
     val headerMaxByReserve = availableHeight - reservedBelowHeader
     val headerExpandedHeight =
         minOf(headerMaxByRatio, headerMaxByReserve).coerceIn(200.dp, 320.dp)
-    val headerCollapsedHeight = headerExpandedHeight
+    val headerCollapsedHeight = 0.dp
     val headerHeight by animateDpAsState(
         targetValue = if (episodesExpanded) headerCollapsedHeight else headerExpandedHeight,
         animationSpec = tween(durationMillis = 180),
@@ -8709,13 +8761,19 @@ fun SeriesSeasonsScreen(
                         fontFamily = AppTheme.fontFamily
                     )
                 } else {
+                    val episodesListModifier =
+                        if (episodesExpanded) {
+                            Modifier.fillMaxWidth().weight(1f)
+                        } else {
+                            Modifier.fillMaxWidth().height(episodesViewportHeight)
+                        }
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.fillMaxWidth().height(episodesViewportHeight)
+                        modifier = episodesListModifier
                     ) {
                         items(
                             count = displayEpisodes.size,
-                            key = { index -> displayEpisodes[index].id }
+                            key = { index -> "${displayEpisodes[index].id}-$index" }
                         ) { index ->
                             val item = displayEpisodes[index]
                             val requester =
@@ -9537,7 +9595,9 @@ fun SeriesEpisodesScreen(
             ) {
                 items(
                         count = lazyItems.itemCount,
-                        key = { index -> lazyItems[index]?.id ?: "episode-$index" }
+                        key = { index ->
+                            lazyItems[index]?.let { "${it.id}-$index" } ?: "episode-$index"
+                        }
                 ) { index ->
                     val item = lazyItems[index]
                     val requester =
