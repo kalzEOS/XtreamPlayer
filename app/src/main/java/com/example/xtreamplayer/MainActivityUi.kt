@@ -29,6 +29,7 @@ import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -7915,6 +7916,8 @@ fun SeriesSeasonsScreen(
     var headerCollapsed by remember { mutableStateOf(false) }
     var episodesViewportExpanded by remember { mutableStateOf(false) }
     var internalEpisodeFocusRequested by remember { mutableStateOf(false) }
+    val episodesListState = rememberLazyListState()
+    val episodesListScope = rememberCoroutineScope()
     val closeFocusRequester = remember { FocusRequester() }
     val tabFocusRequesters = remember { listOf(FocusRequester(), FocusRequester()) }
     val playFocusRequester = remember { FocusRequester() }
@@ -8152,6 +8155,19 @@ fun SeriesSeasonsScreen(
         headerCollapsed = false
         if (requestHeaderFocus) {
             runCatching { contentItemFocusRequester.requestFocus() }
+        }
+    }
+    val snapEpisodesListForFocus: (Int, Int) -> Unit = fun(focusedIndex, totalCount) {
+        if (totalCount <= 0) return
+        val visibleWindow = 3
+        val maxFirstIndex = (totalCount - visibleWindow).coerceAtLeast(0)
+        val targetFirstIndex = (focusedIndex - 1).coerceIn(0, maxFirstIndex)
+        if (episodesListState.firstVisibleItemIndex != targetFirstIndex ||
+            episodesListState.firstVisibleItemScrollOffset != 0
+        ) {
+            episodesListScope.launch {
+                episodesListState.scrollToItem(targetFirstIndex, 0)
+            }
         }
     }
     val headerHeight = if (headerCollapsed) headerCollapsedHeight else headerExpandedHeight
@@ -8803,6 +8819,7 @@ fun SeriesSeasonsScreen(
                                     }
                         ) {
                             LazyColumn(
+                                state = episodesListState,
                                 verticalArrangement = Arrangement.spacedBy(12.dp),
                                 userScrollEnabled = episodesViewportExpanded,
                                 modifier = Modifier.fillMaxSize()
@@ -8864,6 +8881,7 @@ fun SeriesSeasonsScreen(
                                             headerCollapsed = true
                                             episodesViewportExpanded = true
                                             onItemFocused(item)
+                                            snapEpisodesListForFocus(index, displayEpisodes.size)
                                         },
                                         onMoveLeft = onMoveLeft,
                                         onMoveUp =
