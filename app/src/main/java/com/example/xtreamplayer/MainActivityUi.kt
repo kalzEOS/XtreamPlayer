@@ -7914,8 +7914,10 @@ fun SeriesSeasonsScreen(
     var initialSeasonSet by remember { mutableStateOf(false) }
     var showSeasonMenu by remember { mutableStateOf(false) }
     var activeTab by remember { mutableStateOf(SeriesDetailTab.EPISODES) }
-    var episodesExpanded by remember { mutableStateOf(false) }
+    var headerCollapsed by remember { mutableStateOf(false) }
+    var episodesViewportExpanded by remember { mutableStateOf(false) }
     var internalEpisodeFocusRequested by remember { mutableStateOf(false) }
+    var episodesTransitionJob by remember { mutableStateOf<Job?>(null) }
     val closeFocusRequester = remember { FocusRequester() }
     val tabFocusRequesters = remember { listOf(FocusRequester(), FocusRequester()) }
     val playFocusRequester = remember { FocusRequester() }
@@ -7929,7 +7931,11 @@ fun SeriesSeasonsScreen(
 
     LaunchedEffect(seriesItem.streamId) {
         withFrameNanos {}
-        episodesExpanded = false
+        episodesTransitionJob?.cancel()
+        episodesTransitionJob = null
+        headerCollapsed = false
+        episodesViewportExpanded = false
+        internalEpisodeFocusRequested = false
         contentItemFocusRequester.requestFocus()
     }
 
@@ -8132,8 +8138,8 @@ fun SeriesSeasonsScreen(
     val appScale = LocalAppScale.current
     val baseDensity = LocalAppBaseDensity.current ?: LocalDensity.current
     val uiScope = rememberCoroutineScope()
-    var pendingCollapseFocusJob by remember { mutableStateOf<Job?>(null) }
     val collapseAnimDurationMs = 240
+    val transitionPhaseDelayMs = (collapseAnimDurationMs * 0.55f).toLong()
     val collapseAnimSpec = tween<Dp>(
         durationMillis = collapseAnimDurationMs,
         easing = FastOutSlowInEasing
@@ -8147,25 +8153,38 @@ fun SeriesSeasonsScreen(
         minOf(headerMaxByRatio, headerMaxByReserve).coerceIn(200.dp, 320.dp)
     val headerCollapsedHeight = 0.dp
     val expandEpisodesSection = {
-        pendingCollapseFocusJob?.cancel()
-        pendingCollapseFocusJob = null
+        episodesTransitionJob?.cancel()
+        episodesTransitionJob = null
         activeTab = SeriesDetailTab.EPISODES
-        episodesExpanded = true
-        internalEpisodeFocusRequested = true
-    }
-    val collapseEpisodesSectionToHeader = {
-        episodesExpanded = false
+        headerCollapsed = true
         internalEpisodeFocusRequested = false
-        pendingCollapseFocusJob?.cancel()
-        pendingCollapseFocusJob =
+        episodesTransitionJob =
             uiScope.launch {
-                withFrameNanos {}
-                delay((collapseAnimDurationMs * 0.45f).toLong())
-                runCatching { contentItemFocusRequester.requestFocus() }
+                if (!episodesViewportExpanded) {
+                    delay(transitionPhaseDelayMs)
+                }
+                episodesViewportExpanded = true
+                internalEpisodeFocusRequested = true
+                episodesTransitionJob = null
+            }
+    }
+    val collapseEpisodesSectionToHeader: (Boolean) -> Unit = { requestHeaderFocus ->
+        episodesTransitionJob?.cancel()
+        episodesTransitionJob = null
+        internalEpisodeFocusRequested = false
+        episodesViewportExpanded = false
+        episodesTransitionJob =
+            uiScope.launch {
+                delay(transitionPhaseDelayMs)
+                headerCollapsed = false
+                if (requestHeaderFocus) {
+                    runCatching { contentItemFocusRequester.requestFocus() }
+                }
+                episodesTransitionJob = null
             }
     }
     val headerHeight by animateDpAsState(
-        targetValue = if (episodesExpanded) headerCollapsedHeight else headerExpandedHeight,
+        targetValue = if (headerCollapsed) headerCollapsedHeight else headerExpandedHeight,
         animationSpec = collapseAnimSpec,
         label = "seriesHeaderHeight"
     )
@@ -8205,12 +8224,16 @@ fun SeriesSeasonsScreen(
                 onActivate = onBack,
                 modifier =
                     Modifier.focusRequester(closeFocusRequester)
-                        .onFocusChanged { if (it.isFocused) episodesExpanded = false },
+                        .onFocusChanged {
+                            if (it.isFocused) {
+                                collapseEpisodesSectionToHeader(false)
+                            }
+                        },
                 onMoveLeft = onMoveLeft,
                 onMoveDown = {
-                    if (!episodesExpanded && showReadMore) {
+                    if (!headerCollapsed && showReadMore) {
                         readMoreFocusRequester.requestFocus()
-                    } else if (!episodesExpanded) {
+                    } else if (!headerCollapsed) {
                         favoriteFocusRequester.requestFocus()
                     } else {
                         episodesTabRequester.requestFocus()
@@ -8397,7 +8420,7 @@ fun SeriesSeasonsScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(if (episodesExpanded) 6.dp else 8.dp))
+        Spacer(modifier = Modifier.height(if (headerCollapsed) 6.dp else 8.dp))
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -8409,17 +8432,17 @@ fun SeriesSeasonsScreen(
                     label = "Episodes (${episodesLabel.coerceAtLeast(0)})",
                     selected = activeTab == SeriesDetailTab.EPISODES,
                     focusRequester = episodesTabRequester,
-                    onFocused = { episodesExpanded = false },
+                    onFocused = { collapseEpisodesSectionToHeader(false) },
                     onActivate = { activeTab = SeriesDetailTab.EPISODES },
                     onMoveDown = expandEpisodesSection,
                     onMoveLeft = {
-                        episodesExpanded = false
+                        collapseEpisodesSectionToHeader(false)
                         onMoveLeft()
                     },
                     onMoveRight = { castTabRequester.requestFocus() },
                     onMoveUp = {
-                        episodesExpanded = false
-                        if (!episodesExpanded && showReadMore) {
+                        collapseEpisodesSectionToHeader(false)
+                        if (!headerCollapsed && showReadMore) {
                             readMoreFocusRequester.requestFocus()
                         } else {
                             closeFocusRequester.requestFocus()
@@ -8430,13 +8453,16 @@ fun SeriesSeasonsScreen(
                     label = "Cast",
                     selected = activeTab == SeriesDetailTab.CAST,
                     focusRequester = castTabRequester,
-                    onFocused = { episodesExpanded = false },
-                    onActivate = { activeTab = SeriesDetailTab.CAST },
+                    onFocused = { collapseEpisodesSectionToHeader(false) },
+                    onActivate = {
+                        activeTab = SeriesDetailTab.CAST
+                        collapseEpisodesSectionToHeader(false)
+                    },
                     onMoveLeft = { episodesTabRequester.requestFocus() },
                     onMoveRight = { playFocusRequester.requestFocus() },
                     onMoveUp = {
-                        episodesExpanded = false
-                        if (!episodesExpanded && showReadMore) {
+                        collapseEpisodesSectionToHeader(false)
+                        if (!headerCollapsed && showReadMore) {
                             readMoreFocusRequester.requestFocus()
                         } else {
                             closeFocusRequester.requestFocus()
@@ -8486,7 +8512,7 @@ fun SeriesSeasonsScreen(
                                 if (it.type != KeyEventType.KeyDown) {
                                     false
                                 } else if (it.key == Key.DirectionUp) {
-                                    if (!episodesExpanded && showReadMore) {
+                                    if (!headerCollapsed && showReadMore) {
                                         readMoreFocusRequester.requestFocus()
                                     } else {
                                         closeFocusRequester.requestFocus()
@@ -8496,7 +8522,7 @@ fun SeriesSeasonsScreen(
                                     seasonFocusRequester.requestFocus()
                                     true
                                 } else if (it.key == Key.DirectionLeft) {
-                                    episodesExpanded = false
+                                    collapseEpisodesSectionToHeader(false)
                                     castTabRequester.requestFocus()
                                     true
                                 } else if (it.key == Key.DirectionDown) {
@@ -8506,7 +8532,11 @@ fun SeriesSeasonsScreen(
                                     false
                                 }
                             }
-                            .onFocusChanged { if (it.isFocused) episodesExpanded = false },
+                            .onFocusChanged {
+                                if (it.isFocused) {
+                                    collapseEpisodesSectionToHeader(false)
+                                }
+                            },
                     colors =
                         ButtonDefaults.buttonColors(
                             containerColor = colors.accent,
@@ -8540,7 +8570,7 @@ fun SeriesSeasonsScreen(
                                     favoriteFocusRequester.requestFocus()
                                     true
                                 } else if (it.key == Key.DirectionUp) {
-                                    if (!episodesExpanded && showReadMore) {
+                                    if (!headerCollapsed && showReadMore) {
                                         readMoreFocusRequester.requestFocus()
                                     } else {
                                         closeFocusRequester.requestFocus()
@@ -8553,7 +8583,11 @@ fun SeriesSeasonsScreen(
                                     false
                                 }
                             }
-                                .onFocusChanged { if (it.isFocused) episodesExpanded = false },
+                                .onFocusChanged {
+                                    if (it.isFocused) {
+                                        collapseEpisodesSectionToHeader(false)
+                                    }
+                                },
                         colors =
                             ButtonDefaults.buttonColors(
                                 containerColor = colors.surfaceAlt,
@@ -8602,7 +8636,7 @@ fun SeriesSeasonsScreen(
                                     }
                                     true
                                 } else if (it.key == Key.DirectionUp) {
-                                    if (!episodesExpanded && showReadMore) {
+                                    if (!headerCollapsed && showReadMore) {
                                         readMoreFocusRequester.requestFocus()
                                     } else {
                                         closeFocusRequester.requestFocus()
@@ -8615,7 +8649,11 @@ fun SeriesSeasonsScreen(
                                     false
                                 }
                             }
-                            .onFocusChanged { if (it.isFocused) episodesExpanded = false },
+                            .onFocusChanged {
+                                if (it.isFocused) {
+                                    collapseEpisodesSectionToHeader(false)
+                                }
+                            },
                     contentPadding = PaddingValues(0.dp),
                     colors =
                         ButtonDefaults.buttonColors(
@@ -8664,7 +8702,7 @@ fun SeriesSeasonsScreen(
                                         closeFocusRequester.requestFocus()
                                         true
                                     } else if (it.key == Key.DirectionUp) {
-                                        if (!episodesExpanded && showReadMore) {
+                                        if (!headerCollapsed && showReadMore) {
                                             readMoreFocusRequester.requestFocus()
                                         } else {
                                             closeFocusRequester.requestFocus()
@@ -8677,7 +8715,11 @@ fun SeriesSeasonsScreen(
                                         false
                                     }
                                 }
-                                .onFocusChanged { if (it.isFocused) episodesExpanded = false },
+                                .onFocusChanged {
+                                    if (it.isFocused) {
+                                        collapseEpisodesSectionToHeader(false)
+                                    }
+                                },
                         colors =
                             ButtonDefaults.buttonColors(
                                 containerColor = colors.surfaceAlt,
@@ -8781,7 +8823,7 @@ fun SeriesSeasonsScreen(
                         val expandedListHeight = maxHeight
                         val compactListHeight = minOf(episodesViewportHeight, expandedListHeight)
                         val targetListHeight =
-                            if (episodesExpanded) expandedListHeight else compactListHeight
+                            if (episodesViewportExpanded) expandedListHeight else compactListHeight
                         val animatedListHeight by animateDpAsState(
                             targetValue = targetListHeight,
                             animationSpec = collapseAnimSpec,
@@ -8847,15 +8889,16 @@ fun SeriesSeasonsScreen(
                                             onPlayWithPosition(item, queueItems, resumePosition)
                                         },
                                         onFocused = {
-                                            pendingCollapseFocusJob?.cancel()
-                                            pendingCollapseFocusJob = null
-                                            episodesExpanded = true
+                                            episodesTransitionJob?.cancel()
+                                            episodesTransitionJob = null
+                                            headerCollapsed = true
+                                            episodesViewportExpanded = true
                                             onItemFocused(item)
                                         },
                                         onMoveLeft = onMoveLeft,
                                         onMoveUp =
                                             if (index == 0) {
-                                                { collapseEpisodesSectionToHeader() }
+                                                { collapseEpisodesSectionToHeader(true) }
                                             } else {
                                                 null
                                             }
