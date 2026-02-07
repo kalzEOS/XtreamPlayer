@@ -44,6 +44,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun toggleCheckUpdatesOnStartup() {
+        viewModelScope.launch {
+            repository.setCheckUpdatesOnStartup(!settings.value.checkUpdatesOnStartup)
+        }
+    }
+
     fun toggleRememberLogin() {
         viewModelScope.launch {
             repository.setRememberLogin(!settings.value.rememberLogin)

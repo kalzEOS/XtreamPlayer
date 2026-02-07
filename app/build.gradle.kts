@@ -26,8 +26,8 @@ android {
         applicationId = "com.example.xtreamplayer"
         minSdk = 24
         targetSdk = 36
-        versionCode = 93
-        versionName = "2.9.1"
+        versionCode = 94
+        versionName = "2.9.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -88,7 +88,7 @@ androidComponents {
                 @Suppress("UNCHECKED_CAST")
                 output::class.java.getMethod("getOutputFileName").invoke(output) as Property<String>
             }.getOrNull()
-            outputFileName?.set("Xtream Playerv2.9.1.apk")
+            outputFileName?.set("Xtream Playerv2.9.2.apk")
         }
     }
 }

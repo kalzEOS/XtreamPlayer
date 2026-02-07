@@ -21,6 +21,7 @@ class SettingsRepository(private val context: Context) {
         val autoPlay = prefs[Keys.AUTO_PLAY_NEXT] ?: true
         val nextEpisodeThreshold = prefs[Keys.NEXT_EPISODE_THRESHOLD] ?: 45
         val subtitles = prefs[Keys.SUBTITLES_ENABLED] ?: true
+        val checkUpdatesOnStartup = prefs[Keys.CHECK_UPDATES_ON_STARTUP] ?: false
         val rememberLogin = prefs[Keys.REMEMBER_LOGIN] ?: true
         val autoSignIn = prefs[Keys.AUTO_SIGN_IN] ?: true
         val appTheme = parseAppTheme(prefs[Keys.APP_THEME])
@@ -37,6 +38,7 @@ class SettingsRepository(private val context: Context) {
             autoPlayNext = autoPlay,
             nextEpisodeThresholdSeconds = nextEpisodeThreshold,
             subtitlesEnabled = subtitles,
+            checkUpdatesOnStartup = checkUpdatesOnStartup,
             rememberLogin = rememberLogin,
             autoSignIn = autoSignIn,
             appTheme = appTheme,
@@ -118,6 +120,12 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun setCheckUpdatesOnStartup(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.CHECK_UPDATES_ON_STARTUP] = enabled
+        }
+    }
+
     suspend fun setRememberLogin(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[Keys.REMEMBER_LOGIN] = enabled
@@ -177,6 +185,10 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun isStartupUpdateCheckEnabled(): Boolean {
+        return context.dataStore.data.firstOrNull()?.get(Keys.CHECK_UPDATES_ON_STARTUP) ?: false
+    }
+
     private fun parseAppTheme(value: String?): AppThemeOption {
         return AppThemeOption.values().firstOrNull { it.name == value } ?: AppThemeOption.DEFAULT
     }
@@ -221,6 +233,7 @@ class SettingsRepository(private val context: Context) {
         val AUTO_PLAY_NEXT = booleanPreferencesKey("auto_play_next")
         val NEXT_EPISODE_THRESHOLD = intPreferencesKey("next_episode_threshold")
         val SUBTITLES_ENABLED = booleanPreferencesKey("subtitles_enabled")
+        val CHECK_UPDATES_ON_STARTUP = booleanPreferencesKey("check_updates_on_startup")
         val REMEMBER_LOGIN = booleanPreferencesKey("remember_login")
         val AUTO_SIGN_IN = booleanPreferencesKey("auto_sign_in")
         val APP_THEME = stringPreferencesKey("app_theme")

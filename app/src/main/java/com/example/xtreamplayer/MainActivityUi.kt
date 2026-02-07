@@ -202,6 +202,11 @@ private enum class HomeDestination {
     SETTINGS
 }
 
+private enum class UpdateCheckSource {
+    MANUAL,
+    STARTUP
+}
+
 private data class UpdateUiState(
     val showDialog: Boolean = false,
     val inProgress: Boolean = false,
@@ -296,6 +301,8 @@ fun RootScreen(
     var wasShowingAppearance by remember { mutableStateOf(false) }
     var updateUiState by remember { mutableStateOf(UpdateUiState()) }
     var updateCheckJob by remember { mutableStateOf<Job?>(null) }
+    var startupUpdateCheckEnabled by remember { mutableStateOf<Boolean?>(null) }
+    var startupUpdateCheckHandled by remember { mutableStateOf(false) }
     val showApiKeyDialogState = remember { mutableStateOf(false) }
     var showApiKeyDialog by showApiKeyDialogState
     val showThemeDialogState = remember { mutableStateOf(false) }
@@ -544,6 +551,10 @@ fun RootScreen(
         authViewModel.tryAutoSignIn(settings)
     }
 
+    LaunchedEffect(Unit) {
+        startupUpdateCheckEnabled = settingsRepository.isStartupUpdateCheckEnabled()
+    }
+
     LaunchedEffect(authState.activeConfig) {
         if (authState.activeConfig != null) {
             showLocalFilesGuest = false
@@ -703,22 +714,32 @@ fun RootScreen(
         return false
     }
 
-    fun checkForUpdates() {
+    fun checkForUpdates(source: UpdateCheckSource = UpdateCheckSource.MANUAL) {
         if (updateCheckJob?.isActive == true) return
         updateCheckJob = coroutineScope.launch {
             val result = runCatching { fetchLatestRelease(updateHttpClient) }
             val latest = result.getOrNull()
             if (latest == null) {
-                Toast.makeText(context, "Update check failed", Toast.LENGTH_SHORT).show()
+                if (source == UpdateCheckSource.MANUAL) {
+                    Toast.makeText(context, "Update check failed", Toast.LENGTH_SHORT).show()
+                }
                 return@launch
             }
             val localParts = parseVersionParts(appVersionName)
             if (localParts.isEmpty() || latest.versionParts.isEmpty()) {
-                Toast.makeText(context, "Update info unavailable", Toast.LENGTH_SHORT).show()
+                if (source == UpdateCheckSource.MANUAL) {
+                    Toast.makeText(context, "Update info unavailable", Toast.LENGTH_SHORT).show()
+                }
                 return@launch
             }
             if (compareVersions(localParts, latest.versionParts) >= 0) {
-                Toast.makeText(context, "Already up to date", Toast.LENGTH_SHORT).show()
+                val message =
+                    if (source == UpdateCheckSource.STARTUP) {
+                        "App is up to date"
+                    } else {
+                        "Already up to date"
+                    }
+                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                 return@launch
             }
             updateUiState = updateUiState.copy(
@@ -726,6 +747,18 @@ fun RootScreen(
                 showDialog = true
             )
         }
+    }
+
+    LaunchedEffect(startupUpdateCheckEnabled, authState.isSignedIn) {
+        if (startupUpdateCheckHandled) return@LaunchedEffect
+        val enabled = startupUpdateCheckEnabled ?: return@LaunchedEffect
+        if (!enabled) {
+            startupUpdateCheckHandled = true
+            return@LaunchedEffect
+        }
+        if (!authState.isSignedIn) return@LaunchedEffect
+        startupUpdateCheckHandled = true
+        checkForUpdates(UpdateCheckSource.STARTUP)
     }
 
     fun startUpdateDownload(release: UpdateRelease) {
@@ -1681,7 +1714,8 @@ fun RootScreen(
                             }
                             authViewModel.signOut(keepSaved = false)
                         },
-                        onCheckForUpdates = { checkForUpdates() },
+                        onToggleCheckUpdatesOnStartup = settingsViewModel::toggleCheckUpdatesOnStartup,
+                        onCheckForUpdates = { checkForUpdates(UpdateCheckSource.MANUAL) },
                         hasStoragePermission = ::hasStoragePermission,
                         scanMediaStoreMedia = ::scanMediaStoreMedia,
                         getRequiredMediaPermissions = ::getRequiredMediaPermissions
