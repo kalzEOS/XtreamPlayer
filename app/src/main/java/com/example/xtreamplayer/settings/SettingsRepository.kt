@@ -21,7 +21,7 @@ class SettingsRepository(private val context: Context) {
         val autoPlay = prefs[Keys.AUTO_PLAY_NEXT] ?: true
         val nextEpisodeThreshold = prefs[Keys.NEXT_EPISODE_THRESHOLD] ?: 45
         val subtitles = prefs[Keys.SUBTITLES_ENABLED] ?: true
-        val checkUpdatesOnStartup = prefs[Keys.CHECK_UPDATES_ON_STARTUP] ?: false
+        val checkUpdatesOnStartup = prefs[Keys.CHECK_UPDATES_ON_STARTUP] ?: true
         val rememberLogin = prefs[Keys.REMEMBER_LOGIN] ?: true
         val autoSignIn = prefs[Keys.AUTO_SIGN_IN] ?: true
         val appTheme = parseAppTheme(prefs[Keys.APP_THEME])
@@ -186,7 +186,7 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun isStartupUpdateCheckEnabled(): Boolean {
-        return context.dataStore.data.firstOrNull()?.get(Keys.CHECK_UPDATES_ON_STARTUP) ?: false
+        return context.dataStore.data.firstOrNull()?.get(Keys.CHECK_UPDATES_ON_STARTUP) ?: true
     }
 
     private fun parseAppTheme(value: String?): AppThemeOption {

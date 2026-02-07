@@ -733,13 +733,9 @@ fun RootScreen(
                 return@launch
             }
             if (compareVersions(localParts, latest.versionParts) >= 0) {
-                val message =
-                    if (source == UpdateCheckSource.STARTUP) {
-                        "App is up to date"
-                    } else {
-                        "Already up to date"
-                    }
-                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                if (source == UpdateCheckSource.MANUAL) {
+                    Toast.makeText(context, "Already up to date", Toast.LENGTH_SHORT).show()
+                }
                 return@launch
             }
             updateUiState = updateUiState.copy(
