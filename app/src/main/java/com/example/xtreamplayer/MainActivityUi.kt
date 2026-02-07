@@ -17,9 +17,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -7917,7 +7915,6 @@ fun SeriesSeasonsScreen(
     var headerCollapsed by remember { mutableStateOf(false) }
     var episodesViewportExpanded by remember { mutableStateOf(false) }
     var internalEpisodeFocusRequested by remember { mutableStateOf(false) }
-    var episodesTransitionJob by remember { mutableStateOf<Job?>(null) }
     val closeFocusRequester = remember { FocusRequester() }
     val tabFocusRequesters = remember { listOf(FocusRequester(), FocusRequester()) }
     val playFocusRequester = remember { FocusRequester() }
@@ -7931,8 +7928,6 @@ fun SeriesSeasonsScreen(
 
     LaunchedEffect(seriesItem.streamId) {
         withFrameNanos {}
-        episodesTransitionJob?.cancel()
-        episodesTransitionJob = null
         headerCollapsed = false
         episodesViewportExpanded = false
         internalEpisodeFocusRequested = false
@@ -8137,13 +8132,6 @@ fun SeriesSeasonsScreen(
     val availableHeight = (screenHeight - topInsetDp).coerceAtLeast(320.dp)
     val appScale = LocalAppScale.current
     val baseDensity = LocalAppBaseDensity.current ?: LocalDensity.current
-    val uiScope = rememberCoroutineScope()
-    val collapseAnimDurationMs = 240
-    val transitionPhaseDelayMs = (collapseAnimDurationMs * 0.55f).toLong()
-    val collapseAnimSpec = tween<Dp>(
-        durationMillis = collapseAnimDurationMs,
-        easing = FastOutSlowInEasing
-    )
     val uiScaleDelta = (1f - appScale.uiScale).coerceAtLeast(0f)
     val episodesViewportHeight = (120.dp + (uiScaleDelta * 150f).dp).coerceIn(120.dp, 180.dp)
     val reservedBelowHeader = episodesViewportHeight + 76.dp
@@ -8153,41 +8141,20 @@ fun SeriesSeasonsScreen(
         minOf(headerMaxByRatio, headerMaxByReserve).coerceIn(200.dp, 320.dp)
     val headerCollapsedHeight = 0.dp
     val expandEpisodesSection = {
-        episodesTransitionJob?.cancel()
-        episodesTransitionJob = null
         activeTab = SeriesDetailTab.EPISODES
         headerCollapsed = true
-        internalEpisodeFocusRequested = false
-        episodesTransitionJob =
-            uiScope.launch {
-                if (!episodesViewportExpanded) {
-                    delay(transitionPhaseDelayMs)
-                }
-                episodesViewportExpanded = true
-                internalEpisodeFocusRequested = true
-                episodesTransitionJob = null
-            }
+        episodesViewportExpanded = true
+        internalEpisodeFocusRequested = true
     }
     val collapseEpisodesSectionToHeader: (Boolean) -> Unit = { requestHeaderFocus ->
-        episodesTransitionJob?.cancel()
-        episodesTransitionJob = null
         internalEpisodeFocusRequested = false
         episodesViewportExpanded = false
-        episodesTransitionJob =
-            uiScope.launch {
-                delay(transitionPhaseDelayMs)
-                headerCollapsed = false
-                if (requestHeaderFocus) {
-                    runCatching { contentItemFocusRequester.requestFocus() }
-                }
-                episodesTransitionJob = null
-            }
+        headerCollapsed = false
+        if (requestHeaderFocus) {
+            runCatching { contentItemFocusRequester.requestFocus() }
+        }
     }
-    val headerHeight by animateDpAsState(
-        targetValue = if (headerCollapsed) headerCollapsedHeight else headerExpandedHeight,
-        animationSpec = collapseAnimSpec,
-        label = "seriesHeaderHeight"
-    )
+    val headerHeight = if (headerCollapsed) headerCollapsedHeight else headerExpandedHeight
     val ratingAreaHeight = if (headerHeight > 0.dp) 24.dp else 0.dp
     val posterHeight = (headerHeight - ratingAreaHeight).coerceAtLeast(0.dp)
     val posterWidth = posterHeight * 0.68f
@@ -8858,9 +8825,6 @@ fun SeriesSeasonsScreen(
                                             episodesViewportExpanded
                                         ) {
                                             withFrameNanos {}
-                                            if (episodesViewportExpanded) {
-                                                delay((collapseAnimDurationMs * 0.7f).toLong())
-                                            }
                                             requester.requestFocus()
                                             if (pendingEpisodeFocus) {
                                                 onEpisodeFocusHandled()
@@ -8897,8 +8861,6 @@ fun SeriesSeasonsScreen(
                                             onPlayWithPosition(item, queueItems, resumePosition)
                                         },
                                         onFocused = {
-                                            episodesTransitionJob?.cancel()
-                                            episodesTransitionJob = null
                                             headerCollapsed = true
                                             episodesViewportExpanded = true
                                             onItemFocused(item)
