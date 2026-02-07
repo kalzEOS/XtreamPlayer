@@ -13,6 +13,11 @@ enum class AppThemeOption(val label: String) {
     DUSK_COPPER_LIGHT("Copper Light")
 }
 
+enum class ClockFormatOption(val label: String) {
+    AM_PM("AM/PM"),
+    HOUR_24("24-hour")
+}
+
 data class SettingsState(
     val autoPlayNext: Boolean = true,
     val nextEpisodeThresholdSeconds: Int = 45,
@@ -23,6 +28,7 @@ data class SettingsState(
     val appFont: AppFont = AppFont.DEFAULT,
     val uiScale: Float = UI_SCALE_BASE,
     val fontScale: Float = 1.0f,
+    val clockFormat: ClockFormatOption = ClockFormatOption.AM_PM,
     val openSubtitlesApiKey: String = "",
     val openSubtitlesUserAgent: String = ""
 )

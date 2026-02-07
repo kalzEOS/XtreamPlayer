@@ -252,7 +252,8 @@ Row(modifier = Modifier.fillMaxSize()) {
                         onOpenThemeSelector = { showThemeDialog = true },
                         onOpenFontSelector = { showFontDialog = true },
                         onOpenUiScale = { showUiScaleDialog = true },
-                        onOpenFontScale = { showFontScaleDialog = true }
+                        onOpenFontScale = { showFontScaleDialog = true },
+                        onToggleClockFormat = settingsViewModel::toggleClockFormat
                 )
             } else {
                 val activeListName =

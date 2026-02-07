@@ -301,7 +301,8 @@ fun AppearanceScreen(
     onOpenThemeSelector: () -> Unit,
     onOpenFontSelector: () -> Unit,
     onOpenUiScale: () -> Unit,
-    onOpenFontScale: () -> Unit
+    onOpenFontScale: () -> Unit,
+    onToggleClockFormat: () -> Unit
 ) {
     val shape = RoundedCornerShape(18.dp)
     val scrollState = rememberScrollState()
@@ -313,6 +314,7 @@ fun AppearanceScreen(
         SettingsAction("Font", settings.appFont.label, onOpenFontSelector),
         SettingsAction("UI Scale", uiScaleLabel, onOpenUiScale),
         SettingsAction("Font Scale", fontScaleLabel, onOpenFontScale),
+        SettingsAction("Clock format", settings.clockFormat.label, onToggleClockFormat),
         SettingsAction("Back", null, onBack)
     )
 
