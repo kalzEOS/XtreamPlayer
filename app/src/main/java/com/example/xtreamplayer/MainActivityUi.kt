@@ -8822,16 +8822,8 @@ fun SeriesSeasonsScreen(
                     ) {
                         val compactRevealFraction =
                             (episodesViewportHeight / maxHeight).coerceIn(0f, 1f)
-                        val targetRevealProgress =
+                        val revealProgress =
                             if (episodesViewportExpanded) 1f else compactRevealFraction
-                        val revealProgress by animateFloatAsState(
-                            targetValue = targetRevealProgress,
-                            animationSpec = tween(
-                                durationMillis = collapseAnimDurationMs,
-                                easing = FastOutSlowInEasing
-                            ),
-                            label = "seriesEpisodesRevealProgress"
-                        )
                         Box(
                             modifier =
                                 Modifier.fillMaxSize()
