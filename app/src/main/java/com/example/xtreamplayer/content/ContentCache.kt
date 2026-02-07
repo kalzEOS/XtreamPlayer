@@ -18,7 +18,12 @@ class ContentCache(context: Context) {
     private companion object {
         private const val VOD_INFO_MAX_AGE_MS = 15L * 24 * 60 * 60 * 1000
         private const val SERIES_INFO_MAX_AGE_MS = 15L * 24 * 60 * 60 * 1000
+        private const val MAX_CACHE_SIZE_BYTES = 256L * 1024L * 1024L
+        private const val TRIM_TARGET_SIZE_BYTES = 220L * 1024L * 1024L
+        private const val TRIM_INTERVAL_MS = 30_000L
     }
+    @Volatile
+    private var lastTrimTimestampMs: Long = 0L
 
     suspend fun readPage(
         section: Section,
@@ -59,7 +64,7 @@ class ContentCache(context: Context) {
     ) {
         withContext(Dispatchers.IO) {
             val file = fileFor(section, config, page, limit)
-            runCatching { file.writeText(serializePage(data)) }
+            writeTextWithTrim(file, serializePage(data))
         }
     }
 
@@ -72,7 +77,7 @@ class ContentCache(context: Context) {
     ) {
         withContext(Dispatchers.IO) {
             val file = fileForKey(cacheKey, config, page, limit)
-            runCatching { file.writeText(serializePage(data)) }
+            writeTextWithTrim(file, serializePage(data))
         }
     }
 
@@ -119,7 +124,7 @@ class ContentCache(context: Context) {
                 obj.put("type", category.type.name)
                 array.put(obj)
             }
-            runCatching { file.writeText(array.toString()) }
+            writeTextWithTrim(file, array.toString())
         }
     }
 
@@ -188,7 +193,7 @@ class ContentCache(context: Context) {
             info.audioLanguages.forEach { languageArray.put(it) }
             obj.put("audioLanguages", languageArray)
             obj.put("cachedAt", System.currentTimeMillis())
-            runCatching { file.writeText(obj.toString()) }
+            writeTextWithTrim(file, obj.toString())
         }
     }
 
@@ -238,7 +243,7 @@ class ContentCache(context: Context) {
             obj.put("description", info.description ?: "")
             obj.put("year", info.year ?: "")
             obj.put("cachedAt", System.currentTimeMillis())
-            runCatching { file.writeText(obj.toString()) }
+            writeTextWithTrim(file, obj.toString())
         }
     }
 
@@ -263,7 +268,7 @@ class ContentCache(context: Context) {
         withContext(Dispatchers.IO) {
             val file = seasonFullFile(seriesId, seasonLabel, config)
             val array = serializeItems(items)
-            runCatching { file.writeText(array.toString()) }
+            writeTextWithTrim(file, array.toString())
         }
     }
 
@@ -298,7 +303,7 @@ class ContentCache(context: Context) {
         withContext(Dispatchers.IO) {
             val payload = JSONObject()
             payload.put("items", serializeItems(items))
-            runCatching { file.writeText(payload.toString()) }
+            writeTextWithTrim(file, payload.toString())
         }
     }
 
@@ -311,7 +316,7 @@ class ContentCache(context: Context) {
         withContext(Dispatchers.IO) {
             val payload = JSONObject()
             payload.put("items", serializeItems(items))
-            runCatching { file.writeText(payload.toString()) }
+            writeTextWithTrim(file, payload.toString())
         }
     }
 
@@ -344,6 +349,30 @@ class ContentCache(context: Context) {
         return dir.listFiles()?.sumOf { file -> directorySizeBytes(file) } ?: 0L
     }
 
+    private fun writeTextWithTrim(file: File, payload: String) {
+        runCatching {
+            file.writeText(payload)
+            trimCacheIfNeeded()
+        }
+    }
+
+    private fun trimCacheIfNeeded() {
+        val now = System.currentTimeMillis()
+        if (now - lastTrimTimestampMs < TRIM_INTERVAL_MS) return
+        lastTrimTimestampMs = now
+
+        val files = cacheDir.listFiles()?.filter { it.isFile } ?: return
+        var totalSize = files.sumOf { it.length() }
+        if (totalSize <= MAX_CACHE_SIZE_BYTES) return
+
+        files.sortedBy { it.lastModified() }.forEach { file ->
+            if (totalSize <= TRIM_TARGET_SIZE_BYTES) return
+            val fileSize = file.length()
+            runCatching { file.delete() }
+                .onSuccess { totalSize -= fileSize }
+        }
+    }
+
     suspend fun clearFor(config: AuthConfig) {
         val accountHash = accountHash(config)
         withContext(Dispatchers.IO) {
@@ -370,7 +399,7 @@ class ContentCache(context: Context) {
     suspend fun writeRefreshMarker(config: AuthConfig) {
         val marker = refreshMarkerFile(config)
         withContext(Dispatchers.IO) {
-            runCatching { marker.writeText("refreshed") }
+            writeTextWithTrim(marker, "refreshed")
         }
     }
 
@@ -400,7 +429,7 @@ class ContentCache(context: Context) {
     ) {
         val file = categoryThumbnailFile(type, categoryId, config)
         withContext(Dispatchers.IO) {
-            runCatching { file.writeText(imageUrl.orEmpty()) }
+            writeTextWithTrim(file, imageUrl.orEmpty())
         }
     }
 
@@ -495,7 +524,7 @@ class ContentCache(context: Context) {
                 json.put("itemsIndexed", itemsIndexed)
                 json.put("isComplete", isComplete)
                 json.put("timestamp", System.currentTimeMillis())
-                file.writeText(json.toString())
+                writeTextWithTrim(file, json.toString())
             }
         }
     }
@@ -569,6 +598,7 @@ class ContentCache(context: Context) {
                 if (!tempCheckpointFile.renameTo(checkpointFile)) {
                     throw IOException("Failed to rename checkpoint temp file")
                 }
+                trimCacheIfNeeded()
             } catch (e: Exception) {
                 // Clean up temp files on error
                 runCatching { tempIndexFile.delete() }
@@ -628,6 +658,7 @@ class ContentCache(context: Context) {
                 if (!tempCheckpointFile.renameTo(checkpointFile)) {
                     throw IOException("Failed to rename checkpoint temp file")
                 }
+                trimCacheIfNeeded()
             } catch (e: Exception) {
                 runCatching { tempIndexFile.delete() }
                 runCatching { tempCheckpointFile.delete() }
@@ -672,6 +703,7 @@ class ContentCache(context: Context) {
                 if (!tempCheckpointFile.renameTo(checkpointFile)) {
                     throw IOException("Failed to rename checkpoint temp file")
                 }
+                trimCacheIfNeeded()
             } catch (e: Exception) {
                 runCatching { tempIndexFile.delete() }
                 runCatching { tempCheckpointFile.delete() }

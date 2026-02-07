@@ -46,6 +46,23 @@ class XtreamApi(
         const val MAX_SMALL_JSON_BYTES = 1L * 1024 * 1024
         const val MAX_BULK_RESPONSE_BYTES = 64L * 1024 * 1024
         const val MAX_BULK_ITEMS = 150_000
+        const val INITIAL_BULK_ITEMS_CAPACITY = 1_000
+        val TIMESTAMP_PATTERNS = listOf(
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd HH:mm",
+            "yyyy-MM-dd'T'HH:mm:ss",
+            "yyyy-MM-dd'T'HH:mm:ss.SSS",
+            "yyyy-MM-dd'T'HH:mm:ssX",
+            "yyyy-MM-dd'T'HH:mm:ssXXX",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSX",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSXXX"
+        )
+        val TIMESTAMP_FORMATTERS: Map<String, ThreadLocal<SimpleDateFormat>> =
+            TIMESTAMP_PATTERNS.associateWith { pattern ->
+                ThreadLocal.withInitial {
+                    SimpleDateFormat(pattern, Locale.US).apply { isLenient = true }
+                }
+            }
     }
 
     suspend fun authenticate(config: AuthConfig): Result<Unit> {
@@ -1225,22 +1242,10 @@ class XtreamApi(
         val value = raw.trim()
         if (value.isBlank()) return null
         value.toLongOrNull()?.let { return normalizeEpoch(it) }
-        val formats =
-            listOf(
-                "yyyy-MM-dd HH:mm:ss",
-                "yyyy-MM-dd HH:mm",
-                "yyyy-MM-dd'T'HH:mm:ss",
-                "yyyy-MM-dd'T'HH:mm:ss.SSS",
-                "yyyy-MM-dd'T'HH:mm:ssX",
-                "yyyy-MM-dd'T'HH:mm:ssXXX",
-                "yyyy-MM-dd'T'HH:mm:ss.SSSX",
-                "yyyy-MM-dd'T'HH:mm:ss.SSSXXX"
-            )
-        for (pattern in formats) {
+        for (pattern in TIMESTAMP_PATTERNS) {
+            val formatter = TIMESTAMP_FORMATTERS[pattern]?.get() ?: continue
             val parsed = runCatching {
-                SimpleDateFormat(pattern, Locale.US).apply {
-                    isLenient = true
-                }.parse(value)
+                formatter.parse(value)
             }.getOrNull()
             if (parsed != null) {
                 return parsed.time
@@ -1529,8 +1534,8 @@ class XtreamApi(
         }
         reader.beginArray()
 
-        // Pre-allocate to reduce ArrayList resizing overhead for large libraries.
-        val items = ArrayList<ContentItem>(MAX_BULK_ITEMS)
+        // Start at a realistic baseline and still enforce an upper bound via MAX_BULK_ITEMS.
+        val items = ArrayList<ContentItem>(INITIAL_BULK_ITEMS_CAPACITY)
         var count = 0
 
         while (reader.hasNext()) {

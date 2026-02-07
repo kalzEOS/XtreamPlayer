@@ -100,7 +100,9 @@ class SubtitleRepository(
                 )
             }
 
-            val baseName = "${mediaId}_${subtitle.language}"
+            val safeMediaId = sanitizeFileComponent(mediaId, fallback = "media")
+            val safeLanguage = sanitizeFileComponent(subtitle.language.lowercase(), fallback = "en")
+            val baseName = "${safeMediaId}_${safeLanguage}"
             val rawFileName = downloadInfo.fileName
             val normalizedFileName =
                 if (rawFileName.lowercase().endsWith(".gz")) {
@@ -137,7 +139,7 @@ class SubtitleRepository(
 
             Timber.d("Final subtitle content: ${finalBytes.size} bytes")
 
-            val safeExt = finalExt.ifBlank { "srt" }
+            val safeExt = sanitizeSubtitleExtension(finalExt)
             val fileName = "$baseName.$safeExt"
             val file = File(subtitleDir, fileName)
             file.writeBytes(finalBytes)
@@ -279,6 +281,25 @@ class SubtitleRepository(
         subtitleFilesSnapshot = files
         subtitleDirLastModified = currentDir.lastModified()
         return files
+    }
+
+    private fun sanitizeFileComponent(raw: String, fallback: String): String {
+        val normalized = raw
+            .replace(Regex("""[\\/:*?"<>|]"""), "_")
+            .replace(Regex("""\.\.+"""), "_")
+            .replace(Regex("""[^A-Za-z0-9._-]"""), "_")
+            .trim('_', '.', ' ')
+        return normalized.takeIf { it.isNotBlank() } ?: fallback
+    }
+
+    private fun sanitizeSubtitleExtension(rawExt: String): String {
+        val cleaned = rawExt.lowercase().replace(Regex("""[^a-z0-9]"""), "")
+        return when {
+            cleaned in setOf("srt", "vtt", "ass", "ssa", "ttml", "dfxp") -> cleaned
+            cleaned.isBlank() -> "srt"
+            cleaned.length > 8 -> "srt"
+            else -> cleaned
+        }
     }
 
     private fun invalidateSubtitleFileSnapshot() {

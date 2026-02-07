@@ -60,6 +60,46 @@ class SettingsRepository(private val context: Context) {
         return base.copy(appTheme = theme, appFont = font, uiScale = uiScale, fontScale = fontScale)
     }
 
+    /**
+     * One-time migration for legacy synchronous boot prefs into DataStore-backed settings.
+     * Keeps startup snappy while converging runtime reads to DataStore values.
+     */
+    suspend fun migrateBootSettingsToDataStore() {
+        val bootUiScale =
+            if (bootPrefs.contains(Keys.BOOT_UI_SCALE)) {
+                bootPrefs.getFloat(Keys.BOOT_UI_SCALE, UI_SCALE_BASE).coerceIn(UI_SCALE_MIN, UI_SCALE_MAX)
+            } else {
+                null
+            }
+        val bootFontScale =
+            if (bootPrefs.contains(Keys.BOOT_FONT_SCALE)) {
+                bootPrefs.getFloat(Keys.BOOT_FONT_SCALE, 1.0f).coerceIn(0.7f, 1.4f)
+            } else {
+                null
+            }
+        val bootTheme = bootPrefs.getString(Keys.BOOT_APP_THEME, null)
+        val bootFont = bootPrefs.getString(Keys.BOOT_APP_FONT, null)
+
+        if (bootUiScale == null && bootFontScale == null && bootTheme == null && bootFont == null) {
+            return
+        }
+
+        context.dataStore.edit { prefs ->
+            if (prefs[Keys.UI_SCALE] == null && bootUiScale != null) {
+                prefs[Keys.UI_SCALE] = bootUiScale
+            }
+            if (prefs[Keys.FONT_SCALE] == null && bootFontScale != null) {
+                prefs[Keys.FONT_SCALE] = bootFontScale
+            }
+            if (prefs[Keys.APP_THEME] == null && !bootTheme.isNullOrBlank()) {
+                prefs[Keys.APP_THEME] = bootTheme
+            }
+            if (prefs[Keys.APP_FONT] == null && !bootFont.isNullOrBlank()) {
+                prefs[Keys.APP_FONT] = bootFont
+            }
+        }
+    }
+
     suspend fun setAutoPlayNext(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[Keys.AUTO_PLAY_NEXT] = enabled

@@ -78,6 +78,9 @@ private val MULTI_SPACE_REGEX = Regex("\\s+")
 private val SRT_TIME_PATTERN = Regex("""(\d{2}):(\d{2}):(\d{2}),(\d{3})""")
 private val VTT_TIME_PATTERN = Regex("""(?:(\d{2}):)?(\d{2}):(\d{2})[.](\d{3})""")
 private val ASS_TIME_PATTERN = Regex("""(\d+):(\d{2}):(\d{2})[.](\d{2})""")
+private val LIVE_PROGRAM_TIME_FORMATTER = ThreadLocal.withInitial {
+    SimpleDateFormat("HH:mm", Locale.getDefault())
+}
 
 private data class ActiveSubtitle(
     val uri: Uri,
@@ -1226,7 +1229,7 @@ private fun formatProgramLabel(program: LiveProgramInfo): String {
 
 private fun formatProgramTimeRange(startMs: Long?, endMs: Long?): String? {
     if (startMs == null || endMs == null) return null
-    val formatter = SimpleDateFormat("HH:mm", Locale.getDefault())
+    val formatter = LIVE_PROGRAM_TIME_FORMATTER.get() ?: SimpleDateFormat("HH:mm", Locale.getDefault())
     val start = formatter.format(Date(startMs))
     val end = formatter.format(Date(endMs))
     return "$start-$end"

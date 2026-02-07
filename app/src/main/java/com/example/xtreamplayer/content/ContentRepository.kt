@@ -709,20 +709,21 @@ class ContentRepository(
         authConfig: AuthConfig
     ): ContentPage {
         val key = cacheKey(Section.ALL.name, page, limit)
-        memoryCacheMutex.withLock {
-            memoryCache[key]?.let { return it }
-        }
+        readCache(memoryCacheMutex, memoryCache, key)?.let { return it }
 
         val perSectionLimit = ceil(limit / 3.0).toInt().coerceAtLeast(1)
-        val live = loadSectionPage(Section.LIVE, page, perSectionLimit, authConfig)
-        val movies = loadSectionPage(Section.MOVIES, page, perSectionLimit, authConfig)
-        val series = loadSectionPage(Section.SERIES, page, perSectionLimit, authConfig)
+        val (live, movies, series) = coroutineScope {
+            val liveDeferred = async { loadSectionPage(Section.LIVE, page, perSectionLimit, authConfig) }
+            val moviesDeferred = async { loadSectionPage(Section.MOVIES, page, perSectionLimit, authConfig) }
+            val seriesDeferred = async { loadSectionPage(Section.SERIES, page, perSectionLimit, authConfig) }
+            Triple(liveDeferred.await(), moviesDeferred.await(), seriesDeferred.await())
+        }
 
         val mixed = interleaveLists(listOf(live.items, movies.items, series.items), maxItems = limit)
         val endReached = live.endReached && movies.endReached && series.endReached
 
         val pageData = ContentPage(items = mixed, endReached = endReached)
-        memoryCacheMutex.withLock { memoryCache[key] = pageData }
+        writeCache(memoryCacheMutex, memoryCache, key, pageData)
         return pageData
     }
 
@@ -733,20 +734,21 @@ class ContentRepository(
         authConfig: AuthConfig
     ): ContentPage {
         val key = cacheKey("search-${Section.ALL.name}-$query", page, limit)
-        memoryCacheMutex.withLock {
-            memoryCache[key]?.let { return it }
-        }
+        readCache(memoryCacheMutex, memoryCache, key)?.let { return it }
 
         val perSectionLimit = ceil(limit / 3.0).toInt().coerceAtLeast(1)
-        val live = searchSectionPage(Section.LIVE, query, page, perSectionLimit, authConfig)
-        val movies = searchSectionPage(Section.MOVIES, query, page, perSectionLimit, authConfig)
-        val series = searchSectionPage(Section.SERIES, query, page, perSectionLimit, authConfig)
+        val (live, movies, series) = coroutineScope {
+            val liveDeferred = async { searchSectionPage(Section.LIVE, query, page, perSectionLimit, authConfig) }
+            val moviesDeferred = async { searchSectionPage(Section.MOVIES, query, page, perSectionLimit, authConfig) }
+            val seriesDeferred = async { searchSectionPage(Section.SERIES, query, page, perSectionLimit, authConfig) }
+            Triple(liveDeferred.await(), moviesDeferred.await(), seriesDeferred.await())
+        }
 
         val mixed = interleaveLists(listOf(live.items, movies.items, series.items), maxItems = limit)
         val endReached = live.endReached && movies.endReached && series.endReached
 
         val pageData = ContentPage(items = mixed, endReached = endReached)
-        memoryCacheMutex.withLock { memoryCache[key] = pageData }
+        writeCache(memoryCacheMutex, memoryCache, key, pageData)
         return pageData
     }
 
@@ -1064,15 +1066,15 @@ class ContentRepository(
         }
 
         // Fetch sections that need syncing in parallel
-        val sectionsToSync = sectionStates.filter { it.needsSync }
-        if (sectionsToSync.isEmpty()) return
+        val pendingSectionStates = sectionStates.filter { it.needsSync }
+        if (pendingSectionStates.isEmpty()) return
 
         val useBulk = force || sectionStates.all { it.needsSync }
         val completedCounter = AtomicInteger(completedSections)
         val totalItemsCounter = AtomicInteger(0)
 
         coroutineScope {
-            sectionsToSync.map { state ->
+            pendingSectionStates.map { state ->
                 async {
                     val section = state.section
                     val key = indexKey(section, authConfig)
@@ -1553,16 +1555,8 @@ class ContentRepository(
                 phase = com.example.xtreamplayer.content.SyncPhase.ON_DEMAND_BOOST
             ))
         }.onFailure { error ->
-            Timber.e(error, "On-demand boost failed for $section, rolling back checkpoint")
-            // Rollback checkpoint on failure
-            runCatching {
-                contentCache.writeSectionSyncCheckpoint(
-                    section, authConfig,
-                    lastPage = 0,
-                    itemsIndexed = 0,
-                    isComplete = false
-                )
-            }
+            // Do not rollback checkpoint state here: parallel background sync may have advanced.
+            Timber.e(error, "On-demand boost failed for $section")
         }
     }
 
@@ -1810,6 +1804,21 @@ class ContentRepository(
 
     private fun cacheKey(sectionKey: String, page: Int, limit: Int): String {
         return "$sectionKey-$page-$limit"
+    }
+
+    private suspend fun <K, V> readCache(
+        mutex: Mutex,
+        cache: Map<K, V>,
+        key: K
+    ): V? = mutex.withLock { cache[key] }
+
+    private suspend fun <K, V> writeCache(
+        mutex: Mutex,
+        cache: MutableMap<K, V>,
+        key: K,
+        value: V
+    ) {
+        mutex.withLock { cache[key] = value }
     }
 
     private fun interleaveLists(lists: List<List<ContentItem>>, maxItems: Int = Int.MAX_VALUE): List<ContentItem> {

@@ -2,6 +2,7 @@ package com.example.xtreamplayer.di
 
 import android.content.Context
 import com.example.xtreamplayer.api.OpenSubtitlesApi
+import com.example.xtreamplayer.api.TransientRetryInterceptor
 import com.example.xtreamplayer.api.XtreamApi
 import com.example.xtreamplayer.content.ContentCache
 import com.example.xtreamplayer.content.ContentRepository
@@ -30,6 +31,7 @@ object AppModule {
     @Singleton
     fun provideOkHttpClient(): OkHttpClient {
         return OkHttpClient.Builder()
+            .addInterceptor(TransientRetryInterceptor())
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
