@@ -374,6 +374,7 @@ Row(modifier = Modifier.fillMaxSize()) {
                                 authConfig = activeConfig,
                                 settings = settings,
                                 navLayoutExpanded = navLayoutExpanded,
+                                isPlaybackActive = isPlaybackActive,
                                 continueWatchingItems =
                                         filteredContinueWatchingItems,
                                 contentItemFocusRequester =
