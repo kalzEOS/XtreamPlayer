@@ -19,6 +19,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -8050,6 +8051,9 @@ fun SeriesSeasonsScreen(
                 }
             }
         }
+    var seasonFullEpisodes by remember(seriesItem.streamId, selectedSeasonLabel, authConfig) {
+        mutableStateOf<List<ContentItem>>(emptyList())
+    }
     val pagerFlow =
         remember(seriesItem.streamId, selectedSeasonLabel, authConfig) {
             val label = selectedSeasonLabel
@@ -8062,8 +8066,24 @@ fun SeriesSeasonsScreen(
     val lazyItems = pagerFlow.collectAsLazyPagingItems()
     LaunchedEffect(seriesItem.streamId, selectedSeasonLabel, authConfig) {
         val label = selectedSeasonLabel
+        seasonFullEpisodes = emptyList()
         if (!label.isNullOrBlank()) {
             contentRepository.prefetchSeriesSeasonFull(seriesItem.streamId, label, authConfig)
+            val cachedSeason =
+                contentRepository.peekSeriesSeasonFullCache(
+                    seriesItem.streamId,
+                    label,
+                    authConfig
+                )
+            if (!cachedSeason.isNullOrEmpty()) {
+                seasonFullEpisodes = cachedSeason
+            } else {
+                runCatching {
+                    contentRepository.loadSeriesSeasonFull(seriesItem.streamId, label, authConfig)
+                }.onSuccess { fullSeason ->
+                    seasonFullEpisodes = fullSeason
+                }
+            }
         }
     }
 
@@ -8078,7 +8098,8 @@ fun SeriesSeasonsScreen(
             )
         }
     val fallbackEpisode =
-        lazyItems.itemSnapshotList.items.firstOrNull()
+        seasonFullEpisodes.firstOrNull()
+            ?: lazyItems.itemSnapshotList.items.firstOrNull()
     val playTarget = resumeEntry?.item ?: firstEpisode ?: fallbackEpisode
     val playLabelSuffix =
         resumeEntry?.item?.let { formatEpisodeLabel(it, separator = " - ") }
@@ -8093,6 +8114,8 @@ fun SeriesSeasonsScreen(
     val episodesLabel =
         if (seasonEpisodes.isNotEmpty()) {
             seasonEpisodes.size
+        } else if (seasonFullEpisodes.isNotEmpty()) {
+            seasonFullEpisodes.size
         } else {
             selectedSeason?.episodeCount ?: lazyItems.itemCount
         }
@@ -8108,6 +8131,13 @@ fun SeriesSeasonsScreen(
     val availableHeight = (screenHeight - topInsetDp).coerceAtLeast(320.dp)
     val appScale = LocalAppScale.current
     val baseDensity = LocalAppBaseDensity.current ?: LocalDensity.current
+    val uiScope = rememberCoroutineScope()
+    var pendingCollapseFocusJob by remember { mutableStateOf<Job?>(null) }
+    val collapseAnimDurationMs = 240
+    val collapseAnimSpec = tween<Dp>(
+        durationMillis = collapseAnimDurationMs,
+        easing = FastOutSlowInEasing
+    )
     val uiScaleDelta = (1f - appScale.uiScale).coerceAtLeast(0f)
     val episodesViewportHeight = (120.dp + (uiScaleDelta * 150f).dp).coerceIn(120.dp, 180.dp)
     val reservedBelowHeader = episodesViewportHeight + 76.dp
@@ -8116,9 +8146,27 @@ fun SeriesSeasonsScreen(
     val headerExpandedHeight =
         minOf(headerMaxByRatio, headerMaxByReserve).coerceIn(200.dp, 320.dp)
     val headerCollapsedHeight = 0.dp
+    val expandEpisodesSection = {
+        pendingCollapseFocusJob?.cancel()
+        pendingCollapseFocusJob = null
+        activeTab = SeriesDetailTab.EPISODES
+        episodesExpanded = true
+        internalEpisodeFocusRequested = true
+    }
+    val collapseEpisodesSectionToHeader = {
+        episodesExpanded = false
+        internalEpisodeFocusRequested = false
+        pendingCollapseFocusJob?.cancel()
+        pendingCollapseFocusJob =
+            uiScope.launch {
+                withFrameNanos {}
+                delay((collapseAnimDurationMs * 0.45f).toLong())
+                runCatching { contentItemFocusRequester.requestFocus() }
+            }
+    }
     val headerHeight by animateDpAsState(
         targetValue = if (episodesExpanded) headerCollapsedHeight else headerExpandedHeight,
-        animationSpec = tween(durationMillis = 180),
+        animationSpec = collapseAnimSpec,
         label = "seriesHeaderHeight"
     )
     val ratingAreaHeight = if (headerHeight > 0.dp) 24.dp else 0.dp
@@ -8363,10 +8411,7 @@ fun SeriesSeasonsScreen(
                     focusRequester = episodesTabRequester,
                     onFocused = { episodesExpanded = false },
                     onActivate = { activeTab = SeriesDetailTab.EPISODES },
-                    onMoveDown = {
-                        episodesExpanded = true
-                        internalEpisodeFocusRequested = true
-                    },
+                    onMoveDown = expandEpisodesSection,
                     onMoveLeft = {
                         episodesExpanded = false
                         onMoveLeft()
@@ -8421,6 +8466,7 @@ fun SeriesSeasonsScreen(
                             val queueItems =
                                 when {
                                     seasonEpisodes.isNotEmpty() -> seasonEpisodes
+                                    seasonFullEpisodes.isNotEmpty() -> seasonFullEpisodes
                                     cachedSeason != null -> cachedSeason
                                     else -> fallbackEpisodes
                                 }
@@ -8454,16 +8500,7 @@ fun SeriesSeasonsScreen(
                                     castTabRequester.requestFocus()
                                     true
                                 } else if (it.key == Key.DirectionDown) {
-                                    activeTab = SeriesDetailTab.EPISODES
-                                    episodesExpanded = true
-                                    internalEpisodeFocusRequested = true
-                                    if (seasonEpisodes.isNotEmpty() ||
-                                        lazyItems.itemSnapshotList.items.isNotEmpty()
-                                    ) {
-                                        episodesFocusRequester.requestFocus()
-                                    } else {
-                                        episodesTabRequester.requestFocus()
-                                    }
+                                    expandEpisodesSection()
                                     true
                                 } else {
                                     false
@@ -8510,16 +8547,7 @@ fun SeriesSeasonsScreen(
                                     }
                                     true
                                 } else if (it.key == Key.DirectionDown) {
-                                    activeTab = SeriesDetailTab.EPISODES
-                                    episodesExpanded = true
-                                    internalEpisodeFocusRequested = true
-                                    if (seasonEpisodes.isNotEmpty() ||
-                                        lazyItems.itemSnapshotList.items.isNotEmpty()
-                                    ) {
-                                        episodesFocusRequester.requestFocus()
-                                    } else {
-                                        episodesTabRequester.requestFocus()
-                                    }
+                                    expandEpisodesSection()
                                     true
                                 } else {
                                     false
@@ -8581,16 +8609,7 @@ fun SeriesSeasonsScreen(
                                     }
                                     true
                                 } else if (it.key == Key.DirectionDown) {
-                                    activeTab = SeriesDetailTab.EPISODES
-                                    episodesExpanded = true
-                                    internalEpisodeFocusRequested = true
-                                    if (seasonEpisodes.isNotEmpty() ||
-                                        lazyItems.itemSnapshotList.items.isNotEmpty()
-                                    ) {
-                                        episodesFocusRequester.requestFocus()
-                                    } else {
-                                        episodesTabRequester.requestFocus()
-                                    }
+                                    expandEpisodesSection()
                                     true
                                 } else {
                                     false
@@ -8652,16 +8671,7 @@ fun SeriesSeasonsScreen(
                                         }
                                         true
                                     } else if (it.key == Key.DirectionDown) {
-                                        activeTab = SeriesDetailTab.EPISODES
-                                        episodesExpanded = true
-                                        internalEpisodeFocusRequested = true
-                                        if (seasonEpisodes.isNotEmpty() ||
-                                            lazyItems.itemSnapshotList.items.isNotEmpty()
-                                        ) {
-                                            episodesFocusRequester.requestFocus()
-                                        } else {
-                                            episodesTabRequester.requestFocus()
-                                        }
+                                        expandEpisodesSection()
                                         true
                                     } else {
                                         false
@@ -8715,7 +8725,11 @@ fun SeriesSeasonsScreen(
             SeriesDetailTab.EPISODES -> {
                 val fallbackEpisodes = lazyItems.itemSnapshotList.items
                 val displayEpisodes =
-                    if (seasonEpisodes.isNotEmpty()) seasonEpisodes else fallbackEpisodes
+                    when {
+                        seasonEpisodes.isNotEmpty() -> seasonEpisodes
+                        seasonFullEpisodes.isNotEmpty() -> seasonFullEpisodes
+                        else -> fallbackEpisodes
+                    }
                 val shouldRequestEpisodeFocus = pendingEpisodeFocus || internalEpisodeFocusRequested
                 if (isSeasonLoading) {
                     Text(
@@ -8770,75 +8784,83 @@ fun SeriesSeasonsScreen(
                             if (episodesExpanded) expandedListHeight else compactListHeight
                         val animatedListHeight by animateDpAsState(
                             targetValue = targetListHeight,
-                            animationSpec = tween(durationMillis = 220),
+                            animationSpec = collapseAnimSpec,
                             label = "seriesEpisodesListHeight"
                         )
-                        LazyColumn(
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.fillMaxWidth().height(animatedListHeight)
+                        Box(
+                            modifier =
+                                Modifier.fillMaxWidth()
+                                    .height(animatedListHeight)
+                                    .clipToBounds()
                         ) {
-                            items(
-                                count = displayEpisodes.size,
-                                key = { index -> "${displayEpisodes[index].id}-$index" }
-                            ) { index ->
-                                val item = displayEpisodes[index]
-                                val requester =
-                                    when {
-                                        item.id == resumeFocusId -> resumeFocusRequester
-                                        index == 0 -> episodesFocusRequester
-                                        else -> null
-                                    }
-                                if (index == 0 && shouldRequestEpisodeFocus && requester != null) {
-                                    LaunchedEffect(shouldRequestEpisodeFocus, requester) {
-                                        withFrameNanos {}
-                                        requester.requestFocus()
-                                        if (pendingEpisodeFocus) {
-                                            onEpisodeFocusHandled()
+                            LazyColumn(
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.fillMaxWidth().height(expandedListHeight)
+                            ) {
+                                items(
+                                    count = displayEpisodes.size,
+                                    key = { index -> "${displayEpisodes[index].id}-$index" }
+                                ) { index ->
+                                    val item = displayEpisodes[index]
+                                    val requester =
+                                        when {
+                                            item.id == resumeFocusId -> resumeFocusRequester
+                                            index == 0 -> episodesFocusRequester
+                                            else -> null
                                         }
-                                        internalEpisodeFocusRequested = false
+                                    if (index == 0 && shouldRequestEpisodeFocus && requester != null) {
+                                        LaunchedEffect(shouldRequestEpisodeFocus, requester) {
+                                            withFrameNanos {}
+                                            requester.requestFocus()
+                                            if (pendingEpisodeFocus) {
+                                                onEpisodeFocusHandled()
+                                            }
+                                            internalEpisodeFocusRequested = false
+                                        }
                                     }
-                                }
-                                SeriesEpisodeRow(
-                                    item = item,
-                                    focusRequester = requester,
-                                    forceDarkText = forceDarkText,
-                                    onActivate = {
-                                        val label = selectedSeasonLabel
-                                        val cachedSeason =
-                                            if (!label.isNullOrBlank()) {
-                                                contentRepository.peekSeriesSeasonFullCache(
-                                                    seriesItem.streamId,
-                                                    label,
-                                                    authConfig
-                                                )
+                                    SeriesEpisodeRow(
+                                        item = item,
+                                        focusRequester = requester,
+                                        forceDarkText = forceDarkText,
+                                        onActivate = {
+                                            val label = selectedSeasonLabel
+                                            val cachedSeason =
+                                                if (!label.isNullOrBlank()) {
+                                                    contentRepository.peekSeriesSeasonFullCache(
+                                                        seriesItem.streamId,
+                                                        label,
+                                                        authConfig
+                                                    )
+                                                } else {
+                                                    null
+                                                }
+                                            val queueItems =
+                                                when {
+                                                    seasonEpisodes.isNotEmpty() -> seasonEpisodes
+                                                    seasonFullEpisodes.isNotEmpty() ->
+                                                        seasonFullEpisodes
+                                                    cachedSeason != null -> cachedSeason
+                                                    else -> fallbackEpisodes
+                                                }
+                                            val resumePosition =
+                                                resumePositionsById[item.id]?.takeIf { it > 0 }
+                                            onPlayWithPosition(item, queueItems, resumePosition)
+                                        },
+                                        onFocused = {
+                                            pendingCollapseFocusJob?.cancel()
+                                            pendingCollapseFocusJob = null
+                                            episodesExpanded = true
+                                            onItemFocused(item)
+                                        },
+                                        onMoveLeft = onMoveLeft,
+                                        onMoveUp =
+                                            if (index == 0) {
+                                                { collapseEpisodesSectionToHeader() }
                                             } else {
                                                 null
                                             }
-                                        val queueItems =
-                                            when {
-                                                seasonEpisodes.isNotEmpty() -> seasonEpisodes
-                                                cachedSeason != null -> cachedSeason
-                                                else -> fallbackEpisodes
-                                            }
-                                        val resumePosition =
-                                            resumePositionsById[item.id]?.takeIf { it > 0 }
-                                        onPlayWithPosition(item, queueItems, resumePosition)
-                                    },
-                                    onFocused = {
-                                        episodesExpanded = true
-                                        onItemFocused(item)
-                                    },
-                                    onMoveLeft = onMoveLeft,
-                                    onMoveUp =
-                                        if (index == 0) {
-                                            {
-                                                episodesExpanded = false
-                                                contentItemFocusRequester.requestFocus()
-                                            }
-                                        } else {
-                                            null
-                                        }
-                                )
+                                    )
+                                }
                             }
                         }
                     }
