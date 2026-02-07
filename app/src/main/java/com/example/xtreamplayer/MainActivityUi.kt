@@ -824,7 +824,10 @@ fun RootScreen(
             player?.stop()
             player?.clearMediaItems()
             if (resumeFocusId != null) {
-                resumeFocusRequester.requestFocus()
+                val resumeFocused = requestFocusWithFrames(resumeFocusRequester, "resume-content")
+                if (!resumeFocused) {
+                    requestFocusWithFrames(contentItemFocusRequester, "content-fallback")
+                }
             }
         }
     }
@@ -5133,8 +5136,6 @@ fun SectionScreen(
     var pendingSeries by remember { mutableStateOf<ContentItem?>(null) }
     var pendingSeriesInfo by remember { mutableStateOf<SeriesInfo?>(null) }
     var pendingSeriesReturnFocus by remember { mutableStateOf(false) }
-    var reopenSeriesAfterPlayback by remember { mutableStateOf<ContentItem?>(null) }
-    var awaitingSeriesPlaybackStart by remember { mutableStateOf(false) }
     val searchFocusRequester = remember { FocusRequester() }
     val searchDownContentFocusRequester = remember { FocusRequester() }
     val episodesFocusRequester = remember { FocusRequester() }
@@ -5146,8 +5147,6 @@ fun SectionScreen(
         pendingSeriesInfo = null
         pendingSeriesReturnFocus = false
         pendingEpisodeFocus = false
-        reopenSeriesAfterPlayback = null
-        awaitingSeriesPlaybackStart = false
     }
 
     LaunchedEffect(pendingSeries?.streamId, authConfig) {
@@ -5221,19 +5220,6 @@ fun SectionScreen(
         }
     }
 
-    LaunchedEffect(isPlaybackActive, selectedSeries, reopenSeriesAfterPlayback, awaitingSeriesPlaybackStart) {
-        val seriesToReopen = reopenSeriesAfterPlayback ?: return@LaunchedEffect
-        if (isPlaybackActive) {
-            awaitingSeriesPlaybackStart = false
-            return@LaunchedEffect
-        }
-        if (awaitingSeriesPlaybackStart || selectedSeries != null) return@LaunchedEffect
-        pendingSeriesInfo = null
-        pendingEpisodeFocus = false
-        selectedSeries = seriesToReopen
-        reopenSeriesAfterPlayback = null
-    }
-
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
                 modifier =
@@ -5252,8 +5238,6 @@ fun SectionScreen(
             if (selectedSeries != null) {
                 val activeSeries = selectedSeries!!
                 val closeSeriesDetails = {
-                    reopenSeriesAfterPlayback = null
-                    awaitingSeriesPlaybackStart = false
                     onItemFocused(activeSeries)
                     runCatching { contentItemFocusRequester.requestFocus() }
                     pendingSeriesReturnFocus = true
@@ -5281,18 +5265,16 @@ fun SectionScreen(
                             onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                             onItemFocused = onItemFocused,
                             onPlay = { playItem, items ->
-                                reopenSeriesAfterPlayback = activeSeries
-                                awaitingSeriesPlaybackStart = true
+                                onItemFocused(activeSeries)
+                                dismissSeriesDetailsForPlayback()
                                 onSeriesPlaybackStart(activeSeries)
                                 onPlay(playItem, items)
-                                dismissSeriesDetailsForPlayback()
                             },
                             onPlayWithPosition = { playItem, items, position ->
-                                reopenSeriesAfterPlayback = activeSeries
-                                awaitingSeriesPlaybackStart = true
+                                onItemFocused(activeSeries)
+                                dismissSeriesDetailsForPlayback()
                                 onSeriesPlaybackStart(activeSeries)
                                 onPlayWithPosition(playItem, items, position)
-                                dismissSeriesDetailsForPlayback()
                             },
                             onMoveLeft = {},
                             onBack = closeSeriesDetails,
@@ -5984,8 +5966,6 @@ fun FavoritesScreen(
     var pendingSeries by remember { mutableStateOf<ContentItem?>(null) }
     var pendingSeriesInfo by remember { mutableStateOf<SeriesInfo?>(null) }
     var pendingSeriesReturnFocus by remember { mutableStateOf(false) }
-    var reopenSeriesAfterPlayback by remember { mutableStateOf<ContentItem?>(null) }
-    var awaitingSeriesPlaybackStart by remember { mutableStateOf(false) }
     var pendingViewFocus by remember { mutableStateOf(false) }
     var pendingCategoryEnterFocus by remember { mutableStateOf(false) }
     var lastMenuSelection by remember { mutableStateOf(FavoritesView.ITEMS) }
@@ -6013,8 +5993,6 @@ fun FavoritesScreen(
             pendingSeriesReturnFocus = false
             pendingCategoryEnterFocus = false
             pendingEpisodeFocus = false
-            reopenSeriesAfterPlayback = null
-            awaitingSeriesPlaybackStart = false
         }
     }
 
@@ -6090,19 +6068,6 @@ fun FavoritesScreen(
             }
             pendingSeriesReturnFocus = false
         }
-    }
-
-    LaunchedEffect(isPlaybackActive, selectedSeries, reopenSeriesAfterPlayback, awaitingSeriesPlaybackStart) {
-        val seriesToReopen = reopenSeriesAfterPlayback ?: return@LaunchedEffect
-        if (isPlaybackActive) {
-            awaitingSeriesPlaybackStart = false
-            return@LaunchedEffect
-        }
-        if (awaitingSeriesPlaybackStart || selectedSeries != null) return@LaunchedEffect
-        pendingSeriesInfo = null
-        pendingEpisodeFocus = false
-        selectedSeries = seriesToReopen
-        reopenSeriesAfterPlayback = null
     }
 
     LaunchedEffect(
@@ -6214,8 +6179,6 @@ fun FavoritesScreen(
             if (selectedSeries != null) {
                 val activeSeries = selectedSeries!!
                 val closeSeriesDetails = {
-                    reopenSeriesAfterPlayback = null
-                    awaitingSeriesPlaybackStart = false
                     onItemFocused(activeSeries)
                     runCatching { contentItemFocusRequester.requestFocus() }
                     pendingSeriesReturnFocus = true
@@ -6243,18 +6206,16 @@ fun FavoritesScreen(
                             onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                             onItemFocused = onItemFocused,
                             onPlay = { playItem, items ->
-                                reopenSeriesAfterPlayback = activeSeries
-                                awaitingSeriesPlaybackStart = true
+                                onItemFocused(activeSeries)
+                                dismissSeriesDetailsForPlayback()
                                 onSeriesPlaybackStart(activeSeries)
                                 onPlay(playItem, items)
-                                dismissSeriesDetailsForPlayback()
                             },
                             onPlayWithPosition = { playItem, items, position ->
-                                reopenSeriesAfterPlayback = activeSeries
-                                awaitingSeriesPlaybackStart = true
+                                onItemFocused(activeSeries)
+                                dismissSeriesDetailsForPlayback()
                                 onSeriesPlaybackStart(activeSeries)
                                 onPlayWithPosition(playItem, items, position)
-                                dismissSeriesDetailsForPlayback()
                             },
                             onMoveLeft = {},
                             onBack = closeSeriesDetails,
@@ -6472,8 +6433,6 @@ fun FavoritesScreen(
                     if (selectedSeries != null) {
                         val activeSeries = selectedSeries!!
                         val closeSeriesDetails = {
-                            reopenSeriesAfterPlayback = null
-                            awaitingSeriesPlaybackStart = false
                             onItemFocused(activeSeries)
                             runCatching { contentItemFocusRequester.requestFocus() }
                             pendingSeriesReturnFocus = true
@@ -6500,18 +6459,16 @@ fun FavoritesScreen(
                                     onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                                     onItemFocused = onItemFocused,
                                     onPlay = { playItem, items ->
-                                        reopenSeriesAfterPlayback = activeSeries
-                                        awaitingSeriesPlaybackStart = true
+                                        onItemFocused(activeSeries)
+                                        dismissSeriesDetailsForPlayback()
                                         onSeriesPlaybackStart(activeSeries)
                                         onPlay(playItem, items)
-                                        dismissSeriesDetailsForPlayback()
                                     },
                                     onPlayWithPosition = { playItem, items, position ->
-                                        reopenSeriesAfterPlayback = activeSeries
-                                        awaitingSeriesPlaybackStart = true
+                                        onItemFocused(activeSeries)
+                                        dismissSeriesDetailsForPlayback()
                                         onSeriesPlaybackStart(activeSeries)
                                         onPlayWithPosition(playItem, items, position)
-                                        dismissSeriesDetailsForPlayback()
                                     },
                                     onMoveLeft = {},
                                     onBack = closeSeriesDetails,
@@ -7637,8 +7594,6 @@ fun ContinueWatchingScreen(
     var pendingSeriesInfo by remember { mutableStateOf<SeriesInfo?>(null) }
     var pendingEpisodeFocus by remember { mutableStateOf(false) }
     var pendingSeriesReturnFocus by remember { mutableStateOf(false) }
-    var reopenSeriesAfterPlayback by remember { mutableStateOf<ContentItem?>(null) }
-    var awaitingSeriesPlaybackStart by remember { mutableStateOf(false) }
     var returnFocusItem by remember { mutableStateOf<ContentItem?>(null) }
     var pendingResumeItem by remember { mutableStateOf<ContentItem?>(null) }
     var pendingResumePositionMs by remember { mutableStateOf<Long?>(null) }
@@ -7739,19 +7694,6 @@ fun ContinueWatchingScreen(
         pendingSeriesReturnFocus = false
     }
 
-    LaunchedEffect(isPlaybackActive, selectedSeries, reopenSeriesAfterPlayback, awaitingSeriesPlaybackStart) {
-        val seriesToReopen = reopenSeriesAfterPlayback ?: return@LaunchedEffect
-        if (isPlaybackActive) {
-            awaitingSeriesPlaybackStart = false
-            return@LaunchedEffect
-        }
-        if (awaitingSeriesPlaybackStart || selectedSeries != null) return@LaunchedEffect
-        pendingSeriesInfo = null
-        pendingEpisodeFocus = false
-        selectedSeries = seriesToReopen
-        reopenSeriesAfterPlayback = null
-    }
-
     // Focus is managed by user navigation - no auto-focus on screen load
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -7772,8 +7714,6 @@ fun ContinueWatchingScreen(
             if (selectedSeries != null) {
                 val activeSeries = selectedSeries!!
                 val closeSeriesDetails = {
-                    reopenSeriesAfterPlayback = null
-                    awaitingSeriesPlaybackStart = false
                     val itemToFocus = returnFocusItem ?: activeSeries
                     selectedSeries = null
                     pendingSeriesInfo = null
@@ -7803,18 +7743,16 @@ fun ContinueWatchingScreen(
                             onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                             onItemFocused = onItemFocused,
                             onPlay = { playItem, items ->
-                                reopenSeriesAfterPlayback = activeSeries
-                                awaitingSeriesPlaybackStart = true
+                                onItemFocused(activeSeries)
+                                dismissSeriesDetailsForPlayback()
                                 onSeriesPlaybackStart(activeSeries)
                                 onPlayWithPosition(playItem, items, null)
-                                dismissSeriesDetailsForPlayback()
                             },
                             onPlayWithPosition = { playItem, items, position ->
-                                reopenSeriesAfterPlayback = activeSeries
-                                awaitingSeriesPlaybackStart = true
+                                onItemFocused(activeSeries)
+                                dismissSeriesDetailsForPlayback()
                                 onSeriesPlaybackStart(activeSeries)
                                 onPlayWithPosition(playItem, items, position)
-                                dismissSeriesDetailsForPlayback()
                             },
                             onMoveLeft = {},
                             onBack = closeSeriesDetails,
