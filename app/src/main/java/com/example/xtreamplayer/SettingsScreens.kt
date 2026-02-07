@@ -66,6 +66,7 @@ fun SettingsScreen(
     onOpenSubtitlesApiKey: () -> Unit,
     onManageLists: () -> Unit,
     onRefreshContent: () -> Unit,
+    onToggleCheckUpdatesOnStartup: () -> Unit,
     onCheckForUpdates: () -> Unit,
     onClearCache: () -> Unit,
     onSignOut: () -> Unit
@@ -93,6 +94,11 @@ fun SettingsScreen(
         SettingsAction("Sync library", null, onRefreshContent)
     )
     val aboutActions = listOf(
+        SettingsAction(
+            "Check for updates on startup",
+            flagLabel(settings.checkUpdatesOnStartup),
+            onToggleCheckUpdatesOnStartup
+        ),
         SettingsAction("Check for updates", appVersionLabel, onCheckForUpdates)
     )
 

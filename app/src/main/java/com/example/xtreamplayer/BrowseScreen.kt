@@ -131,6 +131,7 @@ internal fun BrowseScreen(
     onEditList: () -> Unit,
     onSignOutKeepSaved: () -> Unit,
     onSignOutForget: () -> Unit,
+    onToggleCheckUpdatesOnStartup: () -> Unit,
     onCheckForUpdates: () -> Unit,
     hasStoragePermission: (Context) -> Boolean,
     scanMediaStoreMedia: (Context) -> List<LocalFileItem>,
@@ -317,6 +318,7 @@ Row(modifier = Modifier.fillMaxSize()) {
                                 }
                             }
                         },
+                        onToggleCheckUpdatesOnStartup = onToggleCheckUpdatesOnStartup,
                         onCheckForUpdates = { onCheckForUpdates() },
                         onClearCache = {
                             coroutineScope.launch {

@@ -22,6 +22,7 @@ data class SettingsState(
     val autoPlayNext: Boolean = true,
     val nextEpisodeThresholdSeconds: Int = 45,
     val subtitlesEnabled: Boolean = true,
+    val checkUpdatesOnStartup: Boolean = false,
     val rememberLogin: Boolean = true,
     val autoSignIn: Boolean = true,
     val appTheme: AppThemeOption = AppThemeOption.DEFAULT,
