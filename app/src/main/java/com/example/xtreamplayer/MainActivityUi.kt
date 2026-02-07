@@ -5181,26 +5181,19 @@ fun SectionScreen(
                 }
             }
     val lazyItems = pagerFlow.collectAsLazyPagingItems()
-    val activeSeriesForDetails =
-            selectedSeries
-                    ?: reopenSeriesAfterPlayback?.takeIf {
-                        !isPlaybackActive && !awaitingSeriesPlaybackStart
-                    }
 
     // Don't auto-focus content - user must press Right to navigate there
 
-    BackHandler(enabled = activeSeriesForDetails != null) {
-        activeSeriesForDetails?.let(onItemFocused)
+    BackHandler(enabled = selectedSeries != null) {
+        selectedSeries?.let(onItemFocused)
         // Request focus immediately before state change to avoid focus flashing to MenuButton
         runCatching { contentItemFocusRequester.requestFocus() }
         pendingSeriesReturnFocus = true
         selectedSeries = null
-        reopenSeriesAfterPlayback = null
-        awaitingSeriesPlaybackStart = false
     }
 
     LaunchedEffect(pendingSeriesReturnFocus, selectedSeries, lazyItems.itemCount, resumeFocusId) {
-        if (pendingSeriesReturnFocus && activeSeriesForDetails == null) {
+        if (pendingSeriesReturnFocus && selectedSeries == null) {
             // Wait for items to be available
             if (lazyItems.itemCount == 0) return@LaunchedEffect
             // Wait for composition to complete
@@ -5228,10 +5221,17 @@ fun SectionScreen(
         }
     }
 
-    LaunchedEffect(isPlaybackActive) {
+    LaunchedEffect(isPlaybackActive, selectedSeries, reopenSeriesAfterPlayback, awaitingSeriesPlaybackStart) {
+        val seriesToReopen = reopenSeriesAfterPlayback ?: return@LaunchedEffect
         if (isPlaybackActive) {
             awaitingSeriesPlaybackStart = false
+            return@LaunchedEffect
         }
+        if (awaitingSeriesPlaybackStart || selectedSeries != null) return@LaunchedEffect
+        pendingSeriesInfo = null
+        pendingEpisodeFocus = false
+        selectedSeries = seriesToReopen
+        reopenSeriesAfterPlayback = null
     }
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -5249,8 +5249,8 @@ fun SectionScreen(
                                 .border(1.dp, AppTheme.colors.border, shape)
                                 .padding(20.dp)
         ) {
-            if (activeSeriesForDetails != null) {
-                val activeSeries = activeSeriesForDetails
+            if (selectedSeries != null) {
+                val activeSeries = selectedSeries!!
                 val closeSeriesDetails = {
                     reopenSeriesAfterPlayback = null
                     awaitingSeriesPlaybackStart = false
@@ -6003,11 +6003,6 @@ fun FavoritesScreen(
             remember(favoriteCategoryItems) {
                 favoriteCategoryItems.sortedBy { it.name.lowercase() }
             }
-    val activeSeriesForDetails =
-            selectedSeries
-                    ?: reopenSeriesAfterPlayback?.takeIf {
-                        !isPlaybackActive && !awaitingSeriesPlaybackStart
-                    }
 
     LaunchedEffect(activeView) {
         if (activeView == FavoritesView.MENU) {
@@ -6048,18 +6043,16 @@ fun FavoritesScreen(
 
     BackHandler(
             enabled =
-                    activeSeriesForDetails != null ||
+                    selectedSeries != null ||
                             selectedCategory != null ||
                             activeView != FavoritesView.MENU
     ) {
-        if (activeSeriesForDetails != null) {
-            onItemFocused(activeSeriesForDetails)
+        if (selectedSeries != null) {
+            onItemFocused(selectedSeries!!)
             // Request focus immediately before state change to avoid focus flashing to MenuButton
             runCatching { contentItemFocusRequester.requestFocus() }
             pendingSeriesReturnFocus = true
             selectedSeries = null
-            reopenSeriesAfterPlayback = null
-            awaitingSeriesPlaybackStart = false
             pendingEpisodeFocus = false
         } else if (selectedCategory != null) {
             // Request focus immediately before state change
@@ -6076,7 +6069,7 @@ fun FavoritesScreen(
     }
 
     LaunchedEffect(pendingSeriesReturnFocus, selectedSeries) {
-        if (pendingSeriesReturnFocus && activeSeriesForDetails == null) {
+        if (pendingSeriesReturnFocus && selectedSeries == null) {
             // Wait for composition to complete
             withFrameNanos {}
             delay(32)
@@ -6099,22 +6092,29 @@ fun FavoritesScreen(
         }
     }
 
-    LaunchedEffect(isPlaybackActive) {
+    LaunchedEffect(isPlaybackActive, selectedSeries, reopenSeriesAfterPlayback, awaitingSeriesPlaybackStart) {
+        val seriesToReopen = reopenSeriesAfterPlayback ?: return@LaunchedEffect
         if (isPlaybackActive) {
             awaitingSeriesPlaybackStart = false
+            return@LaunchedEffect
         }
+        if (awaitingSeriesPlaybackStart || selectedSeries != null) return@LaunchedEffect
+        pendingSeriesInfo = null
+        pendingEpisodeFocus = false
+        selectedSeries = seriesToReopen
+        reopenSeriesAfterPlayback = null
     }
 
     LaunchedEffect(
             pendingViewFocus,
             activeView,
             selectedCategory,
-            activeSeriesForDetails,
+            selectedSeries,
             sortedContent.size,
             sortedCategories.size,
             resumeFocusId
     ) {
-        if (!pendingViewFocus || activeSeriesForDetails != null) return@LaunchedEffect
+        if (!pendingViewFocus || selectedSeries != null) return@LaunchedEffect
         if (activeView == FavoritesView.CATEGORIES && selectedCategory != null)
                 return@LaunchedEffect
         withFrameNanos {}
@@ -6186,13 +6186,11 @@ fun FavoritesScreen(
                             focusRequester = backFocusRequester,
                             onActivate = {
                                 when {
-                                    activeSeriesForDetails != null -> {
-                                        onItemFocused(activeSeriesForDetails)
+                                    selectedSeries != null -> {
+                                        onItemFocused(selectedSeries!!)
                                         runCatching { contentItemFocusRequester.requestFocus() }
                                         pendingSeriesReturnFocus = true
                                         selectedSeries = null
-                                        reopenSeriesAfterPlayback = null
-                                        awaitingSeriesPlaybackStart = false
                                     }
                                     selectedCategory != null -> {
                                         selectedCategory = null
@@ -6213,8 +6211,8 @@ fun FavoritesScreen(
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
-            if (activeSeriesForDetails != null) {
-                val activeSeries = activeSeriesForDetails
+            if (selectedSeries != null) {
+                val activeSeries = selectedSeries!!
                 val closeSeriesDetails = {
                     reopenSeriesAfterPlayback = null
                     awaitingSeriesPlaybackStart = false
@@ -6823,8 +6821,6 @@ fun CategorySectionScreen(
     var pendingSeries by remember { mutableStateOf<ContentItem?>(null) }
     var pendingSeriesInfo by remember { mutableStateOf<SeriesInfo?>(null) }
     var pendingSeriesReturnFocus by remember { mutableStateOf(false) }
-    var reopenSeriesAfterPlayback by remember { mutableStateOf<ContentItem?>(null) }
-    var awaitingSeriesPlaybackStart by remember { mutableStateOf(false) }
     var pendingCategoryReturnFocus by remember { mutableStateOf(false) }
     var pendingCategoryEnterFocus by remember { mutableStateOf(false) }
     var lastCategoryContentIndex by remember { mutableIntStateOf(0) }
@@ -6859,14 +6855,8 @@ fun CategorySectionScreen(
     val selectedTypeTabFocusRequester = tabFocusRequesters.getOrNull(activeType.ordinal)
 
     val activeQuery = searchState.debouncedQuery
-    val activeSeriesForDetails =
-        selectedSeries
-            ?: reopenSeriesAfterPlayback?.takeIf {
-                !isPlaybackActive && !awaitingSeriesPlaybackStart
-            }
-    val isSeriesDetailsVisible = activeSeriesForDetails != null
 
-    BackHandler(enabled = selectedCategory != null && !isSeriesDetailsVisible) {
+    BackHandler(enabled = selectedCategory != null && selectedSeries == null) {
         // Request focus immediately before state change to avoid focus flashing to MenuButton
         runCatching { contentItemFocusRequester.requestFocus() }
         selectedCategory = null
@@ -6881,8 +6871,6 @@ fun CategorySectionScreen(
         pendingSeries = null
         pendingSeriesInfo = null
         pendingSeriesReturnFocus = false
-        reopenSeriesAfterPlayback = null
-        awaitingSeriesPlaybackStart = false
         pendingCategoryReturnFocus = false
         pendingCategoryEnterFocus = false
         pendingEpisodeFocus = false
@@ -6915,22 +6903,16 @@ fun CategorySectionScreen(
         selectedSeries = item
     }
 
-    LaunchedEffect(isPlaybackActive) {
-        if (isPlaybackActive) {
-            awaitingSeriesPlaybackStart = false
-        }
-    }
-
     // Focus restore logic moved inside content grid block to access lazyItems
 
     LaunchedEffect(
             pendingCategoryReturnFocus,
             selectedCategory,
-            isSeriesDetailsVisible,
+            selectedSeries,
             categories.size,
             activeQuery
     ) {
-        if (!pendingCategoryReturnFocus || selectedCategory != null || isSeriesDetailsVisible) {
+        if (!pendingCategoryReturnFocus || selectedCategory != null || selectedSeries != null) {
             return@LaunchedEffect
         }
         // Wait for categories to be available
@@ -6969,15 +6951,23 @@ fun CategorySectionScreen(
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 val tabsContent: @Composable () -> Unit = tabs@{
-                    if (isSeriesDetailsVisible) return@tabs
+                    if (selectedSeries != null) return@tabs
                     if (selectedCategory != null) {
                         CategoryTypeTab(
                                 label = "Back",
                                 selected = false,
                                 focusRequester = backTabFocusRequester,
                                 onActivate = {
-                                    selectedCategory = null
-                                    pendingCategoryReturnFocus = true
+                                    if (selectedSeries != null) {
+                                        val seriesItem = selectedSeries!!
+                                        onItemFocused(seriesItem)
+                                        runCatching { contentItemFocusRequester.requestFocus() }
+                                        pendingSeriesReturnFocus = true
+                                        selectedSeries = null
+                                    } else {
+                                        selectedCategory = null
+                                        pendingCategoryReturnFocus = true
+                                    }
                                 },
                                 onMoveLeft = { searchFocusRequester.requestFocus() },
                                 onMoveRight = { tabFocusRequesters.first().requestFocus() }
@@ -7018,7 +7008,7 @@ fun CategorySectionScreen(
                             letterSpacing = 1.sp
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    if (!isSeriesDetailsVisible) {
+                    if (selectedSeries == null) {
                         Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
                             Row(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -7042,7 +7032,7 @@ fun CategorySectionScreen(
                                 letterSpacing = 1.sp
                         )
                         Spacer(modifier = Modifier.weight(1f))
-                        if (!isSeriesDetailsVisible) {
+                        if (selectedSeries == null) {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 tabsContent()
                             }
@@ -7050,7 +7040,7 @@ fun CategorySectionScreen(
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
-                if (!isSeriesDetailsVisible) {
+                if (selectedSeries == null) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         SearchInput(
                                 query = searchState.query,
@@ -7076,7 +7066,7 @@ fun CategorySectionScreen(
                                     }
                                 },
                                 onMoveDown = {
-                                    if (isSeriesDetailsVisible) {
+                                    if (selectedSeries != null) {
                                         pendingEpisodeFocus = true
                                     } else if (selectedCategory != null) {
                                         val focused =
@@ -7139,7 +7129,7 @@ fun CategorySectionScreen(
                         lazyItems.itemCount,
                         lazyItems.loadState.refresh
                 ) {
-                    if (!pendingCategoryEnterFocus || isSeriesDetailsVisible)
+                    if (!pendingCategoryEnterFocus || selectedSeries != null)
                             return@LaunchedEffect
                     // Wait for items to be available before attempting focus
                     if (lazyItems.itemCount == 0) return@LaunchedEffect
@@ -7159,11 +7149,11 @@ fun CategorySectionScreen(
                 }
                 LaunchedEffect(
                         pendingSeriesReturnFocus,
-                        isSeriesDetailsVisible,
+                        selectedSeries,
                         lazyItems.itemCount,
                         resumeFocusId
                 ) {
-                    if (pendingSeriesReturnFocus && !isSeriesDetailsVisible) {
+                    if (pendingSeriesReturnFocus && selectedSeries == null) {
                         // Wait for items to be available
                         if (lazyItems.itemCount == 0) return@LaunchedEffect
                         val itemsSnapshot = lazyItems.itemSnapshotList.items
@@ -7218,7 +7208,7 @@ fun CategorySectionScreen(
                     Column(
                             modifier = Modifier
                                     .fillMaxSize()
-                                    .alpha(if (isSeriesDetailsVisible) 0f else 1f)
+                                    .alpha(if (selectedSeries != null) 0f else 1f)
                     ) {
                         // Don't auto-focus content - user must press Right to navigate there
                         Text(
@@ -7240,7 +7230,7 @@ fun CategorySectionScreen(
                                     fontFamily = AppTheme.fontFamily,
                                     letterSpacing = 0.6.sp,
                                     modifier =
-                                            if (!isSeriesDetailsVisible)
+                                            if (selectedSeries == null)
                                                 Modifier.focusRequester(contentItemFocusRequester)
                                                         .focusable()
                                             else Modifier
@@ -7255,7 +7245,7 @@ fun CategorySectionScreen(
                                     fontFamily = AppTheme.fontFamily,
                                     letterSpacing = 0.6.sp,
                                     modifier =
-                                            if (!isSeriesDetailsVisible)
+                                            if (selectedSeries == null)
                                                 Modifier.focusRequester(contentItemFocusRequester)
                                                         .focusable()
                                             else Modifier
@@ -7270,7 +7260,7 @@ fun CategorySectionScreen(
                                     fontFamily = AppTheme.fontFamily,
                                     letterSpacing = 0.6.sp,
                                     modifier =
-                                            if (!isSeriesDetailsVisible)
+                                            if (selectedSeries == null)
                                                 Modifier.focusRequester(contentItemFocusRequester)
                                                         .focusable()
                                             else Modifier
@@ -7282,7 +7272,7 @@ fun CategorySectionScreen(
                                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                                     modifier = Modifier.fillMaxWidth().weight(1f),
                                     state = contentGridState,
-                                    userScrollEnabled = !isSeriesDetailsVisible
+                                    userScrollEnabled = selectedSeries == null
                             ) {
                                 items(
                                         count = lazyItems.itemCount,
@@ -7301,7 +7291,7 @@ fun CategorySectionScreen(
                                                 -1
                                             }
                                     val requester =
-                                            if (!isSeriesDetailsVisible) {
+                                            if (selectedSeries == null) {
                                                 when {
                                                     index == searchDownIndex ->
                                                             searchDownContentFocusRequester
@@ -7329,7 +7319,7 @@ fun CategorySectionScreen(
                                             isLeftEdge = isLeftEdge,
                                             isFavorite = item != null && isItemFavorite(item),
                                             onActivate =
-                                                    if (item != null && !isSeriesDetailsVisible) {
+                                                    if (item != null && selectedSeries == null) {
                                                         {
                                                             if (activeType == ContentType.SERIES &&
                                                                             item.containerExtension
@@ -7354,7 +7344,7 @@ fun CategorySectionScreen(
                                                         null
                                                     },
                                             onFocused =
-                                                    if (!isSeriesDetailsVisible) {
+                                                    if (selectedSeries == null) {
                                                         { focusedItem ->
                                                             lastCategoryContentIndex = index
                                                             lastCategoryContentId = focusedItem.id
@@ -7364,15 +7354,15 @@ fun CategorySectionScreen(
                                                         { _ -> }
                                                     },
                                             onMoveLeft =
-                                                    { if (!isSeriesDetailsVisible) onMoveLeft() },
+                                                    { if (selectedSeries == null) onMoveLeft() },
                                             onMoveUp =
-                                                    if (isTopRow && !isSeriesDetailsVisible) {
+                                                    if (isTopRow && selectedSeries == null) {
                                                         { searchFocusRequester.requestFocus() }
                                                     } else {
                                                         null
                                                     },
                                             onLongClick =
-                                                    if (item != null && !isSeriesDetailsVisible) {
+                                                    if (item != null && selectedSeries == null) {
                                                         { onToggleFavorite(item) }
                                                     } else {
                                                         null
@@ -7388,11 +7378,9 @@ fun CategorySectionScreen(
                     }
 
                     // SeriesSeasonsScreen overlay - shown on top when selected
-                    if (activeSeriesForDetails != null) {
-                        val activeSeries = activeSeriesForDetails
+                    if (selectedSeries != null) {
+                        val activeSeries = selectedSeries!!
                         val closeSeriesDetails = {
-                            reopenSeriesAfterPlayback = null
-                            awaitingSeriesPlaybackStart = false
                             onItemFocused(activeSeries)
                             runCatching { contentItemFocusRequester.requestFocus() }
                             pendingSeriesReturnFocus = true
@@ -7420,18 +7408,14 @@ fun CategorySectionScreen(
                                     onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                                     onItemFocused = onItemFocused,
                                     onPlay = { playItem, items ->
-                                        reopenSeriesAfterPlayback = activeSeries
-                                        awaitingSeriesPlaybackStart = true
+                                        dismissSeriesDetailsForPlayback()
                                         onSeriesPlaybackStart(activeSeries)
                                         onPlay(playItem, items)
-                                        dismissSeriesDetailsForPlayback()
                                     },
                                     onPlayWithPosition = { playItem, items, position ->
-                                        reopenSeriesAfterPlayback = activeSeries
-                                        awaitingSeriesPlaybackStart = true
+                                        dismissSeriesDetailsForPlayback()
                                         onSeriesPlaybackStart(activeSeries)
                                         onPlayWithPosition(playItem, items, position)
-                                        dismissSeriesDetailsForPlayback()
                                     },
                                     onMoveLeft = {},
                                     onBack = closeSeriesDetails,
@@ -7667,11 +7651,6 @@ fun ContinueWatchingScreen(
                     }
                 }
             }
-    val activeSeriesForDetails =
-            selectedSeries
-                    ?: reopenSeriesAfterPlayback?.takeIf {
-                        !isPlaybackActive && !awaitingSeriesPlaybackStart
-                    }
     val resolvedParents = remember { androidx.compose.runtime.mutableStateMapOf<String, ContentItem>() }
     val resolveSeriesParent: suspend (ContentItem) -> ContentItem? = { resumeItem ->
         val rawTitle = resumeItem.title
@@ -7732,13 +7711,8 @@ fun ContinueWatchingScreen(
         pendingEpisodeFocus = false
     }
 
-    LaunchedEffect(
-        pendingSeriesReturnFocus,
-        activeSeriesForDetails,
-        displayEntries.size,
-        resumeFocusId
-    ) {
-        if (!pendingSeriesReturnFocus || activeSeriesForDetails != null || displayEntries.isEmpty()) {
+    LaunchedEffect(pendingSeriesReturnFocus, selectedSeries, displayEntries.size, resumeFocusId) {
+        if (!pendingSeriesReturnFocus || selectedSeries != null || displayEntries.isEmpty()) {
             return@LaunchedEffect
         }
         withFrameNanos {}
@@ -7765,10 +7739,17 @@ fun ContinueWatchingScreen(
         pendingSeriesReturnFocus = false
     }
 
-    LaunchedEffect(isPlaybackActive) {
+    LaunchedEffect(isPlaybackActive, selectedSeries, reopenSeriesAfterPlayback, awaitingSeriesPlaybackStart) {
+        val seriesToReopen = reopenSeriesAfterPlayback ?: return@LaunchedEffect
         if (isPlaybackActive) {
             awaitingSeriesPlaybackStart = false
+            return@LaunchedEffect
         }
+        if (awaitingSeriesPlaybackStart || selectedSeries != null) return@LaunchedEffect
+        pendingSeriesInfo = null
+        pendingEpisodeFocus = false
+        selectedSeries = seriesToReopen
+        reopenSeriesAfterPlayback = null
     }
 
     // Focus is managed by user navigation - no auto-focus on screen load
@@ -7788,8 +7769,8 @@ fun ContinueWatchingScreen(
                                 .border(1.dp, AppTheme.colors.border, shape)
                                 .padding(20.dp)
         ) {
-            if (activeSeriesForDetails != null) {
-                val activeSeries = activeSeriesForDetails
+            if (selectedSeries != null) {
+                val activeSeries = selectedSeries!!
                 val closeSeriesDetails = {
                     reopenSeriesAfterPlayback = null
                     awaitingSeriesPlaybackStart = false
