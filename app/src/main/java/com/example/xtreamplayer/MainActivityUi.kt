@@ -1137,7 +1137,13 @@ fun RootScreen(
         ) {
             val position = safePlayer.currentPosition
             val duration = safePlayer.duration
-            if (position >= RESUME_MIN_WATCH_MS) {
+            val minWatchMs =
+                if (duration > 0) {
+                    minOf(RESUME_MIN_WATCH_MS, duration / 10)
+                } else {
+                    RESUME_MIN_WATCH_MS
+                }
+            if (position >= minWatchMs) {
                 val progressPercent = if (duration > 0) (position * 100) / duration else 0
                 coroutineScope.launch {
                     if (duration > 0 && progressPercent >= 90) {
@@ -7688,7 +7694,8 @@ fun ContinueWatchingScreen(
                     }
                     coroutineScope.launch {
                         withFrameNanos {}
-                        val focused = runCatching { resumeFocusRequester.requestFocus() }.isSuccess
+                        val focused =
+                            runCatching { resumeFocusRequester.requestFocus() }.getOrDefault(false)
                         if (!focused) {
                             runCatching { contentItemFocusRequester.requestFocus() }
                         }
