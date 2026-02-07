@@ -5,6 +5,8 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,13 +15,15 @@ import timber.log.Timber
 /**
  * Monitors network connectivity to pause/resume sync operations
  */
-class NetworkMonitor(context: Context) {
+class NetworkMonitor(context: Context) : AutoCloseable {
     private val connectivityManager = context.getSystemService(ConnectivityManager::class.java)
 
     private val _networkAvailable = MutableStateFlow(isNetworkAvailable())
     val networkAvailable: StateFlow<Boolean> = _networkAvailable.asStateFlow()
 
     private var isMonitoring = false
+    private var lifecycleOwner: LifecycleOwner? = null
+    private var lifecycleObserver: DefaultLifecycleObserver? = null
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -86,6 +90,32 @@ class NetworkMonitor(context: Context) {
     }
 
     /**
+     * Start monitoring and automatically unregister when the owner is destroyed.
+     */
+    fun startMonitoring(owner: LifecycleOwner) {
+        startMonitoring()
+        if (lifecycleOwner === owner) return
+
+        lifecycleObserver?.let { observer ->
+            lifecycleOwner?.lifecycle?.removeObserver(observer)
+        }
+
+        val observer = object : DefaultLifecycleObserver {
+            override fun onDestroy(owner: LifecycleOwner) {
+                stopMonitoring()
+                owner.lifecycle.removeObserver(this)
+                if (lifecycleOwner === owner) {
+                    lifecycleOwner = null
+                    lifecycleObserver = null
+                }
+            }
+        }
+        owner.lifecycle.addObserver(observer)
+        lifecycleOwner = owner
+        lifecycleObserver = observer
+    }
+
+    /**
      * Stop monitoring network state
      */
     fun stopMonitoring() {
@@ -98,5 +128,14 @@ class NetworkMonitor(context: Context) {
 
         connectivityManager.unregisterNetworkCallback(networkCallback)
         isMonitoring = false
+        lifecycleObserver?.let { observer ->
+            lifecycleOwner?.lifecycle?.removeObserver(observer)
+        }
+        lifecycleOwner = null
+        lifecycleObserver = null
+    }
+
+    override fun close() {
+        stopMonitoring()
     }
 }

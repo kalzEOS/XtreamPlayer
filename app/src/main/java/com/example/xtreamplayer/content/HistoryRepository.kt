@@ -29,6 +29,9 @@ class HistoryRepository(private val context: Context) {
         context.historyDataStore.edit { prefs ->
             val raw = prefs[Keys.HISTORY_ENTRIES] ?: "[]"
             val entries = parseEntries(raw).toMutableList()
+            if (entries.firstOrNull()?.key == key) {
+                return@edit
+            }
             entries.removeAll { it.key == key }
             entries.add(0, HistoryEntry(key = key, item = item))
             val trimmed = entries.take(MAX_HISTORY)

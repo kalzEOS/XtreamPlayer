@@ -181,8 +181,6 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import java.util.Locale
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
 import android.provider.Settings
 import okhttp3.OkHttpClient
 import kotlinx.coroutines.Dispatchers
@@ -227,44 +225,6 @@ private const val RESUME_MIN_WATCH_MS = 30_000L
 private const val LOCAL_RESUME_MAX_PROGRESS_PERCENT = 95L
 
 @Composable
-private fun TopCenterClock(
-    clockFormat: ClockFormatOption,
-    fontFamily: FontFamily,
-    modifier: Modifier = Modifier
-) {
-    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    val pattern = if (clockFormat == ClockFormatOption.AM_PM) "h:mm a" else "HH:mm"
-    val formatter = remember(pattern) { SimpleDateFormat(pattern, Locale.getDefault()) }
-
-    LaunchedEffect(clockFormat) {
-        while (true) {
-            val now = System.currentTimeMillis()
-            nowMillis = now
-            val delayMs = (60_000L - (now % 60_000L)).coerceAtLeast(250L)
-            delay(delayMs)
-        }
-    }
-
-    Box(
-        modifier =
-            modifier.clip(RoundedCornerShape(12.dp))
-                .background(AppTheme.colors.surfaceAlt.copy(alpha = 0.78f))
-                .border(1.dp, AppTheme.colors.borderStrong, RoundedCornerShape(12.dp))
-                .padding(horizontal = 16.dp, vertical = 6.dp)
-    ) {
-        Text(
-            text = formatter.format(Date(nowMillis)),
-            color = AppTheme.colors.textPrimary,
-            fontSize = 16.sp,
-            fontFamily = fontFamily,
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = 0.4.sp
-        )
-    }
-}
-
-
-@Composable
 fun RootScreen(
         playbackSettingsController: PlaybackSettingsController,
         playbackEngine: Media3PlaybackEngine,
@@ -272,7 +232,8 @@ fun RootScreen(
         favoritesRepository: FavoritesRepository,
         historyRepository: HistoryRepository,
         continueWatchingRepository: ContinueWatchingRepository,
-        subtitleRepository: SubtitleRepository
+        subtitleRepository: SubtitleRepository,
+        updateHttpClient: OkHttpClient
 ) {
     val context = LocalContext.current
     val appVersionName = remember {
@@ -602,8 +563,6 @@ fun RootScreen(
     var refreshToken by remember { mutableStateOf(0) }
     var hasCacheForAccount by remember { mutableStateOf<Boolean?>(null) }
     var hasSearchIndex by remember { mutableStateOf<Boolean?>(null) }
-    val updateHttpClient = remember { OkHttpClient() }
-
     val sectionSyncStates = remember {
         mutableStateMapOf<Section, SectionSyncState>()
     }

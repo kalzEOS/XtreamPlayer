@@ -98,7 +98,9 @@ class OpenSubtitlesApi(
                             id = item.getString("id"),
                             fileId = fileId,
                             language = attributes.optString("language", "en"),
-                            languageName = attributes.optString("language", "English"),
+                            languageName =
+                                attributes.optString("language_name")
+                                    .ifBlank { attributes.optString("language", "English") },
                             release = attributes.optString("release", "Unknown"),
                             downloadCount = attributes.optInt("download_count", 0),
                             hearingImpaired = attributes.optBoolean("hearing_impaired", false),

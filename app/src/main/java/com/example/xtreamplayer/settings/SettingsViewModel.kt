@@ -14,6 +14,12 @@ import javax.inject.Inject
 class SettingsViewModel @Inject constructor(
     private val repository: SettingsRepository
 ) : ViewModel() {
+    init {
+        viewModelScope.launch {
+            repository.migrateBootSettingsToDataStore()
+        }
+    }
+
     val settings: StateFlow<SettingsState> = repository.settings.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),

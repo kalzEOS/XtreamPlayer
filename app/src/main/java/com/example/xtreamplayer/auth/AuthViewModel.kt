@@ -117,7 +117,7 @@ class AuthViewModel @Inject constructor(
                     autoSignInSuppressed = false
                 )
             }.onFailure { error ->
-                Timber.e(error, "Authentication failed for user: ${config.username}")
+                Timber.e(error, "Authentication failed")
                 _uiState.value = _uiState.value.copy(
                     isSignedIn = false,
                     isLoading = false,

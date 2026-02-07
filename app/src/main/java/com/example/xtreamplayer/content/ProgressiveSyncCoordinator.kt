@@ -8,10 +8,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
@@ -55,10 +57,12 @@ class ProgressiveSyncCoordinator(
             }
 
             // Update state
-            _syncState.value = _syncState.value.copy(
-                phase = SyncPhase.FAST_START,
-                lastSyncTimestamp = System.currentTimeMillis()
-            )
+            updateSyncState {
+                it.copy(
+                    phase = SyncPhase.FAST_START,
+                    lastSyncTimestamp = System.currentTimeMillis()
+                )
+            }
 
             // Save state
             settingsRepository.saveSyncState(_syncState.value, accountKey())
@@ -78,19 +82,19 @@ class ProgressiveSyncCoordinator(
                 result.onSuccess { fastStartResult ->
                     Timber.i("Fast start complete: ${fastStartResult.itemsIndexed} items")
 
-                    _syncState.value = _syncState.value.copy(
-                        phase = SyncPhase.IDLE,
-                        fastStartReady = true,
-                        lastSyncTimestamp = System.currentTimeMillis()
-                    )
+                    updateSyncState {
+                        it.copy(
+                            phase = SyncPhase.IDLE,
+                            fastStartReady = true,
+                            lastSyncTimestamp = System.currentTimeMillis()
+                        )
+                    }
 
                     settingsRepository.saveSyncState(_syncState.value, accountKey())
                 }.onFailure { error ->
                     Timber.e(error, "Fast start failed")
 
-                    _syncState.value = _syncState.value.copy(
-                        phase = SyncPhase.IDLE
-                    )
+                    updateSyncState { it.copy(phase = SyncPhase.IDLE) }
                 }
             }
         }
@@ -125,11 +129,13 @@ class ProgressiveSyncCoordinator(
             }
 
             // Update state
-            _syncState.value = _syncState.value.copy(
-                phase = SyncPhase.BACKGROUND_FULL,
-                fullIndexComplete = if (force || fullReindex) false else _syncState.value.fullIndexComplete,
-                lastSyncTimestamp = System.currentTimeMillis()
-            )
+            updateSyncState {
+                it.copy(
+                    phase = SyncPhase.BACKGROUND_FULL,
+                    fullIndexComplete = if (force || fullReindex) false else it.fullIndexComplete,
+                    lastSyncTimestamp = System.currentTimeMillis()
+                )
+            }
 
             settingsRepository.saveSyncState(_syncState.value, accountKey())
 
@@ -144,9 +150,7 @@ class ProgressiveSyncCoordinator(
                                 authConfig = authConfig,
                                 sectionsToSync = sections,
                                 onProgress = { progress ->
-                                    _syncState.value = _syncState.value.copy(
-                                        currentSection = progress.section
-                                    )
+                                    updateSyncState { it.copy(currentSection = progress.section) }
 
                                     updateSectionProgress(progress.section, SectionSyncProgress(
                                         itemsIndexed = progress.itemsIndexed,
@@ -184,23 +188,27 @@ class ProgressiveSyncCoordinator(
                 result.onSuccess {
                     if (_syncState.value.isPaused) {
                         Timber.i("Background sync paused")
-                        _syncState.value = _syncState.value.copy(
-                            phase = SyncPhase.PAUSED,
-                            currentSection = null
-                        )
+                        updateSyncState {
+                            it.copy(
+                                phase = SyncPhase.PAUSED,
+                                currentSection = null
+                            )
+                        }
                         settingsRepository.saveSyncState(_syncState.value, accountKey())
                         return@onSuccess
                     }
 
                     Timber.i("Background sync complete")
 
-                    _syncState.value = _syncState.value.copy(
-                        phase = SyncPhase.COMPLETE,
-                        fullIndexComplete = true,
-                        sectionsCompleted = sections.toSet(),
-                        currentSection = null,
-                        lastSyncTimestamp = System.currentTimeMillis()
-                    )
+                    updateSyncState {
+                        it.copy(
+                            phase = SyncPhase.COMPLETE,
+                            fullIndexComplete = true,
+                            sectionsCompleted = sections.toSet(),
+                            currentSection = null,
+                            lastSyncTimestamp = System.currentTimeMillis()
+                        )
+                    }
 
                     settingsRepository.saveSyncState(_syncState.value, accountKey())
                 }.onFailure { error ->
@@ -211,18 +219,22 @@ class ProgressiveSyncCoordinator(
 
                     if (error is kotlinx.coroutines.CancellationException && _syncState.value.isPaused) {
                         Timber.i("Background sync paused (cancelled)")
-                        _syncState.value = _syncState.value.copy(
-                            phase = SyncPhase.PAUSED,
-                            currentSection = null
-                        )
+                        updateSyncState {
+                            it.copy(
+                                phase = SyncPhase.PAUSED,
+                                currentSection = null
+                            )
+                        }
                         settingsRepository.saveSyncState(_syncState.value, accountKey())
                     } else {
                         Timber.e(error, "Background sync failed")
 
-                        _syncState.value = _syncState.value.copy(
-                            phase = SyncPhase.IDLE,
-                            currentSection = null
-                        )
+                        updateSyncState {
+                            it.copy(
+                                phase = SyncPhase.IDLE,
+                                currentSection = null
+                            )
+                        }
                     }
                 }
             }
@@ -286,7 +298,7 @@ class ProgressiveSyncCoordinator(
                     activeSyncMutex.withLock {
                         activeSyncSections.remove(section)
                     }
-                    onDemandJobs.remove(section)
+                    syncMutex.withLock { onDemandJobs.remove(section) }
                 }
             }
         }
@@ -304,11 +316,13 @@ class ProgressiveSyncCoordinator(
 
             Timber.i("Pausing background sync")
 
-            _syncState.value = _syncState.value.copy(
-                isPaused = true,
-                phase = SyncPhase.PAUSED,
-                lastSyncTimestamp = System.currentTimeMillis()
-            )
+            updateSyncState {
+                it.copy(
+                    isPaused = true,
+                    phase = SyncPhase.PAUSED,
+                    lastSyncTimestamp = System.currentTimeMillis()
+                )
+            }
 
             backgroundSyncJob?.cancel()
             settingsRepository.saveSyncState(_syncState.value, accountKey())
@@ -344,12 +358,14 @@ class ProgressiveSyncCoordinator(
             onDemandJobs.values.forEach { it.cancel() }
             onDemandJobs.clear()
 
-            _syncState.value = _syncState.value.copy(
-                isPaused = true,
-                phase = SyncPhase.PAUSED,
-                currentSection = null,
-                lastSyncTimestamp = System.currentTimeMillis()
-            )
+            updateSyncState {
+                it.copy(
+                    isPaused = true,
+                    phase = SyncPhase.PAUSED,
+                    currentSection = null,
+                    lastSyncTimestamp = System.currentTimeMillis()
+                )
+            }
             settingsRepository.saveSyncState(_syncState.value, accountKey())
         }
         activeSyncMutex.withLock { activeSyncSections.clear() }
@@ -369,11 +385,13 @@ class ProgressiveSyncCoordinator(
 
             Timber.i("Resuming background sync")
 
-            _syncState.value = _syncState.value.copy(
-                isPaused = false,
-                phase = SyncPhase.BACKGROUND_FULL,
-                lastSyncTimestamp = System.currentTimeMillis()
-            )
+            updateSyncState {
+                it.copy(
+                    isPaused = false,
+                    phase = SyncPhase.BACKGROUND_FULL,
+                    lastSyncTimestamp = System.currentTimeMillis()
+                )
+            }
 
             settingsRepository.saveSyncState(_syncState.value, accountKey())
             shouldResume = true
@@ -392,12 +410,14 @@ class ProgressiveSyncCoordinator(
             if (!_syncState.value.isPaused) {
                 return
             }
-            _syncState.value = _syncState.value.copy(
-                isPaused = false,
-                phase = SyncPhase.IDLE,
-                currentSection = null,
-                lastSyncTimestamp = System.currentTimeMillis()
-            )
+            updateSyncState {
+                it.copy(
+                    isPaused = false,
+                    phase = SyncPhase.IDLE,
+                    currentSection = null,
+                    lastSyncTimestamp = System.currentTimeMillis()
+                )
+            }
             settingsRepository.saveSyncState(_syncState.value, accountKey())
         }
 
@@ -411,7 +431,7 @@ class ProgressiveSyncCoordinator(
     suspend fun startManualSync() {
         syncMutex.withLock {
             if (_syncState.value.isPaused) {
-                _syncState.value = _syncState.value.copy(isPaused = false)
+                updateSyncState { it.copy(isPaused = false) }
             }
         }
         // Faster, incremental sync that skips already indexed pages
@@ -423,27 +443,25 @@ class ProgressiveSyncCoordinator(
      */
     fun cancelAllSyncs() {
         Timber.i("Cancelling all sync operations")
+        scope.launch {
+            cancelAllSyncsInternal()
+        }
+    }
 
-        fastStartJob?.cancel()
-        backgroundSyncJob?.cancel()
-        onDemandJobs.values.forEach { it.cancel() }
-        onDemandJobs.clear()
-        if (activeSyncMutex.tryLock()) {
-            try {
-                activeSyncSections.clear()
-            } finally {
-                activeSyncMutex.unlock()
-            }
-        } else {
-            scope.launch {
-                activeSyncMutex.withLock { activeSyncSections.clear() }
+    private suspend fun cancelAllSyncsInternal() {
+        syncMutex.withLock {
+            fastStartJob?.cancel()
+            backgroundSyncJob?.cancel()
+            onDemandJobs.values.forEach { it.cancel() }
+            onDemandJobs.clear()
+            updateSyncState {
+                it.copy(
+                    phase = SyncPhase.IDLE,
+                    currentSection = null
+                )
             }
         }
-
-        _syncState.value = _syncState.value.copy(
-            phase = SyncPhase.IDLE,
-            currentSection = null
-        )
+        activeSyncMutex.withLock { activeSyncSections.clear() }
     }
 
     /**
@@ -467,12 +485,11 @@ class ProgressiveSyncCoordinator(
      * Update section progress in state
      */
     private fun updateSectionProgress(section: Section, progress: SectionSyncProgress) {
-        val currentProgress = _syncState.value.sectionProgress.toMutableMap()
-        currentProgress[section] = progress
-
-        _syncState.value = _syncState.value.copy(
-            sectionProgress = currentProgress
-        )
+        updateSyncState { state ->
+            val currentProgress = state.sectionProgress.toMutableMap()
+            currentProgress[section] = progress
+            state.copy(sectionProgress = currentProgress)
+        }
     }
 
     private fun accountKey(): String {
@@ -480,10 +497,18 @@ class ProgressiveSyncCoordinator(
     }
 
     fun restoreState(state: ProgressiveSyncState) {
-        _syncState.value = state.copy(
-            currentSection = null,
-            sectionProgress = emptyMap()
-        )
+        updateSyncState {
+            state.copy(
+                currentSection = null,
+                sectionProgress = emptyMap()
+            )
+        }
+    }
+
+    private inline fun updateSyncState(
+        crossinline transform: (ProgressiveSyncState) -> ProgressiveSyncState
+    ) {
+        _syncState.update { current -> transform(current) }
     }
 
     /**
@@ -491,7 +516,7 @@ class ProgressiveSyncCoordinator(
      */
     fun dispose() {
         Timber.d("Disposing ProgressiveSyncCoordinator")
-        cancelAllSyncs()
+        runBlocking { cancelAllSyncsInternal() }
         scope.cancel()
     }
 }

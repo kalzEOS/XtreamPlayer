@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
+import timber.log.Timber
 
 private val Context.continueWatchingDataStore by preferencesDataStore(name = "continue_watching")
 
@@ -201,7 +202,10 @@ class ContinueWatchingRepository(private val context: Context) {
                 )
             }
             entries
-        }.getOrElse { emptyList() }
+        }.getOrElse { error ->
+            Timber.w(error, "Failed to parse Continue Watching entries; falling back to empty list")
+            emptyList()
+        }
     }
 
     private fun parseEntries(raw: String): List<ContinueWatchingEntry> {

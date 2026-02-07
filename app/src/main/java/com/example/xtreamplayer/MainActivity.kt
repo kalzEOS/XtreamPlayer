@@ -11,6 +11,7 @@ import com.example.xtreamplayer.content.SubtitleRepository
 import com.example.xtreamplayer.player.Media3PlaybackEngine
 import com.example.xtreamplayer.settings.PlaybackSettingsController
 import dagger.hilt.android.AndroidEntryPoint
+import okhttp3.OkHttpClient
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -29,6 +30,8 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var subtitleRepository: SubtitleRepository
 
+    @Inject lateinit var okHttpClient: OkHttpClient
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
@@ -39,7 +42,8 @@ class MainActivity : ComponentActivity() {
                     favoritesRepository = favoritesRepository,
                     historyRepository = historyRepository,
                     continueWatchingRepository = continueWatchingRepository,
-                    subtitleRepository = subtitleRepository
+                    subtitleRepository = subtitleRepository,
+                    updateHttpClient = okHttpClient
             )
         }
     }
