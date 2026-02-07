@@ -315,7 +315,6 @@ fun RootScreen(
     var activePlaybackItem by playerViewModel.activePlaybackItem
     var activePlaybackItems by playerViewModel.activePlaybackItems
     var activePlaybackSeriesParent by playerViewModel.activePlaybackSeriesParent
-    var playbackTransitionActive by remember { mutableStateOf(false) }
     var movieInfoItem by remember { mutableStateOf<ContentItem?>(null) }
     var movieInfoQueue by remember { mutableStateOf<List<ContentItem>>(emptyList()) }
     var movieInfoInfo by remember { mutableStateOf<MovieInfo?>(null) }
@@ -821,10 +820,7 @@ fun RootScreen(
                 resumePositionMs = null
             }
             player.playWhenReady = true
-            delay(120)
-            playbackTransitionActive = false
         } else {
-            playbackTransitionActive = false
             player?.stop()
             player?.clearMediaItems()
             if (resumeFocusId != null) {
@@ -914,7 +910,6 @@ fun RootScreen(
                         BufferProfile.VOD
                     }
             playbackEngine.setBufferProfile(profile)
-            playbackTransitionActive = true
             val queue = buildPlaybackQueue(items, item, config)
             activePlaybackQueue = queue
             activePlaybackTitle = queue.items.getOrNull(queue.startIndex)?.title ?: item.title
@@ -953,7 +948,6 @@ fun RootScreen(
             activePlaybackSeriesParent = null
             playbackEngine.setBufferProfile(BufferProfile.VOD)
             resumePositionMs = localResumeByMediaId[mediaId]?.positionMs?.takeIf { it > 0 }
-            playbackTransitionActive = true
             activePlaybackQueue = buildLocalPlaybackQueue(localFiles, index)
             activePlaybackTitle = selectedFile.displayName
         }
@@ -972,7 +966,6 @@ fun RootScreen(
             }
             resumePositionMs = if (positionMs > 0) positionMs else null
             playbackEngine.setBufferProfile(BufferProfile.VOD)
-            playbackTransitionActive = true
             val queue = buildPlaybackQueue(items, item, config)
             activePlaybackQueue = queue
             activePlaybackTitle = queue.items.getOrNull(queue.startIndex)?.title ?: item.title
@@ -999,7 +992,6 @@ fun RootScreen(
                                 BufferProfile.VOD
                             }
                     playbackEngine.setBufferProfile(profile)
-                    playbackTransitionActive = true
                     val queue = buildPlaybackQueue(items, item, config)
                     activePlaybackQueue = queue
                     activePlaybackTitle = queue.items.getOrNull(queue.startIndex)?.title ?: item.title
@@ -1832,15 +1824,6 @@ fun RootScreen(
             )
         }
 
-        if (playbackTransitionActive) {
-            Box(
-                modifier =
-                    Modifier
-                        .fillMaxSize()
-                        .background(Color.Black)
-            )
-        }
-
         PlayerScreen(
                 activePlaybackQueue = activePlaybackQueue,
                 activePlaybackTitle = activePlaybackTitle,
@@ -1856,7 +1839,6 @@ fun RootScreen(
                     activePlaybackItem = null
                     activePlaybackSeriesParent = null
                     resumePositionMs = null
-                    playbackTransitionActive = false
                 },
                 onPlayNextEpisode = { playbackEngine.player.seekToNextMediaItem() },
                 onLiveChannelSwitch = switchLiveChannel,
