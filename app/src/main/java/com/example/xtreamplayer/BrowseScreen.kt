@@ -1,6 +1,7 @@
 package com.example.xtreamplayer
 
 import android.content.Context
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.ActivityResultLauncher
@@ -120,6 +121,7 @@ internal fun BrowseScreen(
     onMovieInfo: (ContentItem, List<ContentItem>) -> Unit,
     onMovieInfoContinueWatching: (ContentItem, List<ContentItem>) -> Unit,
     onPlayLocalFile: (Int) -> Unit,
+    localResumePositionMsForUri: (Uri) -> Long?,
     onToggleFavorite: (ContentItem) -> Unit,
     onToggleCategoryFavorite: (CategoryItem) -> Unit,
     isItemFavorite: (ContentItem) -> Boolean,
@@ -573,6 +575,7 @@ Row(modifier = Modifier.fillMaxSize()) {
                                     }
                                 },
                                 onPlayFile = onPlayLocalFile,
+                                localResumePositionMsForUri = localResumePositionMsForUri,
                                 onMoveLeft = handleMoveLeft
                         )
                     }
