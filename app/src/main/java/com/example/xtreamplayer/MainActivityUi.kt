@@ -278,6 +278,7 @@ fun RootScreen(
     var showManageLists by showManageListsState
     val showAppearanceState = remember { mutableStateOf(false) }
     var showAppearance by showAppearanceState
+    var focusAppearanceOnSettingsReturn by remember { mutableStateOf(false) }
     var wasShowingAppearance by remember { mutableStateOf(false) }
     var updateUiState by remember { mutableStateOf(UpdateUiState()) }
     var updateCheckJob by remember { mutableStateOf<Job?>(null) }
@@ -518,7 +519,9 @@ fun RootScreen(
 
     LaunchedEffect(showAppearance, selectedSection) {
         if (wasShowingAppearance && !showAppearance && selectedSection == Section.SETTINGS) {
+            focusAppearanceOnSettingsReturn = true
             requestFocusWithFrames(contentItemFocusRequester, "settings-back")
+            focusAppearanceOnSettingsReturn = false
         }
         wasShowingAppearance = showAppearance
     }
@@ -1535,6 +1538,7 @@ fun RootScreen(
                         focusToContentTriggerState = focusToContentTriggerState,
                         showManageListsState = showManageListsState,
                         showAppearanceState = showAppearanceState,
+                        focusAppearanceOnSettingsReturn = focusAppearanceOnSettingsReturn,
                         showThemeDialogState = showThemeDialogState,
                         showFontDialogState = showFontDialogState,
                         showUiScaleDialogState = showUiScaleDialogState,
@@ -8007,13 +8011,16 @@ fun SeriesSeasonsScreen(
 
     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
     val availableHeight = (screenHeight - topInsetDp).coerceAtLeast(320.dp)
-    val collapsedEpisodesHeight = 240.dp
-    val reservedBelowHeader = collapsedEpisodesHeight + 96.dp
-    val headerMaxByRatio = availableHeight * 0.34f
+    val appScale = LocalAppScale.current
+    val baseDensity = LocalAppBaseDensity.current ?: LocalDensity.current
+    val uiScaleDelta = (1f - appScale.uiScale).coerceAtLeast(0f)
+    val episodesViewportHeight = (120.dp + (uiScaleDelta * 150f).dp).coerceIn(120.dp, 180.dp)
+    val reservedBelowHeader = episodesViewportHeight + 76.dp
+    val headerMaxByRatio = availableHeight * 0.44f
     val headerMaxByReserve = availableHeight - reservedBelowHeader
     val headerExpandedHeight =
-        minOf(headerMaxByRatio, headerMaxByReserve).coerceIn(170.dp, 250.dp)
-    val headerCollapsedHeight = 0.dp
+        minOf(headerMaxByRatio, headerMaxByReserve).coerceIn(200.dp, 320.dp)
+    val headerCollapsedHeight = headerExpandedHeight
     val headerHeight by animateDpAsState(
         targetValue = if (episodesExpanded) headerCollapsedHeight else headerExpandedHeight,
         animationSpec = tween(durationMillis = 180),
@@ -8024,8 +8031,6 @@ fun SeriesSeasonsScreen(
     val posterWidth = posterHeight * 0.68f
     val containerPadding = 20.dp
     val headerSpacer = 10.dp
-    val appScale = LocalAppScale.current
-    val baseDensity = LocalAppBaseDensity.current ?: LocalDensity.current
     val seriesDetailsScale = remember(appScale.uiScale) {
         (1.05f * (1f + (appScale.uiScale - 1f) * 0.5f)).coerceIn(0.9f, 1.25f)
     }
@@ -8663,7 +8668,7 @@ fun SeriesSeasonsScreen(
                 } else {
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.fillMaxWidth().weight(1f)
+                        modifier = Modifier.fillMaxWidth().height(episodesViewportHeight)
                     ) {
                         items(
                             count = displayEpisodes.size,
@@ -8828,12 +8833,15 @@ private fun SeriesEpisodeRow(
                             .clip(shape)
                             .background(backgroundColor)
                             .border(1.dp, borderColor, shape)
-                            .padding(12.dp)
+                            .padding(10.dp)
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.Top
+        ) {
             val thumbModifier =
-                    Modifier.width(150.dp)
-                            .height(90.dp)
+                    Modifier.width(184.dp)
+                            .height(104.dp)
                             .clip(RoundedCornerShape(10.dp))
             if (imageRequest != null) {
                 AsyncImage(
@@ -8850,29 +8858,33 @@ private fun SeriesEpisodeRow(
             }
             Column(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Text(
                         text = item.title,
                         color = titleColor,
                         fontSize = 14.sp,
                         fontFamily = AppTheme.fontFamily,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                 )
                 Text(
                         text = item.subtitle,
                         color = subtitleColor,
-                        fontSize = 12.sp,
-                        fontFamily = AppTheme.fontFamily
+                        fontSize = 11.sp,
+                        fontFamily = AppTheme.fontFamily,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                 )
                 Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (ratingValue != null) {
                         RatingStars(
                                 rating = ratingValue,
-                                starSize = 14.dp,
+                                starSize = 12.dp,
                                 spacing = 2.dp
                         )
                     }
@@ -8883,7 +8895,7 @@ private fun SeriesEpisodeRow(
                 if (showEpisodeReadMore) {
                     Row(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.Bottom,
+                            verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
@@ -8891,7 +8903,7 @@ private fun SeriesEpisodeRow(
                                 color = subtitleColor,
                                 fontSize = 12.sp,
                                 fontFamily = AppTheme.fontFamily,
-                                lineHeight = 16.sp,
+                                lineHeight = 14.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 onTextLayout = { descriptionOverflow = it.hasVisualOverflow },
@@ -8932,7 +8944,7 @@ private fun SeriesEpisodeRow(
                                                             Modifier
                                                         }
                                                 )
-                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                .padding(horizontal = 4.dp, vertical = 1.dp)
                                                 .clickable(
                                                         interactionSource = readMoreInteraction,
                                                         indication = null
@@ -8941,7 +8953,7 @@ private fun SeriesEpisodeRow(
                             Text(
                                     text = "Read more",
                                     color = colors.accent,
-                                    fontSize = 12.sp,
+                                    fontSize = 11.sp,
                                     fontFamily = AppTheme.fontFamily,
                                     fontWeight = FontWeight.SemiBold
                             )
@@ -8953,7 +8965,7 @@ private fun SeriesEpisodeRow(
                             color = subtitleColor,
                             fontSize = 12.sp,
                             fontFamily = AppTheme.fontFamily,
-                            lineHeight = 16.sp,
+                            lineHeight = 14.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             onTextLayout = { descriptionOverflow = it.hasVisualOverflow }
