@@ -128,6 +128,7 @@ import com.example.xtreamplayer.content.FavoriteContentEntry
 import com.example.xtreamplayer.content.FavoritesRepository
 import com.example.xtreamplayer.content.HistoryEntry
 import com.example.xtreamplayer.content.HistoryRepository
+import com.example.xtreamplayer.content.LocalPlaybackResumeRepository
 import com.example.xtreamplayer.content.MovieInfo
 import com.example.xtreamplayer.content.SeriesInfo
 import com.example.xtreamplayer.content.SearchNormalizer
@@ -221,6 +222,10 @@ private data class LibrarySyncRequest(
     val sectionsToSync: List<Section>?
 )
 
+private const val LOCAL_MEDIA_ID_PREFIX = "local:"
+private const val RESUME_MIN_WATCH_MS = 30_000L
+private const val LOCAL_RESUME_MAX_PROGRESS_PERCENT = 95L
+
 @Composable
 private fun TopCenterClock(
     clockFormat: ClockFormatOption,
@@ -307,6 +312,13 @@ fun RootScreen(
             continueWatchingRepository.continueWatchingEntries.collectAsStateWithLifecycle(
                     initialValue = emptyList()
             )
+    val localPlaybackResumeRepository = remember { LocalPlaybackResumeRepository(context) }
+    val localPlaybackResumeEntries by
+        localPlaybackResumeRepository.entries.collectAsStateWithLifecycle(initialValue = emptyList())
+    val localResumeByMediaId =
+        remember(localPlaybackResumeEntries) {
+            localPlaybackResumeEntries.associateBy { it.mediaId }
+        }
     var pendingPlayerReset by playerViewModel.pendingPlayerReset
     var playerResetNonce by playerViewModel.playerResetNonce
 
@@ -969,14 +981,16 @@ fun RootScreen(
 
     val handlePlayLocalFile: (Int) -> Unit = { index ->
         if (index in localFiles.indices) {
-            resumeFocusId = localFiles[index].uri.toString()
+            val selectedFile = localFiles[index]
+            val mediaId = localMediaIdForUri(selectedFile.uri)
+            resumeFocusId = selectedFile.uri.toString()
             activePlaybackItems = emptyList()
             activePlaybackItem = null
             activePlaybackSeriesParent = null
             playbackEngine.setBufferProfile(BufferProfile.VOD)
+            resumePositionMs = localResumeByMediaId[mediaId]?.positionMs?.takeIf { it > 0 }
             activePlaybackQueue = buildLocalPlaybackQueue(localFiles, index)
-            activePlaybackTitle = localFiles[index].displayName
-            resumePositionMs = null
+            activePlaybackTitle = selectedFile.displayName
         }
     }
 
@@ -1112,6 +1126,8 @@ fun RootScreen(
             }
 
     fun savePlaybackProgress() {
+        val player: ExoPlayer? = playbackEngine.player
+        val safePlayer = player ?: return
         val config = authState.activeConfig
         val item = activePlaybackItem
         if (config != null &&
@@ -1119,11 +1135,9 @@ fun RootScreen(
                         (item.contentType == ContentType.MOVIES ||
                                 item.contentType == ContentType.SERIES)
         ) {
-            val player: ExoPlayer? = playbackEngine.player
-            val safePlayer = player ?: return
             val position = safePlayer.currentPosition
             val duration = safePlayer.duration
-            if (position > 0) {
+            if (position >= RESUME_MIN_WATCH_MS) {
                 val progressPercent = if (duration > 0) (position * 100) / duration else 0
                 coroutineScope.launch {
                     if (duration > 0 && progressPercent >= 90) {
@@ -1146,10 +1160,40 @@ fun RootScreen(
                 }
             }
         }
+
+        val queue = activePlaybackQueue
+        val currentIndex = safePlayer.currentMediaItemIndex
+        val resolvedIndex = if (queue != null && currentIndex in queue.items.indices) {
+            currentIndex
+        } else {
+            queue?.startIndex ?: -1
+        }
+        val localQueueItem =
+            queue?.items?.getOrNull(resolvedIndex)?.takeIf { isLocalMediaId(it.mediaId) }
+        if (localQueueItem != null) {
+            val position = safePlayer.currentPosition
+            val duration = safePlayer.duration
+            if (position >= RESUME_MIN_WATCH_MS) {
+                val progressPercent = if (duration > 0) (position * 100) / duration else 0
+                coroutineScope.launch {
+                    if (duration > 0 && progressPercent >= LOCAL_RESUME_MAX_PROGRESS_PERCENT) {
+                        localPlaybackResumeRepository.removeEntry(localQueueItem.mediaId)
+                    } else {
+                        localPlaybackResumeRepository.updateProgress(
+                            mediaId = localQueueItem.mediaId,
+                            title = localQueueItem.title,
+                            positionMs = position,
+                            durationMs = duration
+                        )
+                    }
+                }
+            }
+        }
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     val latestPlaybackItem by rememberUpdatedState(activePlaybackItem)
+    val latestPlaybackQueue by rememberUpdatedState(activePlaybackQueue)
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -1174,6 +1218,8 @@ fun RootScreen(
                         }
                         savePlaybackProgress()
                         player.playWhenReady = false
+                    } else if (latestPlaybackQueue != null) {
+                        savePlaybackProgress()
                     }
                 }
                 Lifecycle.Event.ON_START -> {
@@ -1200,7 +1246,7 @@ fun RootScreen(
 
     // Periodic playback tracking
     LaunchedEffect(activePlaybackQueue, activePlaybackItem) {
-        while (activePlaybackQueue != null && activePlaybackItem != null) {
+        while (activePlaybackQueue != null) {
             delay(10_000)
             savePlaybackProgress()
         }
@@ -1634,6 +1680,9 @@ fun RootScreen(
                         onMovieInfo = openMovieInfo,
                         onMovieInfoContinueWatching = openMovieInfoFromContinueWatching,
                         onPlayLocalFile = handlePlayLocalFile,
+                        localResumePositionMsForUri = { uri ->
+                            localResumeByMediaId[localMediaIdForUri(uri)]?.positionMs?.takeIf { it > 0 }
+                        },
                         onToggleFavorite = handleToggleFavorite,
                         onToggleCategoryFavorite = handleToggleCategoryFavorite,
                         isItemFavorite = isContentFavorite,
@@ -1766,6 +1815,9 @@ fun RootScreen(
                             }
                         },
                         onPlayFile = handlePlayLocalFile,
+                        localResumePositionMsForUri = { uri ->
+                            localResumeByMediaId[localMediaIdForUri(uri)]?.positionMs?.takeIf { it > 0 }
+                        },
                         onMoveLeft = { showLocalFilesGuest = false },
                         showBackButton = true,
                         onBack = { showLocalFilesGuest = false }
@@ -2023,7 +2075,7 @@ private fun buildLocalPlaybackQueue(items: List<LocalFileItem>, startIndex: Int)
     val queueItems =
             items.map { item ->
                 PlaybackQueueItem(
-                        mediaId = "local:${item.uri}",
+                        mediaId = localMediaIdForUri(item.uri),
                         title = item.displayName,
                         type = ContentType.MOVIES,
                         uri = item.uri
@@ -2031,6 +2083,10 @@ private fun buildLocalPlaybackQueue(items: List<LocalFileItem>, startIndex: Int)
             }
     return PlaybackQueue(queueItems, safeIndex)
 }
+
+private fun localMediaIdForUri(uri: Uri): String = "$LOCAL_MEDIA_ID_PREFIX$uri"
+
+private fun isLocalMediaId(mediaId: String): Boolean = mediaId.startsWith(LOCAL_MEDIA_ID_PREFIX)
 
 private fun collectUrisFromResult(data: Intent?): List<Uri> {
     if (data == null) return emptyList()
@@ -5435,6 +5491,7 @@ internal fun LocalFilesScreen(
         onPickFiles: () -> Unit,
         onRefresh: () -> Unit,
         onPlayFile: (Int) -> Unit,
+        localResumePositionMsForUri: (Uri) -> Long? = { null },
         onMoveLeft: () -> Unit,
         showBackButton: Boolean = false,
         onBack: () -> Unit = {}
@@ -5444,7 +5501,6 @@ internal fun LocalFilesScreen(
     val scanFocusRequester = remember { FocusRequester() }
     val refreshFocusRequester = remember { FocusRequester() }
     val emptyFocusRequester = remember { FocusRequester() }
-    val coroutineScope = rememberCoroutineScope()
     val useStackedHeader = settings.uiScale >= 1.2f
     val handleMoveLeft: () -> Unit =
             if (showBackButton) {
@@ -5722,16 +5778,17 @@ internal fun LocalFilesScreen(
                         itemsIndexed(volumeFiles, key = { _, item -> item.uri }) { localIndex, item
                             ->
                             val itemIndex = startIndex + localIndex
-                            val interactionSource = remember { MutableInteractionSource() }
-                            val isFocused by interactionSource.collectIsFocusedAsState()
-                            var keyDownArmed by remember { mutableStateOf(false) }
-                            var keyClickHandled by remember { mutableStateOf(false) }
+                            val actionInteractionSource = remember { MutableInteractionSource() }
+                            val isActionFocused by actionInteractionSource.collectIsFocusedAsState()
+                            val hasResumePosition =
+                                (localResumePositionMsForUri(item.uri) ?: 0L) > 0L
+                            val actionLabel = if (hasResumePosition) "Resume play" else "Play"
                             val borderColor =
-                                    if (isFocused) AppTheme.colors.focus else AppTheme.colors.borderStrong
+                                    if (isActionFocused) AppTheme.colors.focus else AppTheme.colors.borderStrong
                             val backgroundColor =
-                                    if (isFocused) AppTheme.colors.border else AppTheme.colors.surface
+                                    if (isActionFocused) AppTheme.colors.border else AppTheme.colors.surface
 
-                            val itemFocusRequester =
+                            val actionFocusRequester =
                                     when {
                                         item.uri.toString() == resumeFocusId -> resumeFocusRequester
                                         itemIndex == 0 -> scanFocusRequester
@@ -5739,81 +5796,10 @@ internal fun LocalFilesScreen(
                                     }
 
                             val isFirstItem = itemIndex == 0
-                            LaunchedEffect(isFocused) {
-                                if (!isFocused) {
-                                    keyDownArmed = false
-                                    keyClickHandled = false
-                                }
-                            }
 
                             Row(
                                     modifier =
                                             Modifier.fillMaxWidth()
-                                                    .then(
-                                                            if (itemFocusRequester != null) {
-                                                                Modifier.focusRequester(
-                                                                        itemFocusRequester
-                                                                )
-                                                            } else {
-                                                                Modifier
-                                                            }
-                                                    )
-                                                    .focusable(
-                                                            interactionSource = interactionSource
-                                                    )
-                                                    .onKeyEvent {
-                                                        val isSelectKey =
-                                                                it.key == Key.Enter ||
-                                                                        it.key == Key.NumPadEnter ||
-                                                                        it.key == Key.DirectionCenter
-                                                        when (it.type) {
-                                                            KeyEventType.KeyDown -> {
-                                                                when {
-                                                                    isSelectKey -> {
-                                                                        keyDownArmed = true
-                                                                        true
-                                                                    }
-                                                                    it.key == Key.DirectionLeft -> {
-                                                                        handleMoveLeft()
-                                                                        true
-                                                                    }
-                                                                    it.key == Key.DirectionUp &&
-                                                                            isFirstItem -> {
-                                                                        refreshFocusRequester.requestFocus()
-                                                                        true
-                                                                    }
-                                                                    else -> false
-                                                                }
-                                                            }
-                                                            KeyEventType.KeyUp -> {
-                                                                if (isSelectKey && keyDownArmed) {
-                                                                    keyDownArmed = false
-                                                                    keyClickHandled = true
-                                                                    onPlayFile(itemIndex)
-                                                                    // Only suppress the next click briefly to avoid
-                                                                    // eating a real pointer click after a key press.
-                                                                    coroutineScope.launch {
-                                                                        delay(120)
-                                                                        keyClickHandled = false
-                                                                    }
-                                                                    true
-                                                                } else {
-                                                                    false
-                                                                }
-                                                            }
-                                                            else -> false
-                                                        }
-                                                    }
-                                                    .clickable(
-                                                            interactionSource = interactionSource,
-                                                            indication = null
-                                                    ) {
-                                                        if (keyClickHandled) {
-                                                            keyClickHandled = false
-                                                        } else {
-                                                            onPlayFile(itemIndex)
-                                                        }
-                                                    }
                                                     .background(
                                                             backgroundColor,
                                                             RoundedCornerShape(12.dp)
@@ -5844,6 +5830,52 @@ internal fun LocalFilesScreen(
                                         maxLines = 1,
                                         modifier = Modifier.weight(1f)
                                 )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                FocusableButton(
+                                        onClick = { onPlayFile(itemIndex) },
+                                        interactionSource = actionInteractionSource,
+                                        colors =
+                                                if (hasResumePosition) {
+                                                    ButtonDefaults.buttonColors(
+                                                            containerColor = AppTheme.colors.accent,
+                                                            contentColor = AppTheme.colors.textOnAccent
+                                                    )
+                                                } else {
+                                                    ButtonDefaults.buttonColors(
+                                                            containerColor = AppTheme.colors.accentMuted,
+                                                            contentColor = AppTheme.colors.textPrimary
+                                                    )
+                                                },
+                                        modifier =
+                                                Modifier.height(38.dp)
+                                                        .then(
+                                                                if (actionFocusRequester != null) {
+                                                                    Modifier.focusRequester(actionFocusRequester)
+                                                                } else {
+                                                                    Modifier
+                                                                }
+                                                        )
+                                                        .onKeyEvent {
+                                                            if (it.type != KeyEventType.KeyDown) {
+                                                                false
+                                                            } else if (it.key == Key.DirectionLeft) {
+                                                                handleMoveLeft()
+                                                                true
+                                                            } else if (it.key == Key.DirectionUp && isFirstItem) {
+                                                                refreshFocusRequester.requestFocus()
+                                                                true
+                                                            } else {
+                                                                false
+                                                            }
+                                                        }
+                                ) {
+                                    Text(
+                                            text = actionLabel,
+                                            fontSize = 12.sp,
+                                            fontFamily = AppTheme.fontFamily,
+                                            fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                             }
                         }
                         globalIndex += volumeFiles.size
@@ -7505,6 +7537,7 @@ fun ContinueWatchingScreen(
 ) {
 
     val shape = RoundedCornerShape(18.dp)
+    val coroutineScope = rememberCoroutineScope()
     // Use 4 columns at 100% (poster sizing, since continue watching includes mixed content)
     val baseColumns = remember(settings.uiScale) {
         kotlin.math.ceil(4.0 / settings.uiScale).toInt().coerceIn(4, 8)
@@ -7556,6 +7589,7 @@ fun ContinueWatchingScreen(
     var pendingSeries by remember { mutableStateOf<ContentItem?>(null) }
     var pendingSeriesInfo by remember { mutableStateOf<SeriesInfo?>(null) }
     var pendingEpisodeFocus by remember { mutableStateOf(false) }
+    var returnFocusItem by remember { mutableStateOf<ContentItem?>(null) }
     val episodesFocusRequester = remember { FocusRequester() }
     val movieQueueItems =
             remember(displayEntries) {
@@ -7566,6 +7600,41 @@ fun ContinueWatchingScreen(
                 }
             }
     val resolvedParents = remember { androidx.compose.runtime.mutableStateMapOf<String, ContentItem>() }
+    val resolveSeriesParent: suspend (ContentItem) -> ContentItem? = { resumeItem ->
+        val rawTitle = resumeItem.title
+        val dashSeasonMatch = Regex("\\s-\\sS\\d", RegexOption.IGNORE_CASE).find(rawTitle)
+        val compactSeasonMatch = Regex("S\\d+E\\d+", RegexOption.IGNORE_CASE).find(rawTitle)
+        val seriesName =
+            when {
+                dashSeasonMatch != null && dashSeasonMatch.range.first > 0 ->
+                    rawTitle.substring(0, dashSeasonMatch.range.first).trim()
+                compactSeasonMatch != null && compactSeasonMatch.range.first > 0 ->
+                    rawTitle.substring(0, compactSeasonMatch.range.first).trim().trimEnd('-').trim()
+                else -> rawTitle
+            }
+        if (seriesName.isBlank()) {
+            null
+        } else {
+            runCatching {
+                contentRepository.searchPage(
+                    section = Section.SERIES,
+                    query = seriesName,
+                    page = 0,
+                    limit = 20,
+                    authConfig = authConfig
+                )
+            }.getOrNull()?.items?.firstOrNull { it.title.startsWith(seriesName, ignoreCase = true) }
+                ?: runCatching {
+                    contentRepository.searchPage(
+                        section = Section.SERIES,
+                        query = seriesName,
+                        page = 0,
+                        limit = 20,
+                        authConfig = authConfig
+                    )
+                }.getOrNull()?.items?.firstOrNull()
+        }
+    }
 
     LaunchedEffect(displayEntries, authConfig) {
         displayEntries
@@ -7574,36 +7643,7 @@ fun ContinueWatchingScreen(
                     !resolvedParents.containsKey(entry.key)
             }
             .forEach { entry ->
-                val rawTitle = entry.resumeItem.title
-                val dashSeasonMatch = Regex("\\s-\\sS\\d", RegexOption.IGNORE_CASE).find(rawTitle)
-                val compactSeasonMatch = Regex("S\\d+E\\d+", RegexOption.IGNORE_CASE).find(rawTitle)
-                val seriesName =
-                    when {
-                        dashSeasonMatch != null && dashSeasonMatch.range.first > 0 ->
-                            rawTitle.substring(0, dashSeasonMatch.range.first).trim()
-                        compactSeasonMatch != null && compactSeasonMatch.range.first > 0 ->
-                            rawTitle.substring(0, compactSeasonMatch.range.first).trim().trimEnd('-').trim()
-                        else -> rawTitle
-                    }
-                if (seriesName.isBlank()) return@forEach
-                val resolved = runCatching {
-                    contentRepository.searchPage(
-                        section = Section.SERIES,
-                        query = seriesName,
-                        page = 0,
-                        limit = 20,
-                        authConfig = authConfig
-                    )
-                }.getOrNull()?.items?.firstOrNull { it.title.startsWith(seriesName, ignoreCase = true) }
-                    ?: runCatching {
-                        contentRepository.searchPage(
-                            section = Section.SERIES,
-                            query = seriesName,
-                            page = 0,
-                            limit = 20,
-                            authConfig = authConfig
-                        )
-                    }.getOrNull()?.items?.firstOrNull()
+                val resolved = resolveSeriesParent(entry.resumeItem)
                 if (resolved != null) {
                     resolvedParents[entry.key] = resolved
                 }
@@ -7616,7 +7656,7 @@ fun ContinueWatchingScreen(
         pendingSeriesInfo = infoResult.getOrNull()
         selectedSeries = series
         pendingSeries = null
-        pendingEpisodeFocus = true
+        pendingEpisodeFocus = false
     }
 
     // Focus is managed by user navigation - no auto-focus on screen load
@@ -7639,10 +7679,20 @@ fun ContinueWatchingScreen(
             if (selectedSeries != null) {
                 val activeSeries = selectedSeries!!
                 val closeSeriesDetails = {
+                    val itemToFocus = returnFocusItem
                     selectedSeries = null
                     pendingSeriesInfo = null
                     pendingEpisodeFocus = false
-                    runCatching { contentItemFocusRequester.requestFocus() }
+                    if (itemToFocus != null) {
+                        onItemFocused(itemToFocus)
+                    }
+                    coroutineScope.launch {
+                        withFrameNanos {}
+                        val focused = runCatching { resumeFocusRequester.requestFocus() }.isSuccess
+                        if (!focused) {
+                            runCatching { contentItemFocusRequester.requestFocus() }
+                        }
+                    }
                     Unit
                 }
                 val dismissSeriesDetailsForPlayback = {
@@ -7679,7 +7729,8 @@ fun ContinueWatchingScreen(
                             onToggleFavorite = onToggleFavorite,
                             onRemoveContinueWatching = onRemoveEntry,
                             isItemFavorite = isItemFavorite,
-                            prefetchedInfo = pendingSeriesInfo
+                            prefetchedInfo = pendingSeriesInfo,
+                            focusPlayOnOpen = true
                     )
                 }
             } else {
@@ -7775,13 +7826,24 @@ fun ContinueWatchingScreen(
                                                                     it.containerExtension.isNullOrBlank()
                                                                 }
                                                 if (seriesItem != null) {
+                                                    returnFocusItem = item
                                                     pendingSeries = seriesItem
                                                 } else {
-                                                    onPlay(
-                                                            entry.resumeItem,
-                                                            entry.positionMs,
-                                                            entry.parentItem
-                                                    )
+                                                    coroutineScope.launch {
+                                                        val resolved = resolveSeriesParent(entry.resumeItem)
+                                                        if (resolved != null) {
+                                                            resolvedParents[entry.key] = resolved
+                                                            returnFocusItem = item
+                                                            pendingSeriesInfo = null
+                                                            pendingSeries = resolved
+                                                        } else {
+                                                            onPlay(
+                                                                    entry.resumeItem,
+                                                                    entry.positionMs,
+                                                                    entry.parentItem
+                                                            )
+                                                        }
+                                                    }
                                                 }
                                             }
                                             else -> onPlay(entry.resumeItem, entry.positionMs, entry.parentItem)
@@ -7897,7 +7959,8 @@ fun SeriesSeasonsScreen(
         isItemFavorite: (ContentItem) -> Boolean,
         forceDarkText: Boolean = false,
         onMoveUpFromTop: (() -> Unit)? = null,
-        prefetchedInfo: SeriesInfo? = null
+        prefetchedInfo: SeriesInfo? = null,
+        focusPlayOnOpen: Boolean = false
 ) {
     BackHandler(enabled = true) { onBack() }
     val colors = AppTheme.colors
@@ -7929,12 +7992,16 @@ fun SeriesSeasonsScreen(
     val castTabRequester = tabFocusRequesters[1]
     val context = LocalContext.current
 
-    LaunchedEffect(seriesItem.streamId) {
+    LaunchedEffect(seriesItem.streamId, focusPlayOnOpen) {
         withFrameNanos {}
         headerCollapsed = false
         episodesViewportExpanded = false
         internalEpisodeFocusRequested = false
-        contentItemFocusRequester.requestFocus()
+        if (focusPlayOnOpen) {
+            playFocusRequester.requestFocus()
+        } else {
+            contentItemFocusRequester.requestFocus()
+        }
     }
 
     LaunchedEffect(seriesItem.streamId, authConfig) {
@@ -8157,16 +8224,11 @@ fun SeriesSeasonsScreen(
             runCatching { contentItemFocusRequester.requestFocus() }
         }
     }
-    val snapEpisodesListForFocus: (Int, Int) -> Unit = fun(focusedIndex, totalCount) {
-        if (totalCount <= 0) return
-        val visibleWindow = 3
-        val maxFirstIndex = (totalCount - visibleWindow).coerceAtLeast(0)
-        val targetFirstIndex = (focusedIndex - 1).coerceIn(0, maxFirstIndex)
-        if (episodesListState.firstVisibleItemIndex != targetFirstIndex ||
-            episodesListState.firstVisibleItemScrollOffset != 0
-        ) {
+    val normalizeEpisodesListOffset: () -> Unit = {
+        val currentFirstIndex = episodesListState.firstVisibleItemIndex
+        if (episodesListState.firstVisibleItemScrollOffset != 0) {
             episodesListScope.launch {
-                episodesListState.scrollToItem(targetFirstIndex, 0)
+                episodesListState.scrollToItem(currentFirstIndex, 0)
             }
         }
     }
@@ -8843,6 +8905,7 @@ fun SeriesSeasonsScreen(
                                         ) {
                                             withFrameNanos {}
                                             requester.requestFocus()
+                                            normalizeEpisodesListOffset()
                                             if (pendingEpisodeFocus) {
                                                 onEpisodeFocusHandled()
                                             }
@@ -8881,7 +8944,6 @@ fun SeriesSeasonsScreen(
                                             headerCollapsed = true
                                             episodesViewportExpanded = true
                                             onItemFocused(item)
-                                            snapEpisodesListForFocus(index, displayEpisodes.size)
                                         },
                                         onMoveLeft = onMoveLeft,
                                         onMoveUp =
