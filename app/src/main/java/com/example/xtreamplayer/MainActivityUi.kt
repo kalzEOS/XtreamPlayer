@@ -135,6 +135,7 @@ import com.example.xtreamplayer.content.SubtitleRepository
 import com.example.xtreamplayer.player.Media3PlaybackEngine
 import com.example.xtreamplayer.player.BufferProfile
 import com.example.xtreamplayer.settings.PlaybackSettingsController
+import com.example.xtreamplayer.settings.ClockFormatOption
 import com.example.xtreamplayer.settings.SettingsState
 import com.example.xtreamplayer.settings.SettingsViewModel
 import com.example.xtreamplayer.update.UpdateRelease
@@ -179,6 +180,8 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import java.util.Locale
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
 import android.provider.Settings
 import okhttp3.OkHttpClient
 import kotlinx.coroutines.Dispatchers
@@ -217,6 +220,43 @@ private data class LibrarySyncRequest(
     val force: Boolean,
     val sectionsToSync: List<Section>?
 )
+
+@Composable
+private fun TopCenterClock(
+    clockFormat: ClockFormatOption,
+    fontFamily: FontFamily,
+    modifier: Modifier = Modifier
+) {
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val pattern = if (clockFormat == ClockFormatOption.AM_PM) "h:mm a" else "HH:mm"
+    val formatter = remember(pattern) { SimpleDateFormat(pattern, Locale.getDefault()) }
+
+    LaunchedEffect(clockFormat) {
+        while (true) {
+            val now = System.currentTimeMillis()
+            nowMillis = now
+            val delayMs = (60_000L - (now % 60_000L)).coerceAtLeast(250L)
+            delay(delayMs)
+        }
+    }
+
+    Box(
+        modifier =
+            modifier.clip(RoundedCornerShape(12.dp))
+                .background(AppTheme.colors.surfaceAlt.copy(alpha = 0.78f))
+                .border(1.dp, AppTheme.colors.borderStrong, RoundedCornerShape(12.dp))
+                .padding(horizontal = 16.dp, vertical = 6.dp)
+    ) {
+        Text(
+            text = formatter.format(Date(nowMillis)),
+            color = AppTheme.colors.textPrimary,
+            fontSize = 16.sp,
+            fontFamily = fontFamily,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.4.sp
+        )
+    }
+}
 
 
 @Composable
@@ -1379,29 +1419,38 @@ fun RootScreen(
                 }
             }
             Column(modifier = Modifier.fillMaxSize()) {
-                Row(
+                Box(
                         modifier =
                                 Modifier.fillMaxWidth()
                                         .height(72.dp)
-                                        .padding(start = 20.dp, top = 12.dp)
+                                        .padding(start = 20.dp, end = 20.dp, top = 12.dp)
                 ) {
-                    MenuButton(
-                            expanded = navExpanded,
-                            onToggle = {
-                                navExpanded = !navExpanded
-                                // Focus stays on menu button - user navigates manually
-                            },
-                            onMoveRight = { focusToContentTrigger++ }
-                    )
-                    Spacer(modifier = Modifier.weight(1f))
-                    Text(
-                            text = versionLabel,
-                            color = colors.textSecondary,
-                            fontSize = 12.sp,
-                            fontFamily = settings.appFont.fontFamily,
-                            modifier = Modifier
-                                    .padding(end = 12.dp, bottom = 2.dp)
-                                    .align(Alignment.CenterVertically)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().align(Alignment.Center),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        MenuButton(
+                                expanded = navExpanded,
+                                onToggle = {
+                                    navExpanded = !navExpanded
+                                    // Focus stays on menu button - user navigates manually
+                                },
+                                onMoveRight = { focusToContentTrigger++ }
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                        Text(
+                                text = versionLabel,
+                                color = colors.textSecondary,
+                                fontSize = 12.sp,
+                                fontFamily = settings.appFont.fontFamily,
+                                modifier = Modifier
+                                        .padding(end = 12.dp, bottom = 2.dp)
+                        )
+                    }
+                    TopCenterClock(
+                        clockFormat = settings.clockFormat,
+                        fontFamily = settings.appFont.fontFamily,
+                        modifier = Modifier.align(Alignment.Center)
                     )
                 }
 
@@ -7999,15 +8048,9 @@ fun SeriesSeasonsScreen(
     val ratingValue = ratingToStars(seriesInfo?.rating)
     val description =
         seriesInfo?.description?.takeIf { it.isNotBlank() } ?: "No description available."
-    var plotOverflow by remember { mutableStateOf(false) }
+    var plotOverflow by remember(description) { mutableStateOf(false) }
     var showPlotDialog by remember { mutableStateOf(false) }
-    LaunchedEffect(description) { plotOverflow = false }
-    val showReadMore by remember(description, plotOverflow) {
-        mutableStateOf(
-            description != "No description available." &&
-                (plotOverflow || description.length > 140)
-        )
-    }
+    val showReadMore = description != "No description available." && plotOverflow
 
     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
     val availableHeight = (screenHeight - topInsetDp).coerceAtLeast(320.dp)
@@ -8776,11 +8819,7 @@ private fun SeriesEpisodeRow(
             item.description?.takeIf { it.isNotBlank() } ?: "No description available."
     var descriptionOverflow by remember(item.id, description) { mutableStateOf(false) }
     var showEpisodePlotDialog by remember(item.id) { mutableStateOf(false) }
-    val showEpisodeReadMore =
-        remember(description, descriptionOverflow) {
-            description != "No description available." &&
-                (descriptionOverflow || description.length > 120)
-        }
+    val showEpisodeReadMore = description != "No description available." && descriptionOverflow
     val context = LocalContext.current
     val imageRequest =
             remember(item.imageUrl) {

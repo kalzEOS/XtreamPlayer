@@ -74,6 +74,18 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun toggleClockFormat() {
+        val next =
+            if (settings.value.clockFormat == ClockFormatOption.AM_PM) {
+                ClockFormatOption.HOUR_24
+            } else {
+                ClockFormatOption.AM_PM
+            }
+        viewModelScope.launch {
+            repository.setClockFormat(next)
+        }
+    }
+
     fun setOpenSubtitlesApiKey(apiKey: String) {
         viewModelScope.launch {
             repository.setOpenSubtitlesApiKey(apiKey)

@@ -27,6 +27,7 @@ class SettingsRepository(private val context: Context) {
         val appFont = parseAppFont(prefs[Keys.APP_FONT])
         val uiScale = resolveUiScale(prefs)
         val fontScale = (prefs[Keys.FONT_SCALE] ?: 1.0f).coerceIn(0.7f, 1.4f)
+        val clockFormat = parseClockFormat(prefs[Keys.CLOCK_FORMAT])
         val openSubtitlesApiKey = prefs[Keys.OPENSUBTITLES_API_KEY] ?: ""
         val openSubtitlesUserAgent = prefs[Keys.OPENSUBTITLES_USER_AGENT] ?: ""
 
@@ -42,6 +43,7 @@ class SettingsRepository(private val context: Context) {
             appFont = appFont,
             uiScale = uiScale,
             fontScale = fontScale,
+            clockFormat = clockFormat,
             openSubtitlesApiKey = openSubtitlesApiKey,
             openSubtitlesUserAgent = openSubtitlesUserAgent
         )
@@ -117,6 +119,12 @@ class SettingsRepository(private val context: Context) {
         cacheBootSettings(fontScale = scale.coerceIn(0.7f, 1.4f))
     }
 
+    suspend fun setClockFormat(clockFormat: ClockFormatOption) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.CLOCK_FORMAT] = clockFormat.name
+        }
+    }
+
     suspend fun setOpenSubtitlesApiKey(apiKey: String) {
         context.dataStore.edit { prefs ->
             prefs[Keys.OPENSUBTITLES_API_KEY] = apiKey
@@ -136,6 +144,11 @@ class SettingsRepository(private val context: Context) {
     private fun parseAppFont(value: String?): AppFont {
         if (value == null) return AppFont.DEFAULT
         return AppFont.values().firstOrNull { it.name == value } ?: AppFont.DEFAULT
+    }
+
+    private fun parseClockFormat(value: String?): ClockFormatOption {
+        if (value == null) return ClockFormatOption.AM_PM
+        return ClockFormatOption.values().firstOrNull { it.name == value } ?: ClockFormatOption.AM_PM
     }
 
     private fun cacheBootSettings(
@@ -174,6 +187,7 @@ class SettingsRepository(private val context: Context) {
         val APP_FONT = stringPreferencesKey("app_font")
         val UI_SCALE = floatPreferencesKey("ui_scale")
         val FONT_SCALE = floatPreferencesKey("font_scale")
+        val CLOCK_FORMAT = stringPreferencesKey("clock_format")
         val OPENSUBTITLES_API_KEY = stringPreferencesKey("opensubtitles_api_key")
         val OPENSUBTITLES_USER_AGENT = stringPreferencesKey("opensubtitles_user_agent")
         const val BOOT_APP_THEME = "boot_app_theme"
