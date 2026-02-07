@@ -5180,7 +5180,7 @@ fun SectionScreen(
 
     // Don't auto-focus content - user must press Right to navigate there
 
-    BackHandler(enabled = selectedSeries != null) {
+    BackHandler(enabled = selectedSeries != null && !isPlaybackActive) {
         selectedSeries?.let(onItemFocused)
         // Request focus immediately before state change to avoid focus flashing to MenuButton
         runCatching { contentItemFocusRequester.requestFocus() }
@@ -5242,35 +5242,37 @@ fun SectionScreen(
                     pendingSeriesInfo = null
                     pendingEpisodeFocus = false
                 }
-                FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
-                    SeriesSeasonsScreen(
-                            seriesItem = activeSeries,
-                            contentRepository = contentRepository,
-                            authConfig = authConfig,
-                            continueWatchingEntries = continueWatchingEntries,
-                            contentItemFocusRequester = contentItemFocusRequester,
-                            resumeFocusId = resumeFocusId,
-                            resumeFocusRequester = resumeFocusRequester,
-                            episodesFocusRequester = episodesFocusRequester,
-                            pendingEpisodeFocus = pendingEpisodeFocus,
-                            onEpisodeFocusHandled = { pendingEpisodeFocus = false },
-                            onItemFocused = onItemFocused,
-                            onPlay = { playItem, items ->
-                                onSeriesPlaybackStart(activeSeries)
-                                onPlay(playItem, items)
-                            },
-                            onPlayWithPosition = { playItem, items, position ->
-                                onSeriesPlaybackStart(activeSeries)
-                                onPlayWithPosition(playItem, items, position)
-                            },
-                            onMoveLeft = {},
-                            onBack = closeSeriesDetails,
-                            onToggleFavorite = onToggleFavorite,
-                            onRemoveContinueWatching = onRemoveContinueWatching,
-                            isItemFavorite = isItemFavorite,
-                            prefetchedInfo = pendingSeriesInfo,
-                            focusPlayOnOpen = true
-                    )
+                if (!isPlaybackActive) {
+                    FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
+                        SeriesSeasonsScreen(
+                                seriesItem = activeSeries,
+                                contentRepository = contentRepository,
+                                authConfig = authConfig,
+                                continueWatchingEntries = continueWatchingEntries,
+                                contentItemFocusRequester = contentItemFocusRequester,
+                                resumeFocusId = resumeFocusId,
+                                resumeFocusRequester = resumeFocusRequester,
+                                episodesFocusRequester = episodesFocusRequester,
+                                pendingEpisodeFocus = pendingEpisodeFocus,
+                                onEpisodeFocusHandled = { pendingEpisodeFocus = false },
+                                onItemFocused = onItemFocused,
+                                onPlay = { playItem, items ->
+                                    onSeriesPlaybackStart(activeSeries)
+                                    onPlay(playItem, items)
+                                },
+                                onPlayWithPosition = { playItem, items, position ->
+                                    onSeriesPlaybackStart(activeSeries)
+                                    onPlayWithPosition(playItem, items, position)
+                                },
+                                onMoveLeft = {},
+                                onBack = closeSeriesDetails,
+                                onToggleFavorite = onToggleFavorite,
+                                onRemoveContinueWatching = onRemoveContinueWatching,
+                                isItemFavorite = isItemFavorite,
+                                prefetchedInfo = pendingSeriesInfo,
+                                focusPlayOnOpen = true
+                        )
+                    }
                 }
             } else {
                 Row(
@@ -6008,7 +6010,7 @@ fun FavoritesScreen(
 
     BackHandler(
             enabled =
-                    selectedSeries != null ||
+                    (selectedSeries != null && !isPlaybackActive) ||
                             selectedCategory != null ||
                             activeView != FavoritesView.MENU
     ) {
@@ -6173,35 +6175,37 @@ fun FavoritesScreen(
                     pendingSeriesInfo = null
                     pendingEpisodeFocus = false
                 }
-                FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
-                    SeriesSeasonsScreen(
-                            seriesItem = activeSeries,
-                            contentRepository = contentRepository,
-                            authConfig = authConfig,
-                            continueWatchingEntries = continueWatchingEntries,
-                            contentItemFocusRequester = contentItemFocusRequester,
-                            resumeFocusId = resumeFocusId,
-                            resumeFocusRequester = resumeFocusRequester,
-                            episodesFocusRequester = episodesFocusRequester,
-                            pendingEpisodeFocus = pendingEpisodeFocus,
-                            onEpisodeFocusHandled = { pendingEpisodeFocus = false },
-                            onItemFocused = onItemFocused,
-                            onPlay = { playItem, items ->
-                                onSeriesPlaybackStart(activeSeries)
-                                onPlay(playItem, items)
-                            },
-                            onPlayWithPosition = { playItem, items, position ->
-                                onSeriesPlaybackStart(activeSeries)
-                                onPlayWithPosition(playItem, items, position)
-                            },
-                            onMoveLeft = {},
-                            onBack = closeSeriesDetails,
-                            onToggleFavorite = onToggleFavorite,
-                            onRemoveContinueWatching = onRemoveContinueWatching,
-                            isItemFavorite = isItemFavorite,
-                            prefetchedInfo = pendingSeriesInfo,
-                            focusPlayOnOpen = true
-                    )
+                if (!isPlaybackActive) {
+                    FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
+                        SeriesSeasonsScreen(
+                                seriesItem = activeSeries,
+                                contentRepository = contentRepository,
+                                authConfig = authConfig,
+                                continueWatchingEntries = continueWatchingEntries,
+                                contentItemFocusRequester = contentItemFocusRequester,
+                                resumeFocusId = resumeFocusId,
+                                resumeFocusRequester = resumeFocusRequester,
+                                episodesFocusRequester = episodesFocusRequester,
+                                pendingEpisodeFocus = pendingEpisodeFocus,
+                                onEpisodeFocusHandled = { pendingEpisodeFocus = false },
+                                onItemFocused = onItemFocused,
+                                onPlay = { playItem, items ->
+                                    onSeriesPlaybackStart(activeSeries)
+                                    onPlay(playItem, items)
+                                },
+                                onPlayWithPosition = { playItem, items, position ->
+                                    onSeriesPlaybackStart(activeSeries)
+                                    onPlayWithPosition(playItem, items, position)
+                                },
+                                onMoveLeft = {},
+                                onBack = closeSeriesDetails,
+                                onToggleFavorite = onToggleFavorite,
+                                onRemoveContinueWatching = onRemoveContinueWatching,
+                                isItemFavorite = isItemFavorite,
+                                prefetchedInfo = pendingSeriesInfo,
+                                focusPlayOnOpen = true
+                        )
+                    }
                 }
             } else if (activeView == FavoritesView.MENU) {
                 LazyVerticalGrid(
@@ -6416,34 +6420,36 @@ fun FavoritesScreen(
                             selectedSeries = null
                             pendingEpisodeFocus = false
                         }
-                        FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
-                            SeriesSeasonsScreen(
-                                    seriesItem = activeSeries,
-                                    contentRepository = contentRepository,
-                                    authConfig = authConfig,
-                                    continueWatchingEntries = continueWatchingEntries,
-                                    contentItemFocusRequester = contentItemFocusRequester,
-                                    resumeFocusId = resumeFocusId,
-                                    resumeFocusRequester = resumeFocusRequester,
-                                    episodesFocusRequester = episodesFocusRequester,
-                                    pendingEpisodeFocus = pendingEpisodeFocus,
-                                    onEpisodeFocusHandled = { pendingEpisodeFocus = false },
-                                    onItemFocused = onItemFocused,
-                                    onPlay = { playItem, items ->
-                                        onSeriesPlaybackStart(activeSeries)
-                                        onPlay(playItem, items)
-                                    },
-                                    onPlayWithPosition = { playItem, items, position ->
-                                        onSeriesPlaybackStart(activeSeries)
-                                        onPlayWithPosition(playItem, items, position)
-                                    },
-                                    onMoveLeft = {},
-                                    onBack = closeSeriesDetails,
-                                    onToggleFavorite = onToggleFavorite,
-                                    onRemoveContinueWatching = onRemoveContinueWatching,
-                                    isItemFavorite = isItemFavorite,
-                                    focusPlayOnOpen = true
-                            )
+                        if (!isPlaybackActive) {
+                            FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
+                                SeriesSeasonsScreen(
+                                        seriesItem = activeSeries,
+                                        contentRepository = contentRepository,
+                                        authConfig = authConfig,
+                                        continueWatchingEntries = continueWatchingEntries,
+                                        contentItemFocusRequester = contentItemFocusRequester,
+                                        resumeFocusId = resumeFocusId,
+                                        resumeFocusRequester = resumeFocusRequester,
+                                        episodesFocusRequester = episodesFocusRequester,
+                                        pendingEpisodeFocus = pendingEpisodeFocus,
+                                        onEpisodeFocusHandled = { pendingEpisodeFocus = false },
+                                        onItemFocused = onItemFocused,
+                                        onPlay = { playItem, items ->
+                                            onSeriesPlaybackStart(activeSeries)
+                                            onPlay(playItem, items)
+                                        },
+                                        onPlayWithPosition = { playItem, items, position ->
+                                            onSeriesPlaybackStart(activeSeries)
+                                            onPlayWithPosition(playItem, items, position)
+                                        },
+                                        onMoveLeft = {},
+                                        onBack = closeSeriesDetails,
+                                        onToggleFavorite = onToggleFavorite,
+                                        onRemoveContinueWatching = onRemoveContinueWatching,
+                                        isItemFavorite = isItemFavorite,
+                                        focusPlayOnOpen = true
+                                )
+                            }
                         }
                     } else {
                         // Focus is managed by user navigation - no auto-focus on content load
@@ -7312,36 +7318,38 @@ fun CategorySectionScreen(
                             pendingSeriesInfo = null
                             pendingEpisodeFocus = false
                         }
-                        FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
-                            SeriesSeasonsScreen(
-                                    seriesItem = activeSeries,
-                                    contentRepository = contentRepository,
-                                    authConfig = authConfig,
-                                    continueWatchingEntries = continueWatchingEntries,
-                                    contentItemFocusRequester = contentItemFocusRequester,
-                                    resumeFocusId = resumeFocusId,
-                                    resumeFocusRequester = resumeFocusRequester,
-                                    episodesFocusRequester = episodesFocusRequester,
-                                    pendingEpisodeFocus = pendingEpisodeFocus,
-                                    onEpisodeFocusHandled = { pendingEpisodeFocus = false },
-                                    onItemFocused = onItemFocused,
-                                    onPlay = { playItem, items ->
-                                        onSeriesPlaybackStart(activeSeries)
-                                        onPlay(playItem, items)
-                                    },
-                                    onPlayWithPosition = { playItem, items, position ->
-                                        onSeriesPlaybackStart(activeSeries)
-                                        onPlayWithPosition(playItem, items, position)
-                                    },
-                                    onMoveLeft = {},
-                                    onBack = closeSeriesDetails,
-                                    onToggleFavorite = onToggleFavorite,
-                                    onRemoveContinueWatching = onRemoveContinueWatching,
-                                    isItemFavorite = isItemFavorite,
-                                    prefetchedInfo = pendingSeriesInfo,
-                                    forceDarkText = forceDarkText,
-                                    focusPlayOnOpen = true
-                            )
+                        if (!isPlaybackActive) {
+                            FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
+                                SeriesSeasonsScreen(
+                                        seriesItem = activeSeries,
+                                        contentRepository = contentRepository,
+                                        authConfig = authConfig,
+                                        continueWatchingEntries = continueWatchingEntries,
+                                        contentItemFocusRequester = contentItemFocusRequester,
+                                        resumeFocusId = resumeFocusId,
+                                        resumeFocusRequester = resumeFocusRequester,
+                                        episodesFocusRequester = episodesFocusRequester,
+                                        pendingEpisodeFocus = pendingEpisodeFocus,
+                                        onEpisodeFocusHandled = { pendingEpisodeFocus = false },
+                                        onItemFocused = onItemFocused,
+                                        onPlay = { playItem, items ->
+                                            onSeriesPlaybackStart(activeSeries)
+                                            onPlay(playItem, items)
+                                        },
+                                        onPlayWithPosition = { playItem, items, position ->
+                                            onSeriesPlaybackStart(activeSeries)
+                                            onPlayWithPosition(playItem, items, position)
+                                        },
+                                        onMoveLeft = {},
+                                        onBack = closeSeriesDetails,
+                                        onToggleFavorite = onToggleFavorite,
+                                        onRemoveContinueWatching = onRemoveContinueWatching,
+                                        isItemFavorite = isItemFavorite,
+                                        prefetchedInfo = pendingSeriesInfo,
+                                        forceDarkText = forceDarkText,
+                                        focusPlayOnOpen = true
+                                )
+                            }
                         }
                     }
                 }
@@ -7681,38 +7689,40 @@ fun ContinueWatchingScreen(
                     onItemFocused(itemToFocus)
                     Unit
                 }
-                FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
-                    SeriesSeasonsScreen(
-                            seriesItem = activeSeries,
-                            contentRepository = contentRepository,
-                            authConfig = authConfig,
-                            continueWatchingEntries = continueWatchingItems,
-                            showClearContinueWatching = true,
-                            contentItemFocusRequester = contentItemFocusRequester,
-                            resumeFocusId = resumeFocusId,
-                            resumeFocusRequester = resumeFocusRequester,
-                            episodesFocusRequester = episodesFocusRequester,
-                            pendingEpisodeFocus = pendingEpisodeFocus,
-                            onEpisodeFocusHandled = { pendingEpisodeFocus = false },
-                            onItemFocused = onItemFocused,
-                            onPlay = { playItem, items ->
-                                onSeriesPlaybackStart(activeSeries)
-                                onPlayWithPosition(playItem, items, null)
-                            },
-                            onPlayWithPosition = { playItem, items, position ->
-                                onSeriesPlaybackStart(activeSeries)
-                                onPlayWithPosition(playItem, items, position)
-                            },
-                            onMoveLeft = {},
-                            onBack = closeSeriesDetails,
-                            onToggleFavorite = onToggleFavorite,
-                            onRemoveContinueWatching = onRemoveEntry,
-                            isItemFavorite = isItemFavorite,
-                            prefetchedInfo = pendingSeriesInfo,
-                            focusPlayOnOpen = true,
-                            preferredResumeItem = pendingResumeItem,
-                            preferredResumePositionMs = pendingResumePositionMs
-                    )
+                if (!isPlaybackActive) {
+                    FullscreenSeriesDetailsDialog(onDismissRequest = closeSeriesDetails) {
+                        SeriesSeasonsScreen(
+                                seriesItem = activeSeries,
+                                contentRepository = contentRepository,
+                                authConfig = authConfig,
+                                continueWatchingEntries = continueWatchingItems,
+                                showClearContinueWatching = true,
+                                contentItemFocusRequester = contentItemFocusRequester,
+                                resumeFocusId = resumeFocusId,
+                                resumeFocusRequester = resumeFocusRequester,
+                                episodesFocusRequester = episodesFocusRequester,
+                                pendingEpisodeFocus = pendingEpisodeFocus,
+                                onEpisodeFocusHandled = { pendingEpisodeFocus = false },
+                                onItemFocused = onItemFocused,
+                                onPlay = { playItem, items ->
+                                    onSeriesPlaybackStart(activeSeries)
+                                    onPlayWithPosition(playItem, items, null)
+                                },
+                                onPlayWithPosition = { playItem, items, position ->
+                                    onSeriesPlaybackStart(activeSeries)
+                                    onPlayWithPosition(playItem, items, position)
+                                },
+                                onMoveLeft = {},
+                                onBack = closeSeriesDetails,
+                                onToggleFavorite = onToggleFavorite,
+                                onRemoveContinueWatching = onRemoveEntry,
+                                isItemFavorite = isItemFavorite,
+                                prefetchedInfo = pendingSeriesInfo,
+                                focusPlayOnOpen = true,
+                                preferredResumeItem = pendingResumeItem,
+                                preferredResumePositionMs = pendingResumePositionMs
+                        )
+                    }
                 }
             } else {
                 Row(
