@@ -8820,24 +8820,33 @@ fun SeriesSeasonsScreen(
                     BoxWithConstraints(
                         modifier = Modifier.fillMaxWidth().weight(1f)
                     ) {
-                        val expandedListHeight = maxHeight
-                        val compactListHeight = minOf(episodesViewportHeight, expandedListHeight)
-                        val targetListHeight =
-                            if (episodesViewportExpanded) expandedListHeight else compactListHeight
-                        val animatedListHeight by animateDpAsState(
-                            targetValue = targetListHeight,
-                            animationSpec = collapseAnimSpec,
-                            label = "seriesEpisodesListHeight"
+                        val compactRevealFraction =
+                            (episodesViewportHeight / maxHeight).coerceIn(0f, 1f)
+                        val targetRevealProgress =
+                            if (episodesViewportExpanded) 1f else compactRevealFraction
+                        val revealProgress by animateFloatAsState(
+                            targetValue = targetRevealProgress,
+                            animationSpec = tween(
+                                durationMillis = collapseAnimDurationMs,
+                                easing = FastOutSlowInEasing
+                            ),
+                            label = "seriesEpisodesRevealProgress"
                         )
                         Box(
                             modifier =
-                                Modifier.fillMaxWidth()
-                                    .height(animatedListHeight)
+                                Modifier.fillMaxSize()
                                     .clipToBounds()
+                                    .drawWithContent {
+                                        val revealHeightPx = size.height * revealProgress
+                                        clipRect(bottom = revealHeightPx) {
+                                            this@drawWithContent.drawContent()
+                                        }
+                                    }
                         ) {
                             LazyColumn(
                                 verticalArrangement = Arrangement.spacedBy(12.dp),
-                                modifier = Modifier.fillMaxWidth().height(expandedListHeight)
+                                userScrollEnabled = episodesViewportExpanded,
+                                modifier = Modifier.fillMaxSize()
                             ) {
                                 items(
                                     count = displayEpisodes.size,
@@ -8851,8 +8860,15 @@ fun SeriesSeasonsScreen(
                                             else -> null
                                         }
                                     if (index == 0 && shouldRequestEpisodeFocus && requester != null) {
-                                        LaunchedEffect(shouldRequestEpisodeFocus, requester) {
+                                        LaunchedEffect(
+                                            shouldRequestEpisodeFocus,
+                                            requester,
+                                            episodesViewportExpanded
+                                        ) {
                                             withFrameNanos {}
+                                            if (episodesViewportExpanded) {
+                                                delay((collapseAnimDurationMs * 0.7f).toLong())
+                                            }
                                             requester.requestFocus()
                                             if (pendingEpisodeFocus) {
                                                 onEpisodeFocusHandled()
