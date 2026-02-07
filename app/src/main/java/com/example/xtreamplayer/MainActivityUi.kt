@@ -5240,14 +5240,14 @@ fun SectionScreen(
                             onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                             onItemFocused = onItemFocused,
                             onPlay = { playItem, items ->
-                                dismissSeriesDetailsForPlayback()
                                 onSeriesPlaybackStart(activeSeries)
                                 onPlay(playItem, items)
+                                dismissSeriesDetailsForPlayback()
                             },
                             onPlayWithPosition = { playItem, items, position ->
-                                dismissSeriesDetailsForPlayback()
                                 onSeriesPlaybackStart(activeSeries)
                                 onPlayWithPosition(playItem, items, position)
+                                dismissSeriesDetailsForPlayback()
                             },
                             onMoveLeft = {},
                             onBack = closeSeriesDetails,
@@ -6193,14 +6193,14 @@ fun FavoritesScreen(
                             onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                             onItemFocused = onItemFocused,
                             onPlay = { playItem, items ->
-                                dismissSeriesDetailsForPlayback()
                                 onSeriesPlaybackStart(activeSeries)
                                 onPlay(playItem, items)
+                                dismissSeriesDetailsForPlayback()
                             },
                             onPlayWithPosition = { playItem, items, position ->
-                                dismissSeriesDetailsForPlayback()
                                 onSeriesPlaybackStart(activeSeries)
                                 onPlayWithPosition(playItem, items, position)
+                                dismissSeriesDetailsForPlayback()
                             },
                             onMoveLeft = {},
                             onBack = closeSeriesDetails,
@@ -6443,14 +6443,14 @@ fun FavoritesScreen(
                                     onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                                     onItemFocused = onItemFocused,
                                     onPlay = { playItem, items ->
-                                        dismissSeriesDetailsForPlayback()
                                         onSeriesPlaybackStart(activeSeries)
                                         onPlay(playItem, items)
+                                        dismissSeriesDetailsForPlayback()
                                     },
                                     onPlayWithPosition = { playItem, items, position ->
-                                        dismissSeriesDetailsForPlayback()
                                         onSeriesPlaybackStart(activeSeries)
                                         onPlayWithPosition(playItem, items, position)
+                                        dismissSeriesDetailsForPlayback()
                                     },
                                     onMoveLeft = {},
                                     onBack = closeSeriesDetails,
@@ -7332,14 +7332,14 @@ fun CategorySectionScreen(
                                     onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                                     onItemFocused = onItemFocused,
                                     onPlay = { playItem, items ->
-                                        dismissSeriesDetailsForPlayback()
                                         onSeriesPlaybackStart(activeSeries)
                                         onPlay(playItem, items)
+                                        dismissSeriesDetailsForPlayback()
                                     },
                                     onPlayWithPosition = { playItem, items, position ->
-                                        dismissSeriesDetailsForPlayback()
                                         onSeriesPlaybackStart(activeSeries)
                                         onPlayWithPosition(playItem, items, position)
+                                        dismissSeriesDetailsForPlayback()
                                     },
                                     onMoveLeft = {},
                                     onBack = closeSeriesDetails,
@@ -7665,14 +7665,14 @@ fun ContinueWatchingScreen(
                             onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                             onItemFocused = onItemFocused,
                             onPlay = { playItem, items ->
-                                dismissSeriesDetailsForPlayback()
                                 onSeriesPlaybackStart(activeSeries)
                                 onPlayWithPosition(playItem, items, null)
+                                dismissSeriesDetailsForPlayback()
                             },
                             onPlayWithPosition = { playItem, items, position ->
-                                dismissSeriesDetailsForPlayback()
                                 onSeriesPlaybackStart(activeSeries)
                                 onPlayWithPosition(playItem, items, position)
+                                dismissSeriesDetailsForPlayback()
                             },
                             onMoveLeft = {},
                             onBack = closeSeriesDetails,
@@ -8761,78 +8761,85 @@ fun SeriesSeasonsScreen(
                         fontFamily = AppTheme.fontFamily
                     )
                 } else {
-                    val episodesListModifier =
-                        if (episodesExpanded) {
-                            Modifier.fillMaxWidth().weight(1f)
-                        } else {
-                            Modifier.fillMaxWidth().height(episodesViewportHeight)
-                        }
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = episodesListModifier
+                    BoxWithConstraints(
+                        modifier = Modifier.fillMaxWidth().weight(1f)
                     ) {
-                        items(
-                            count = displayEpisodes.size,
-                            key = { index -> "${displayEpisodes[index].id}-$index" }
-                        ) { index ->
-                            val item = displayEpisodes[index]
-                            val requester =
-                                when {
-                                    item.id == resumeFocusId -> resumeFocusRequester
-                                    index == 0 -> episodesFocusRequester
-                                    else -> null
-                                }
-                            if (index == 0 && shouldRequestEpisodeFocus && requester != null) {
-                                LaunchedEffect(shouldRequestEpisodeFocus, requester) {
-                                    withFrameNanos {}
-                                    requester.requestFocus()
-                                    if (pendingEpisodeFocus) {
-                                        onEpisodeFocusHandled()
+                        val expandedListHeight = maxHeight
+                        val compactListHeight = minOf(episodesViewportHeight, expandedListHeight)
+                        val targetListHeight =
+                            if (episodesExpanded) expandedListHeight else compactListHeight
+                        val animatedListHeight by animateDpAsState(
+                            targetValue = targetListHeight,
+                            animationSpec = tween(durationMillis = 220),
+                            label = "seriesEpisodesListHeight"
+                        )
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.fillMaxWidth().height(animatedListHeight)
+                        ) {
+                            items(
+                                count = displayEpisodes.size,
+                                key = { index -> "${displayEpisodes[index].id}-$index" }
+                            ) { index ->
+                                val item = displayEpisodes[index]
+                                val requester =
+                                    when {
+                                        item.id == resumeFocusId -> resumeFocusRequester
+                                        index == 0 -> episodesFocusRequester
+                                        else -> null
                                     }
-                                    internalEpisodeFocusRequested = false
+                                if (index == 0 && shouldRequestEpisodeFocus && requester != null) {
+                                    LaunchedEffect(shouldRequestEpisodeFocus, requester) {
+                                        withFrameNanos {}
+                                        requester.requestFocus()
+                                        if (pendingEpisodeFocus) {
+                                            onEpisodeFocusHandled()
+                                        }
+                                        internalEpisodeFocusRequested = false
+                                    }
                                 }
-                            }
-                            SeriesEpisodeRow(
-                                item = item,
-                                focusRequester = requester,
-                                forceDarkText = forceDarkText,
-                                onActivate = {
-                                    val label = selectedSeasonLabel
-                                    val cachedSeason =
-                                        if (!label.isNullOrBlank()) {
-                                            contentRepository.peekSeriesSeasonFullCache(
-                                                seriesItem.streamId,
-                                                label,
-                                                authConfig
-                                            )
+                                SeriesEpisodeRow(
+                                    item = item,
+                                    focusRequester = requester,
+                                    forceDarkText = forceDarkText,
+                                    onActivate = {
+                                        val label = selectedSeasonLabel
+                                        val cachedSeason =
+                                            if (!label.isNullOrBlank()) {
+                                                contentRepository.peekSeriesSeasonFullCache(
+                                                    seriesItem.streamId,
+                                                    label,
+                                                    authConfig
+                                                )
+                                            } else {
+                                                null
+                                            }
+                                        val queueItems =
+                                            when {
+                                                seasonEpisodes.isNotEmpty() -> seasonEpisodes
+                                                cachedSeason != null -> cachedSeason
+                                                else -> fallbackEpisodes
+                                            }
+                                        val resumePosition =
+                                            resumePositionsById[item.id]?.takeIf { it > 0 }
+                                        onPlayWithPosition(item, queueItems, resumePosition)
+                                    },
+                                    onFocused = {
+                                        episodesExpanded = true
+                                        onItemFocused(item)
+                                    },
+                                    onMoveLeft = onMoveLeft,
+                                    onMoveUp =
+                                        if (index == 0) {
+                                            {
+                                                episodesExpanded = false
+                                                contentItemFocusRequester.requestFocus()
+                                            }
                                         } else {
                                             null
                                         }
-                                    val queueItems =
-                                        when {
-                                            seasonEpisodes.isNotEmpty() -> seasonEpisodes
-                                            cachedSeason != null -> cachedSeason
-                                            else -> fallbackEpisodes
-                                        }
-                                    val resumePosition =
-                                        resumePositionsById[item.id]?.takeIf { it > 0 }
-                                    onPlayWithPosition(item, queueItems, resumePosition)
-                                },
-                                onFocused = {
-                                    episodesExpanded = true
-                                    onItemFocused(item)
-                                },
-                                onMoveLeft = onMoveLeft,
-                                onMoveUp =
-                                    if (index == 0) {
-                                        {
-                                            episodesExpanded = false
-                                            contentItemFocusRequester.requestFocus()
-                                        }
-                                    } else {
-                                        null
-                                    }
-                            )
+                                )
+                            }
                         }
                     }
                 }
