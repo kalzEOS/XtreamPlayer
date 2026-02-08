@@ -12,22 +12,36 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
-import androidx.compose.foundation.focusable
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.runtime.neverEqualPolicy
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -40,6 +54,9 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.MimeTypes
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.example.xtreamplayer.content.CategoryItem
 import com.example.xtreamplayer.content.ContentItem
 import com.example.xtreamplayer.content.ContentType
 import com.example.xtreamplayer.content.LiveNowNextEpg
@@ -57,6 +74,7 @@ import com.example.xtreamplayer.ui.SubtitleOffsetDialog
 import com.example.xtreamplayer.ui.SubtitleOptionsDialog
 import com.example.xtreamplayer.ui.SubtitleSearchDialog
 import com.example.xtreamplayer.ui.VideoResolutionDialog
+import com.example.xtreamplayer.ui.theme.AppTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -68,6 +86,9 @@ import java.util.Locale
 
 private const val LIVE_EPG_REFRESH_INTERVAL_MS = 60_000L
 private const val LIVE_EPG_CHANNEL_CHANGE_DEBOUNCE_MS = 250L
+private const val LIVE_GUIDE_ROW_LOGO_SIZE_DP = 34
+private const val LIVE_GUIDE_MIN_ROWS_VISIBLE = 6
+private const val LIVE_GUIDE_MAX_ROWS_VISIBLE = 10
 private val LANGUAGE_PREFIX_REGEX = Regex("^\\s*[A-Z]{2,3}\\s*-\\s*")
 private val BRACKET_TEXT_REGEX = Regex("\\[[^\\]]*\\]")
 private val PAREN_TEXT_REGEX = Regex("\\([^\\)]*\\)")
@@ -80,6 +101,11 @@ private val VTT_TIME_PATTERN = Regex("""(?:(\d{2}):)?(\d{2}):(\d{2})[.](\d{3})""
 private val ASS_TIME_PATTERN = Regex("""(\d+):(\d{2}):(\d{2})[.](\d{2})""")
 private val LIVE_PROGRAM_TIME_FORMATTER = ThreadLocal.withInitial {
     SimpleDateFormat("HH:mm", Locale.getDefault())
+}
+
+private enum class LiveGuideLevel {
+    CATEGORIES,
+    CHANNELS
 }
 
 private data class ActiveSubtitle(
@@ -299,11 +325,87 @@ data class PendingResume(
         val shouldPlay: Boolean
 )
 
+private fun normalizeCategoryId(raw: String?): String? =
+        raw?.trim()?.takeIf { it.isNotEmpty() }
+
+private fun normalizeLiveGuideText(raw: String): String =
+        raw.lowercase(Locale.US)
+                .replace("[^a-z0-9]+".toRegex(), " ")
+                .trim()
+                .replace("\\s+".toRegex(), " ")
+
+private fun tokenizeLiveGuideText(normalized: String): Set<String> =
+        normalized.split(' ')
+                .asSequence()
+                .map { it.trim() }
+                .filter { it.length >= 2 }
+                .toSet()
+
+private fun inferCategoryIdFromChannelTitles(
+        categories: List<CategoryItem>,
+        activeChannel: ContentItem?,
+        channels: List<ContentItem>
+): String? {
+    val titles = buildList {
+        activeChannel?.title?.takeIf { it.isNotBlank() }?.let(::add)
+        channels.asSequence()
+                .mapNotNull { it.title.takeIf(String::isNotBlank) }
+                .take(12)
+                .forEach(::add)
+    }
+    val normalizedTitles = titles.map(::normalizeLiveGuideText).filter { it.isNotBlank() }
+    if (normalizedTitles.isEmpty()) return null
+    val titleTokens = normalizedTitles.map(::tokenizeLiveGuideText)
+    return categories
+            .mapNotNull { category ->
+                val categoryId = normalizeCategoryId(category.id) ?: return@mapNotNull null
+                val normalizedName = normalizeLiveGuideText(category.name)
+                val categoryTokens = tokenizeLiveGuideText(normalizedName)
+                if (categoryTokens.isEmpty()) return@mapNotNull null
+                val maxTokenOverlap =
+                        titleTokens.maxOfOrNull { tokens ->
+                            categoryTokens.count { it in tokens }
+                        } ?: 0
+                val totalTokenOverlap =
+                        titleTokens.sumOf { tokens ->
+                            categoryTokens.count { it in tokens }
+                        }
+                val phraseMatches = normalizedTitles.count { title -> title.contains(normalizedName) }
+                if (maxTokenOverlap < 2 && phraseMatches == 0) {
+                    null
+                } else {
+                    Quintuple(
+                            categoryId = categoryId,
+                            phraseMatches = phraseMatches,
+                            maxTokenOverlap = maxTokenOverlap,
+                            totalTokenOverlap = totalTokenOverlap,
+                            tokenCount = categoryTokens.size
+                    )
+                }
+            }
+            .maxWithOrNull(
+                    compareBy<Quintuple> { it.maxTokenOverlap }
+                            .thenBy { it.totalTokenOverlap }
+                            .thenBy { it.tokenCount }
+                            .thenBy { it.phraseMatches }
+            )
+            ?.categoryId
+}
+
+private data class Quintuple(
+        val categoryId: String,
+        val phraseMatches: Int,
+        val maxTokenOverlap: Int,
+        val totalTokenOverlap: Int,
+        val tokenCount: Int
+)
+
 @OptIn(UnstableApi::class)
 @Composable
 internal fun PlayerOverlay(
         title: String,
         activePlaybackItem: ContentItem?,
+        activePlaybackItems: List<ContentItem>,
         player: Player,
         playbackEngine: Media3PlaybackEngine,
         subtitleRepository: SubtitleRepository,
@@ -319,11 +421,12 @@ internal fun PlayerOverlay(
         hasNextEpisode: Boolean,
         onPlayNextEpisode: () -> Unit,
         onLiveChannelSwitch: (Int) -> Boolean,
-        loadLiveNowNext: suspend (ContentItem) -> Result<LiveNowNextEpg?>
+        onLiveGuideChannelSelect: (ContentItem, List<ContentItem>) -> Unit,
+        loadLiveNowNext: suspend (ContentItem) -> Result<LiveNowNextEpg?>,
+        loadLiveCategories: suspend () -> Result<List<CategoryItem>>,
+        loadLiveCategoryChannels: suspend (CategoryItem) -> Result<List<ContentItem>>
 ) {
     val context = LocalContext.current
-    val interactionSource = remember { MutableInteractionSource() }
-    val focusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
     var controlsVisible by remember { mutableStateOf(false) }
     var resizeMode by remember { mutableStateOf(PlayerResizeMode.FIT) }
     var playerView by remember { mutableStateOf<XtreamPlayerView?>(null) }
@@ -360,6 +463,18 @@ internal fun PlayerOverlay(
                     showSubtitleDialog ||
                     showSubtitleOptionsDialog
     val isPlayerModalOpen = hasModalOpen || showSubtitleTimingDialog
+    var showLiveGuide by remember { mutableStateOf(false) }
+    var liveGuideLevel by remember { mutableStateOf(LiveGuideLevel.CHANNELS) }
+    var liveGuideSelectedCategory by remember { mutableStateOf<CategoryItem?>(null) }
+    var liveGuideCategories by remember { mutableStateOf<List<CategoryItem>>(emptyList()) }
+    var liveGuideChannels by remember { mutableStateOf<List<ContentItem>>(emptyList()) }
+    var liveGuideLoading by remember { mutableStateOf(false) }
+    var liveGuideErrorMessage by remember { mutableStateOf<String?>(null) }
+    var liveGuideCategoryIndex by remember { mutableIntStateOf(0) }
+    var liveGuideChannelIndex by remember { mutableIntStateOf(0) }
+    var liveGuideReturnCategoryAtTop by remember { mutableStateOf(false) }
+    var liveGuidePreferredCategoryId by remember { mutableStateOf<String?>(null) }
+    var liveGuideParentCategoryId by remember { mutableStateOf<String?>(null) }
 
     // Next episode overlay state
     var showNextEpisodeOverlay by remember { mutableStateOf(false) }
@@ -375,6 +490,224 @@ internal fun PlayerOverlay(
             contentType = currentContentType,
             liveNowNextEpg = liveNowNextEpg
         )
+    }
+    val liveQueueItems = remember(activePlaybackItems) {
+        activePlaybackItems.filter { it.contentType == ContentType.LIVE }
+    }
+    val closeLiveGuide: () -> Unit = {
+        showLiveGuide = false
+        liveGuideErrorMessage = null
+        playerView?.let { view ->
+            view.post {
+                view.useController = true
+                view.showController()
+                view.focusPlayPause()
+            }
+        }
+    }
+    fun wrapIndex(index: Int, size: Int): Int {
+        if (size <= 0) return 0
+        return ((index % size) + size) % size
+    }
+
+    fun resolveCategoryIndexById(
+            categories: List<CategoryItem>,
+            categoryId: String?
+    ): Int? {
+        val normalizedId = normalizeCategoryId(categoryId) ?: return null
+        return categories.indexOfFirst { normalizeCategoryId(it.id) == normalizedId }
+                .takeIf { it >= 0 }
+    }
+
+    fun refreshLiveCategories() {
+        subtitleCoroutineScope.launch {
+            liveGuideLoading = true
+            liveGuideErrorMessage = null
+            val result = runCatching { loadLiveCategories() }.getOrElse { Result.failure(it) }
+            result
+                    .onSuccess { categories ->
+                        liveGuideCategories = categories
+                        val preferredCategoryId =
+                                normalizeCategoryId(liveGuidePreferredCategoryId)
+                                        ?: normalizeCategoryId(liveGuideParentCategoryId)
+                                        ?: inferCategoryIdFromChannelTitles(
+                                                categories = categories,
+                                                activeChannel = activePlaybackItem,
+                                                channels = liveGuideChannels
+                                        )
+                        val preferredIndex = resolveCategoryIndexById(categories, preferredCategoryId)
+                        if (preferredIndex != null) {
+                            liveGuideCategoryIndex = preferredIndex
+                            liveGuideSelectedCategory = categories.getOrNull(preferredIndex)
+                            liveGuidePreferredCategoryId =
+                                    normalizeCategoryId(categories.getOrNull(preferredIndex)?.id)
+                            liveGuideParentCategoryId = liveGuidePreferredCategoryId
+                        } else {
+                            liveGuideCategoryIndex =
+                                    resolveCategoryIndexById(categories, liveGuideSelectedCategory?.id)
+                                            ?: wrapIndex(liveGuideCategoryIndex, categories.size)
+                        }
+                    }
+                    .onFailure { error ->
+                        liveGuideErrorMessage = error.message ?: "Failed to load categories"
+                    }
+            liveGuideLoading = false
+        }
+    }
+
+    fun openCategoryChannels(category: CategoryItem) {
+        subtitleCoroutineScope.launch {
+            liveGuideLoading = true
+            liveGuideErrorMessage = null
+            val result = runCatching { loadLiveCategoryChannels(category) }.getOrElse { Result.failure(it) }
+            result
+                    .onSuccess { channels ->
+                        val liveChannels = channels.filter { it.contentType == ContentType.LIVE }
+                        val liveChannelsInCategory =
+                                liveChannels.filter {
+                                    normalizeCategoryId(it.categoryId) == normalizeCategoryId(category.id)
+                                }
+                        val resolvedChannels =
+                                if (liveChannelsInCategory.isNotEmpty()) {
+                                    liveChannelsInCategory
+                                } else {
+                                    liveChannels
+                                }
+                        val normalizedCategoryId = normalizeCategoryId(category.id)
+                        liveGuidePreferredCategoryId = normalizedCategoryId
+                        liveGuideParentCategoryId = normalizedCategoryId
+                        liveGuideSelectedCategory = category
+                        liveGuideCategoryIndex =
+                                resolveCategoryIndexById(liveGuideCategories, normalizedCategoryId)
+                                        ?: liveGuideCategoryIndex
+                        liveGuideChannels = resolvedChannels
+                        // Always start at the top of a category channel list.
+                        liveGuideChannelIndex = 0
+                        liveGuideLevel = LiveGuideLevel.CHANNELS
+                    }
+                    .onFailure { error ->
+                        liveGuideErrorMessage = error.message ?: "Failed to load channels"
+                    }
+            liveGuideLoading = false
+        }
+    }
+
+    fun showLiveGuidePanel() {
+        if (currentContentType != ContentType.LIVE || isPlayerModalOpen) {
+            return
+        }
+        val queueCategoryId =
+                normalizeCategoryId(activePlaybackItem?.categoryId)
+                        ?: liveQueueItems
+                                .mapNotNull { normalizeCategoryId(it.categoryId) }
+                                .groupingBy { it }
+                                .eachCount()
+                                .maxByOrNull { it.value }
+                                ?.key
+                        ?: inferCategoryIdFromChannelTitles(
+                                categories = liveGuideCategories,
+                                activeChannel = activePlaybackItem,
+                                channels = liveQueueItems
+                        )
+                        ?: normalizeCategoryId(liveGuideParentCategoryId)
+                        ?: normalizeCategoryId(liveGuidePreferredCategoryId)
+        queueCategoryId?.let { categoryId ->
+            liveGuidePreferredCategoryId = categoryId
+            liveGuideParentCategoryId = categoryId
+            val preferredIndex = resolveCategoryIndexById(liveGuideCategories, categoryId)
+            if (preferredIndex != null) {
+                liveGuideCategoryIndex = preferredIndex
+                liveGuideSelectedCategory = liveGuideCategories[preferredIndex]
+            }
+        }
+        if (liveQueueItems.size > 1) {
+            liveGuideChannels = liveQueueItems
+            liveGuideLevel = LiveGuideLevel.CHANNELS
+            liveGuideChannelIndex =
+                    liveQueueItems.indexOfFirst {
+                        it.id == activePlaybackItem?.id
+                    }.takeIf { it >= 0 } ?: 0
+        } else {
+            liveGuideLevel = LiveGuideLevel.CATEGORIES
+        }
+        showLiveGuide = true
+        playerView?.hideController()
+        playerView?.resetControllerFocus()
+        playerView?.requestFocus()
+        if (liveGuideCategories.isEmpty()) {
+            refreshLiveCategories()
+        }
+    }
+
+    fun navigateLiveGuideBackOneLevel() {
+        if (liveGuideLevel == LiveGuideLevel.CHANNELS) {
+            playerView?.hideController()
+            liveGuideLevel = LiveGuideLevel.CATEGORIES
+            liveGuideReturnCategoryAtTop = true
+            val preferredCategoryId =
+                    normalizeCategoryId(liveGuideParentCategoryId)
+                            ?: normalizeCategoryId(liveGuideSelectedCategory?.id)
+                            ?: normalizeCategoryId(liveGuidePreferredCategoryId)
+                            ?: normalizeCategoryId(activePlaybackItem?.categoryId)
+                            ?: inferCategoryIdFromChannelTitles(
+                                    categories = liveGuideCategories,
+                                    activeChannel = activePlaybackItem,
+                                    channels = liveGuideChannels
+                            )
+            liveGuideCategoryIndex =
+                    resolveCategoryIndexById(liveGuideCategories, preferredCategoryId)
+                            ?: wrapIndex(liveGuideCategoryIndex, liveGuideCategories.size)
+            liveGuideSelectedCategory = liveGuideCategories.getOrNull(liveGuideCategoryIndex)
+            if (liveGuideCategories.isEmpty() && !liveGuideLoading) {
+                refreshLiveCategories()
+            }
+        }
+    }
+
+    fun moveLiveGuideSelection(delta: Int) {
+        if (liveGuideLoading || !liveGuideErrorMessage.isNullOrBlank()) return
+        playerView?.hideController()
+        if (liveGuideLevel == LiveGuideLevel.CATEGORIES) {
+            if (liveGuideCategories.isEmpty()) return
+            liveGuideCategoryIndex = wrapIndex(liveGuideCategoryIndex + delta, liveGuideCategories.size)
+        } else {
+            if (liveGuideChannels.isEmpty()) return
+            liveGuideChannelIndex = wrapIndex(liveGuideChannelIndex + delta, liveGuideChannels.size)
+        }
+    }
+
+    fun retryLiveGuideLoad() {
+        if (liveGuideLevel == LiveGuideLevel.CHANNELS && liveGuideSelectedCategory != null) {
+            openCategoryChannels(liveGuideSelectedCategory!!)
+        } else {
+            refreshLiveCategories()
+        }
+    }
+
+    fun activateLiveGuideSelection() {
+        if (liveGuideLoading) return
+        playerView?.hideController()
+        if (!liveGuideErrorMessage.isNullOrBlank()) {
+            retryLiveGuideLoad()
+            return
+        }
+        if (liveGuideLevel == LiveGuideLevel.CATEGORIES) {
+            val category = liveGuideCategories.getOrNull(liveGuideCategoryIndex) ?: return
+            openCategoryChannels(category)
+            return
+        }
+        val channel = liveGuideChannels.getOrNull(liveGuideChannelIndex) ?: return
+        if (channel.id == activePlaybackItem?.id) {
+            closeLiveGuide()
+            return
+        }
+        onLiveGuideChannelSelect(channel, liveGuideChannels)
+    }
+
+    LaunchedEffect(currentContentType) {
+        if (currentContentType != ContentType.LIVE) {
+            showLiveGuide = false
+        }
     }
 
     LaunchedEffect(currentContentType, activePlaybackItem?.streamId) {
@@ -661,10 +994,16 @@ internal fun PlayerOverlay(
         }
     }
 
+    LaunchedEffect(title) {
+        if (currentContentType == ContentType.LIVE) {
+            playerView?.showController()
+        }
+    }
+
     LaunchedEffect(controlsVisible) {
         if (!controlsVisible) {
             playerView?.resetControllerFocus()
-            focusRequester.requestFocus()
+            playerView?.requestFocus()
         }
     }
 
@@ -676,6 +1015,7 @@ internal fun PlayerOverlay(
 
     BackHandler(enabled = true) {
         when {
+            showLiveGuide -> closeLiveGuide()
             showSubtitleTimingDialog -> showSubtitleTimingDialog = false
             showPlaybackSettingsDialog -> showPlaybackSettingsDialog = false
             showPlaybackSpeedDialog -> showPlaybackSpeedDialog = false
@@ -745,29 +1085,11 @@ internal fun PlayerOverlay(
 
 Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
-                modifier =
-                        Modifier.fillMaxSize()
-                                .focusRequester(focusRequester)
-                                .focusable(interactionSource = interactionSource)
-                                .onKeyEvent { event ->
-                                    val isSelectKey =
-                                            event.key == Key.Enter ||
-                                                    event.key == Key.NumPadEnter ||
-                                                    event.key == Key.DirectionCenter
-                                    if (event.type == KeyEventType.KeyDown &&
-                                                    isSelectKey &&
-                                                    !controlsVisible
-                                    ) {
-                                        playerView?.showController()
-                                        true
-                                    } else {
-                                        false
-                                    }
-                                },
+                modifier = Modifier.fillMaxSize(),
                 factory = { context ->
                     XtreamPlayerView(context).apply {
                         this.player = player
-                        useController = true
+                        useController = !showLiveGuide
                         controllerAutoShow = false
                         setControllerShowTimeoutMs(3000)
                         defaultControllerTimeoutMs = 3000
@@ -789,7 +1111,7 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                         isLiveContent = currentContentType == ContentType.LIVE
                         fastSeekEnabled = currentContentType != ContentType.LIVE
                         onToggleControls = {
-                            if (isPlayerModalOpen) {
+                            if (showLiveGuide || isPlayerModalOpen) {
                                 false
                             } else {
                                 if (isControllerFullyVisible()) {
@@ -814,8 +1136,34 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                                 false
                             }
                         }
+                        onOpenLiveGuide = {
+                            if (!isPlayerModalOpen && currentContentType == ContentType.LIVE) {
+                                showLiveGuidePanel()
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        isLiveGuideOpen = showLiveGuide
+                        onLiveGuideMove = {
+                            moveLiveGuideSelection(it)
+                            true
+                        }
+                        onLiveGuideSelect = {
+                            activateLiveGuideSelection()
+                            true
+                        }
+                        onLiveGuideBack = {
+                            navigateLiveGuideBackOneLevel()
+                            true
+                        }
+                        onLiveGuideDismiss = {
+                            closeLiveGuide()
+                            true
+                        }
                         isFocusable = true
                         isFocusableInTouchMode = true
+                        requestFocus()
                         setControllerVisibilityListener(
                                 PlayerView.ControllerVisibilityListener { visibility ->
                                     val visible = visibility == View.VISIBLE
@@ -835,10 +1183,17 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                             if (event.keyCode == KeyEvent.KEYCODE_BACK ||
                                             event.keyCode == KeyEvent.KEYCODE_ESCAPE
                             ) {
+                                if (showLiveGuide) {
+                                    closeLiveGuide()
+                                    return@setOnKeyListener true
+                                }
                                 val dismissed = dismissSettingsWindowIfShowing()
                                 if (!dismissed) {
                                     onExit()
                                 }
+                                return@setOnKeyListener true
+                            }
+                            if (showLiveGuide) {
                                 return@setOnKeyListener true
                             }
                             val isSelect =
@@ -856,6 +1211,10 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                 },
                 update = { view ->
                     view.player = player
+                    view.useController = !showLiveGuide
+                    if (showLiveGuide) {
+                        view.hideController()
+                    }
                     view.resizeMode = resizeMode.resizeMode
                     view.forcedAspectRatio = resizeMode.forcedAspectRatio
                     view.setResizeModeLabel(resizeMode.label)
@@ -873,7 +1232,7 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                     view.fastSeekEnabled = currentContentType != ContentType.LIVE
                     view.defaultControllerTimeoutMs = 3000
                     view.onToggleControls = {
-                        if (isPlayerModalOpen) {
+                        if (showLiveGuide || isPlayerModalOpen) {
                             false
                         } else {
                             if (view.isControllerFullyVisible()) {
@@ -897,6 +1256,31 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                         } else {
                             false
                         }
+                    }
+                    view.onOpenLiveGuide = {
+                        if (!isPlayerModalOpen && currentContentType == ContentType.LIVE) {
+                            showLiveGuidePanel()
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    view.isLiveGuideOpen = showLiveGuide
+                    view.onLiveGuideMove = {
+                        moveLiveGuideSelection(it)
+                        true
+                    }
+                    view.onLiveGuideSelect = {
+                        activateLiveGuideSelection()
+                        true
+                    }
+                    view.onLiveGuideBack = {
+                        navigateLiveGuideBackOneLevel()
+                        true
+                    }
+                    view.onLiveGuideDismiss = {
+                        closeLiveGuide()
+                        true
                     }
                     if (playerView != view) {
                         playerView = view
@@ -936,9 +1320,23 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
             )
         }
 
-    }
+        if (showLiveGuide && currentContentType == ContentType.LIVE) {
+            LiveGuidePanel(
+                    level = liveGuideLevel,
+                    categories = liveGuideCategories,
+                    channels = liveGuideChannels,
+                    selectedCategoryIndex = liveGuideCategoryIndex,
+                    selectedChannelIndex = liveGuideChannelIndex,
+                    activeChannelId = activePlaybackItem?.id,
+                    isLoading = liveGuideLoading,
+                    errorMessage = liveGuideErrorMessage,
+                    selectedCategoryName = liveGuideSelectedCategory?.name,
+                    alignCategorySelectionToTop = liveGuideReturnCategoryAtTop,
+                    onCategorySelectionAligned = { liveGuideReturnCategoryAtTop = false }
+            )
+        }
 
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    }
 
 
     if (showSubtitleDialog) {
@@ -1137,6 +1535,362 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                 },
                 onDismiss = { showResolutionDialog = false }
         )
+    }
+}
+
+@Composable
+private fun LiveGuidePanel(
+        level: LiveGuideLevel,
+        categories: List<CategoryItem>,
+        channels: List<ContentItem>,
+        selectedCategoryIndex: Int,
+        selectedChannelIndex: Int,
+        activeChannelId: String?,
+        isLoading: Boolean,
+        errorMessage: String?,
+        selectedCategoryName: String?,
+        alignCategorySelectionToTop: Boolean,
+        onCategorySelectionAligned: () -> Unit
+) {
+    val listState = rememberLazyListState()
+    val density = LocalDensity.current
+    val hasRows = if (level == LiveGuideLevel.CATEGORIES) categories.isNotEmpty() else channels.isNotEmpty()
+    val selectedIndex = if (level == LiveGuideLevel.CATEGORIES) selectedCategoryIndex else selectedChannelIndex
+    val selectedBoundedIndex = if (hasRows) selectedIndex.coerceAtLeast(0) else 0
+    val visibleItems = listState.layoutInfo.visibleItemsInfo
+    val viewportStart = listState.layoutInfo.viewportStartOffset
+    val viewportEnd = listState.layoutInfo.viewportEndOffset
+    val fullyVisibleItems =
+            visibleItems.filter { visible ->
+                visible.offset >= viewportStart && visible.offset + visible.size <= viewportEnd
+            }
+    val effectiveVisibleItems = if (fullyVisibleItems.isNotEmpty()) fullyVisibleItems else visibleItems
+    val firstVisibleIndex = effectiveVisibleItems.firstOrNull()?.index ?: selectedBoundedIndex
+    val lastVisibleIndex = effectiveVisibleItems.lastOrNull()?.index ?: selectedBoundedIndex
+    val selectedDisplayIndex = selectedBoundedIndex.coerceIn(firstVisibleIndex, lastVisibleIndex)
+    val rowHeight = if (level == LiveGuideLevel.CATEGORIES) 58.dp else 62.dp
+    val rowSpacing = 4.dp
+    val headerHeight = 26.dp
+
+    LaunchedEffect(
+            level,
+            selectedBoundedIndex,
+            categories.size,
+            channels.size,
+            alignCategorySelectionToTop
+    ) {
+        val rowCount = if (level == LiveGuideLevel.CATEGORIES) categories.size else channels.size
+        if (rowCount > 0) {
+            val targetIndex = selectedBoundedIndex.coerceAtMost(rowCount - 1)
+            if (level == LiveGuideLevel.CATEGORIES && alignCategorySelectionToTop) {
+                listState.scrollToItem(targetIndex)
+                onCategorySelectionAligned()
+                return@LaunchedEffect
+            }
+            val visibleItems = listState.layoutInfo.visibleItemsInfo
+            if (visibleItems.isEmpty()) {
+                listState.scrollToItem(targetIndex)
+                return@LaunchedEffect
+            }
+            val viewportStart = listState.layoutInfo.viewportStartOffset
+            val viewportEnd = listState.layoutInfo.viewportEndOffset
+            val fullyVisibleItems =
+                    visibleItems.filter { visible ->
+                        visible.offset >= viewportStart && visible.offset + visible.size <= viewportEnd
+                    }
+            val effectiveVisibleItems = if (fullyVisibleItems.isNotEmpty()) fullyVisibleItems else visibleItems
+            val firstVisible = effectiveVisibleItems.first().index
+            val lastVisible = effectiveVisibleItems.last().index
+            when {
+                targetIndex < firstVisible -> {
+                    listState.scrollToItem(targetIndex)
+                }
+                targetIndex > lastVisible -> {
+                    val visibleCount = effectiveVisibleItems.size.coerceAtLeast(1)
+                    val newFirst = (targetIndex - visibleCount + 1).coerceAtLeast(0)
+                    listState.scrollToItem(newFirst)
+                }
+            }
+        }
+    }
+
+    BoxWithConstraints(
+            modifier = Modifier.fillMaxSize().padding(vertical = 20.dp, horizontal = 20.dp),
+            contentAlignment = Alignment.CenterEnd
+    ) {
+        val layoutMetrics =
+                remember(maxHeight, rowHeight, rowSpacing, headerHeight, density.density, density.fontScale) {
+                    with(density) {
+                        val rowPx = rowHeight.roundToPx()
+                        val spacingPx = rowSpacing.roundToPx()
+                        val chromePx = (headerHeight + 24.dp).roundToPx()
+                        val availablePx = (maxHeight.roundToPx() - chromePx).coerceAtLeast(rowPx)
+                        val rowsVisible =
+                                ((availablePx + spacingPx) / (rowPx + spacingPx))
+                                        .coerceIn(LIVE_GUIDE_MIN_ROWS_VISIBLE, LIVE_GUIDE_MAX_ROWS_VISIBLE)
+                        val listPx = rowPx * rowsVisible + spacingPx * (rowsVisible - 1)
+                        Pair(listPx.toDp(), (listPx + chromePx).toDp())
+                    }
+                }
+        val listHeight = layoutMetrics.first
+        val panelHeight = layoutMetrics.second
+        Column(
+                modifier =
+                        Modifier.width(360.dp)
+                                .height(panelHeight)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(AppTheme.colors.overlayStrong.copy(alpha = 0.82f))
+                                .border(
+                                        width = 1.dp,
+                                        color = AppTheme.colors.borderStrong.copy(alpha = 0.75f),
+                                        shape = RoundedCornerShape(14.dp)
+                                )
+                                .padding(12.dp)
+        ) {
+            Row(
+                    modifier = Modifier.fillMaxWidth().height(headerHeight),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                        text =
+                                when (level) {
+                                    LiveGuideLevel.CATEGORIES -> "Categories"
+                                    LiveGuideLevel.CHANNELS ->
+                                            selectedCategoryName ?: "Current channel list"
+                                },
+                        color = AppTheme.colors.textPrimary,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        fontFamily = AppTheme.fontFamily,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                )
+                Text(
+                        text = "LIVE GUIDE",
+                        color = AppTheme.colors.textSecondary,
+                        fontSize = 11.sp,
+                        letterSpacing = 1.sp,
+                        fontFamily = AppTheme.fontFamily,
+                        modifier = Modifier.padding(start = 8.dp)
+                )
+            }
+            when {
+                isLoading -> {
+                    Box(modifier = Modifier.fillMaxWidth().height(listHeight), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = AppTheme.colors.focus)
+                    }
+                }
+                !errorMessage.isNullOrBlank() -> {
+                    Column(
+                            modifier = Modifier.fillMaxWidth().height(listHeight),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                                text = errorMessage,
+                                color = AppTheme.colors.error,
+                                fontSize = 13.sp,
+                                fontFamily = AppTheme.fontFamily
+                        )
+                        Text(
+                                text = "Press OK to retry",
+                                color = AppTheme.colors.textSecondary,
+                                fontSize = 12.sp,
+                                fontFamily = AppTheme.fontFamily
+                        )
+                    }
+                }
+                !hasRows -> {
+                    Box(modifier = Modifier.fillMaxWidth().height(listHeight), contentAlignment = Alignment.Center) {
+                        Text(
+                                text = "No channels available",
+                                color = AppTheme.colors.textSecondary,
+                                fontSize = 13.sp,
+                                fontFamily = AppTheme.fontFamily
+                        )
+                    }
+                }
+                else -> {
+                    LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxWidth().height(listHeight),
+                            verticalArrangement = Arrangement.spacedBy(rowSpacing)
+                    ) {
+                        if (level == LiveGuideLevel.CATEGORIES) {
+                            itemsIndexed(
+                                    items = categories,
+                                    key = { _, category -> category.id }
+                            ) { index, category ->
+                                LiveGuideCategoryRow(
+                                        category = category,
+                                        selected = index == selectedDisplayIndex
+                                )
+                            }
+                        } else {
+                            itemsIndexed(
+                                    items = channels,
+                                    key = { _, channel -> channel.id }
+                            ) { index, channel ->
+                                LiveGuideChannelRow(
+                                        channel = channel,
+                                        selected = index == selectedDisplayIndex,
+                                        active = channel.id == activeChannelId
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveGuideCategoryRow(
+        category: CategoryItem,
+        selected: Boolean
+) {
+    val shape = RoundedCornerShape(9.dp)
+    val borderColor = if (selected) AppTheme.colors.focus else Color.Transparent
+    val background =
+            if (selected) AppTheme.colors.focus.copy(alpha = 0.22f)
+            else Color.Transparent
+    Column(
+            modifier = Modifier.fillMaxWidth()
+                    .height(58.dp)
+                    .clip(shape)
+                    .background(background)
+                    .border(1.dp, borderColor, shape)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(1.dp)
+    ) {
+        Text(
+                text = category.name,
+                color = AppTheme.colors.textPrimary,
+                fontSize = 13.sp,
+                fontFamily = AppTheme.fontFamily,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+        )
+        Text(
+                text =
+                        when (category.type) {
+                            ContentType.LIVE -> "Live"
+                            ContentType.MOVIES -> "Movies"
+                            ContentType.SERIES -> "Series"
+                        },
+                color = AppTheme.colors.textSecondary,
+                fontSize = 10.sp,
+                fontFamily = AppTheme.fontFamily,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun LiveGuideChannelRow(
+        channel: ContentItem,
+        selected: Boolean,
+        active: Boolean
+) {
+    val localContext = LocalContext.current
+    val shape = RoundedCornerShape(9.dp)
+    val borderColor =
+            when {
+                selected -> AppTheme.colors.focus
+                active -> AppTheme.colors.borderStrong
+                else -> Color.Transparent
+            }
+    val background =
+            when {
+                selected -> AppTheme.colors.focus.copy(alpha = 0.22f)
+                active -> AppTheme.colors.surfaceAlt.copy(alpha = 0.78f)
+                else -> Color.Transparent
+            }
+    Row(
+            modifier = Modifier.fillMaxWidth()
+                    .height(62.dp)
+                    .clip(shape)
+                    .background(background)
+                    .border(1.dp, borderColor, shape)
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        val logoModifier =
+                Modifier.width(LIVE_GUIDE_ROW_LOGO_SIZE_DP.dp)
+                        .height(LIVE_GUIDE_ROW_LOGO_SIZE_DP.dp)
+                        .clip(RoundedCornerShape(6.dp))
+        if (channel.imageUrl.isNullOrBlank()) {
+            Box(
+                    modifier = logoModifier.background(AppTheme.colors.surfaceAlt.copy(alpha = 0.8f)),
+                    contentAlignment = Alignment.Center
+            ) {
+                Text(
+                        text = "#",
+                        color = AppTheme.colors.textSecondary,
+                        fontSize = 12.sp,
+                        fontFamily = AppTheme.fontFamily
+                )
+            }
+        } else {
+            val imageRequest =
+                    remember(channel.imageUrl) {
+                        ImageRequest.Builder(localContext)
+                                .data(channel.imageUrl)
+                                .size(120)
+                                .crossfade(true)
+                                .build()
+                    }
+            AsyncImage(
+                    model = imageRequest,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = logoModifier.background(AppTheme.colors.surfaceAlt.copy(alpha = 0.35f))
+            )
+        }
+        Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(1.dp)
+        ) {
+            val channelLabel = channel.streamId.ifBlank { channel.id }
+            Text(
+                    text = channelLabel,
+                    color = AppTheme.colors.textSecondary,
+                    fontSize = 10.sp,
+                    fontFamily = AppTheme.fontFamily,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                    text = channel.title,
+                    color = AppTheme.colors.textPrimary,
+                    fontSize = 13.sp,
+                    fontFamily = AppTheme.fontFamily,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (active) {
+            Box(
+                    modifier =
+                            Modifier.clip(RoundedCornerShape(6.dp))
+                                    .background(AppTheme.colors.overlay.copy(alpha = 0.48f))
+                                    .padding(horizontal = 7.dp, vertical = 3.dp)
+            ) {
+                Text(
+                        text = "Playing",
+                        color = AppTheme.colors.textPrimary,
+                        fontSize = 10.sp,
+                        fontFamily = AppTheme.fontFamily,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
     }
 }
 

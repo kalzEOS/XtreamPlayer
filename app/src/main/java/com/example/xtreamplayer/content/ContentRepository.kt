@@ -347,17 +347,22 @@ class ContentRepository(
         categoryId: String,
         page: Int,
         limit: Int,
-        authConfig: AuthConfig
+        authConfig: AuthConfig,
+        forceRefresh: Boolean = false
     ): ContentPage {
         val cacheKey = "category-${type.name}-$categoryId"
         val key = cacheKey(cacheKey, page, limit)
-        memoryCacheMutex.withLock {
-            memoryCache[key]?.let { return it }
+        if (!forceRefresh) {
+            memoryCacheMutex.withLock {
+                memoryCache[key]?.let { return it }
+            }
         }
-        val cached = contentCache.readPage(cacheKey, authConfig, page, limit)
-        if (cached != null) {
-            memoryCacheMutex.withLock { memoryCache[key] = cached }
-            return cached
+        if (!forceRefresh) {
+            val cached = contentCache.readPage(cacheKey, authConfig, page, limit)
+            if (cached != null) {
+                memoryCacheMutex.withLock { memoryCache[key] = cached }
+                return cached
+            }
         }
         val result = api.fetchCategoryPage(type, authConfig, categoryId, page, limit)
         val pageData = result.getOrElse { throw it }

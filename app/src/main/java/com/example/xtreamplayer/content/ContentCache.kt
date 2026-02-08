@@ -767,6 +767,7 @@ class ContentCache(context: Context) {
             obj.put("rating", item.rating)
             obj.put("seasonLabel", item.seasonLabel)
             obj.put("episodeNumber", item.episodeNumber)
+            obj.put("categoryId", item.categoryId)
             array.put(obj)
         }
         return array
@@ -862,6 +863,7 @@ class ContentCache(context: Context) {
         var rating: String? = null
         var seasonLabel: String? = null
         var episodeNumber: String? = null
+        var categoryId: String? = null
 
         while (reader.hasNext()) {
             when (reader.nextName()) {
@@ -878,6 +880,7 @@ class ContentCache(context: Context) {
                 "rating" -> rating = readJsonString(reader)
                 "seasonLabel" -> seasonLabel = readJsonString(reader)
                 "episodeNumber" -> episodeNumber = readJsonString(reader)
+                "categoryId" -> categoryId = readJsonString(reader)
                 else -> reader.skipValue()
             }
         }
@@ -902,7 +905,8 @@ class ContentCache(context: Context) {
             duration = duration?.ifBlank { null },
             rating = rating?.ifBlank { null },
             seasonLabel = seasonLabel?.ifBlank { null },
-            episodeNumber = episodeNumber?.ifBlank { null }
+            episodeNumber = episodeNumber?.ifBlank { null },
+            categoryId = categoryId?.ifBlank { null }
         )
     }
 
@@ -946,7 +950,8 @@ class ContentCache(context: Context) {
                     duration = itemObj.optString("duration").ifBlank { null },
                     rating = itemObj.optString("rating").ifBlank { null },
                     seasonLabel = itemObj.optString("seasonLabel").ifBlank { null },
-                    episodeNumber = itemObj.optString("episodeNumber").ifBlank { null }
+                    episodeNumber = itemObj.optString("episodeNumber").ifBlank { null },
+                    categoryId = itemObj.optString("categoryId").ifBlank { null }
                 )
             )
         }
