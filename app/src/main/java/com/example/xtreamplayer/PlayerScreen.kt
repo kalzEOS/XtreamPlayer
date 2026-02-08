@@ -1,6 +1,7 @@
 package com.example.xtreamplayer
 
 import androidx.compose.runtime.Composable
+import com.example.xtreamplayer.content.CategoryItem
 import com.example.xtreamplayer.content.ContentItem
 import com.example.xtreamplayer.content.ContentType
 import com.example.xtreamplayer.content.LiveNowNextEpg
@@ -13,6 +14,7 @@ internal fun PlayerScreen(
     activePlaybackQueue: PlaybackQueue?,
     activePlaybackTitle: String?,
     activePlaybackItem: ContentItem?,
+    activePlaybackItems: List<ContentItem>,
     playbackEngine: Media3PlaybackEngine,
     subtitleRepository: SubtitleRepository,
     settings: SettingsState,
@@ -20,7 +22,10 @@ internal fun PlayerScreen(
     onExitPlayback: () -> Unit,
     onPlayNextEpisode: () -> Unit,
     onLiveChannelSwitch: (Int) -> Boolean,
-    loadLiveNowNext: suspend (ContentItem) -> Result<LiveNowNextEpg?>
+    onLiveGuideChannelSelect: (ContentItem, List<ContentItem>) -> Unit,
+    loadLiveNowNext: suspend (ContentItem) -> Result<LiveNowNextEpg?>,
+    loadLiveCategories: suspend () -> Result<List<CategoryItem>>,
+    loadLiveCategoryChannels: suspend (CategoryItem) -> Result<List<ContentItem>>
 ) {
     val queue = activePlaybackQueue ?: return
     val currentIndex = playbackEngine.player.currentMediaItemIndex
@@ -32,6 +37,7 @@ internal fun PlayerScreen(
     PlayerOverlay(
         title = activePlaybackTitle ?: "",
         activePlaybackItem = activePlaybackItem,
+        activePlaybackItems = activePlaybackItems,
         player = playbackEngine.player,
         playbackEngine = playbackEngine,
         subtitleRepository = subtitleRepository,
@@ -47,6 +53,9 @@ internal fun PlayerScreen(
         hasNextEpisode = hasNextEpisode,
         onPlayNextEpisode = onPlayNextEpisode,
         onLiveChannelSwitch = onLiveChannelSwitch,
-        loadLiveNowNext = loadLiveNowNext
+        onLiveGuideChannelSelect = onLiveGuideChannelSelect,
+        loadLiveNowNext = loadLiveNowNext,
+        loadLiveCategories = loadLiveCategories,
+        loadLiveCategoryChannels = loadLiveCategoryChannels
     )
 }

@@ -1647,11 +1647,13 @@ class XtreamApi(
         var id: String? = null
         var title: String? = null
         var icon: String? = null
+        var categoryId: String? = null
         while (reader.hasNext()) {
             when (reader.nextName()) {
                 "stream_id" -> id = readString(reader)
                 "name" -> title = readString(reader)
                 "stream_icon" -> icon = readString(reader)
+                "category_id" -> categoryId = readString(reader)
                 else -> reader.skipValue()
             }
         }
@@ -1666,7 +1668,8 @@ class XtreamApi(
             section = section,
             contentType = ContentType.LIVE,
             streamId = safeId,
-            containerExtension = "ts"
+            containerExtension = "ts",
+            categoryId = categoryId?.ifBlank { null }
         )
     }
 

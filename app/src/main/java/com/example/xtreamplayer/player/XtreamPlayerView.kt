@@ -90,6 +90,12 @@ class XtreamPlayerView @JvmOverloads constructor(
             field = value
             bindPrevNextView()
         }
+    var onOpenLiveGuide: (() -> Boolean)? = null
+    var onLiveGuideMove: ((Int) -> Boolean)? = null
+    var onLiveGuideSelect: (() -> Boolean)? = null
+    var onLiveGuideBack: (() -> Boolean)? = null
+    var onLiveGuideDismiss: (() -> Boolean)? = null
+    var isLiveGuideOpen: Boolean = false
     var onToggleControls: (() -> Boolean)? = null
     var fastSeekEnabled: Boolean = true
     var defaultControllerTimeoutMs: Int = 3000
@@ -207,19 +213,64 @@ class XtreamPlayerView @JvmOverloads constructor(
         topBar.alpha = background.alpha
     }
 
-    private fun areControlsShowing(): Boolean {
+    private fun isControllerVisibleForNavigation(): Boolean {
+        if (isControllerFullyVisible) return true
         val background = findViewById<View>(Media3UiR.id.exo_controls_background)
         return background?.visibility == View.VISIBLE && background.alpha > 0.01f
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
+            if (isLiveGuideOpen) {
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_BACK,
+                    KeyEvent.KEYCODE_ESCAPE -> {
+                        return onLiveGuideDismiss?.invoke() ?: true
+                    }
+                    KeyEvent.KEYCODE_DPAD_UP -> {
+                        return onLiveGuideMove?.invoke(-1) ?: true
+                    }
+                    KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        return onLiveGuideMove?.invoke(1) ?: true
+                    }
+                    KeyEvent.KEYCODE_DPAD_LEFT -> {
+                        return onLiveGuideBack?.invoke() ?: true
+                    }
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                        return true
+                    }
+                    KeyEvent.KEYCODE_DPAD_CENTER,
+                    KeyEvent.KEYCODE_ENTER,
+                    KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                        return onLiveGuideSelect?.invoke() ?: true
+                    }
+                }
+            }
             if (event.keyCode == KeyEvent.KEYCODE_MENU ||
                 event.keyCode == KeyEvent.KEYCODE_INFO) {
                 val handled = onToggleControls?.invoke() ?: false
                 if (handled) return true
             }
-            val controlsShowing = areControlsShowing()
+            if (isLiveContent &&
+                event.repeatCount > 0 &&
+                (event.keyCode == KeyEvent.KEYCODE_DPAD_UP ||
+                    event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN)
+            ) {
+                // Ignore held repeats to prevent rapid control focus run-through / accidental zapping.
+                return true
+            }
+            val controlsShowing = isControllerVisibleForNavigation()
+            if (controlsShowing && event.keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+                val focused = findFocus()
+                val backId = backButtonView?.id ?: R.id.exo_back
+                if (focused?.id == backId) {
+                    return true
+                }
+            }
+            if (isLiveContent && event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                val handled = onOpenLiveGuide?.invoke() ?: false
+                if (handled) return true
+            }
             if (fastSeekEnabled &&
                 !isLiveContent &&
                 (event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
@@ -289,17 +340,28 @@ class XtreamPlayerView @JvmOverloads constructor(
                 when (event.keyCode) {
                     KeyEvent.KEYCODE_DPAD_UP -> {
                         if (isLiveContent) {
-                            return onChannelUp?.invoke() ?: false
+                            if (onChannelUp?.invoke() == true) {
+                                showController()
+                            }
+                            return true
                         }
                         showController()
                         return true
                     }
                     KeyEvent.KEYCODE_DPAD_DOWN -> {
                         if (isLiveContent) {
-                            return onChannelDown?.invoke() ?: false
+                            if (onChannelDown?.invoke() == true) {
+                                showController()
+                            }
+                            return true
                         }
                         showController()
                         return true
+                    }
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                        if (isLiveContent) {
+                            return onOpenLiveGuide?.invoke() ?: false
+                        }
                     }
                 }
             }
@@ -308,6 +370,14 @@ class XtreamPlayerView @JvmOverloads constructor(
                 return super.dispatchKeyEvent(event)
             }
         } else if (event.action == KeyEvent.ACTION_UP) {
+            // Media3 PlayerView.dispatchKeyEvent does not check event action;
+            // a D-pad ACTION_UP reaching super will show the controller.
+            if (isLiveContent && !isControllerVisibleForNavigation() &&
+                (event.keyCode == KeyEvent.KEYCODE_DPAD_UP ||
+                    event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN)
+            ) {
+                return true
+            }
             if (handleSeekKeyUp(event.keyCode)) {
                 suppressSeekKeyUp = true
                 return true
@@ -322,6 +392,26 @@ class XtreamPlayerView @JvmOverloads constructor(
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (isLiveGuideOpen) {
+            return when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP,
+                KeyEvent.KEYCODE_DPAD_DOWN,
+                KeyEvent.KEYCODE_DPAD_LEFT,
+                KeyEvent.KEYCODE_DPAD_RIGHT,
+                KeyEvent.KEYCODE_DPAD_CENTER,
+                KeyEvent.KEYCODE_ENTER,
+                KeyEvent.KEYCODE_NUMPAD_ENTER,
+                KeyEvent.KEYCODE_BACK,
+                KeyEvent.KEYCODE_ESCAPE -> true
+                else -> super.onKeyUp(keyCode, event)
+            }
+        }
+        if (isLiveContent &&
+            !isControllerVisibleForNavigation() &&
+            (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN)
+        ) {
+            return true
+        }
         if (suppressSeekKeyUp) {
             suppressSeekKeyUp = false
             return super.onKeyUp(keyCode, event)
@@ -463,7 +553,10 @@ class XtreamPlayerView @JvmOverloads constructor(
         val view = backButtonView ?: findViewById<View>(R.id.exo_back).also {
             backButtonView = it
         }
-        view?.setOnClickListener { onBackClick?.invoke() }
+        if (view != null) {
+            view.nextFocusUpId = view.id
+            view.setOnClickListener { onBackClick?.invoke() }
+        }
     }
 
     private fun bindAudioTrackView() {

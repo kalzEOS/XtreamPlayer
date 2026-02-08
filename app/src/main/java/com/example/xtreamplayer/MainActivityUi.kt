@@ -1862,6 +1862,7 @@ fun RootScreen(
                 activePlaybackQueue = activePlaybackQueue,
                 activePlaybackTitle = activePlaybackTitle,
                 activePlaybackItem = activePlaybackItem,
+                activePlaybackItems = activePlaybackItems,
                 playbackEngine = playbackEngine,
                 subtitleRepository = subtitleRepository,
                 settings = settings,
@@ -1876,6 +1877,9 @@ fun RootScreen(
                 },
                 onPlayNextEpisode = { playbackEngine.player.seekToNextMediaItem() },
                 onLiveChannelSwitch = switchLiveChannel,
+                onLiveGuideChannelSelect = { item, channels ->
+                    handlePlayItem(item, channels)
+                },
                 loadLiveNowNext = loadLiveNowNext@{ item ->
                     val config = authState.activeConfig ?: return@loadLiveNowNext Result.success(null)
                     if (item.contentType != ContentType.LIVE) {
@@ -1885,6 +1889,37 @@ fun RootScreen(
                         streamId = item.streamId,
                         authConfig = config
                     )
+                },
+                loadLiveCategories = loadLiveCategories@{
+                    val config = authState.activeConfig
+                            ?: return@loadLiveCategories Result.success(emptyList())
+                    runCatching { contentRepository.loadCategories(ContentType.LIVE, config) }
+                },
+                loadLiveCategoryChannels = loadLiveCategoryChannels@{ category ->
+                    val config = authState.activeConfig
+                            ?: return@loadLiveCategoryChannels Result.success(emptyList())
+                    runCatching {
+                        val items = mutableListOf<ContentItem>()
+                        var page = 0
+                        val limit = 200
+                        while (true) {
+                            val pageData =
+                                    contentRepository.loadCategoryPage(
+                                            type = ContentType.LIVE,
+                                            categoryId = category.id,
+                                            page = page,
+                                            limit = limit,
+                                            authConfig = config,
+                                            forceRefresh = true
+                                    )
+                            if (pageData.items.isEmpty()) break
+                            items += pageData.items.filter { it.contentType == ContentType.LIVE }
+                            if (pageData.endReached) break
+                            page += 1
+                            if (page >= 100) break
+                        }
+                        items.distinctBy { it.id }
+                    }
                 }
         )
 
