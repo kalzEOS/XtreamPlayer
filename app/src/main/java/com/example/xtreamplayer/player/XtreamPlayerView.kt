@@ -127,6 +127,7 @@ class XtreamPlayerView @JvmOverloads constructor(
     private var repeatSeekRunnable: Runnable? = null
     private var longSeekStartMs: Long = 0L
     private var suppressSeekKeyUp = false
+    private var suppressLiveGuideRightKeyUp = false
     private val topBarSyncListener = ViewTreeObserver.OnPreDrawListener {
         syncTopBarWithControlsBackground()
         true
@@ -199,6 +200,7 @@ class XtreamPlayerView @JvmOverloads constructor(
     }
 
     override fun onDetachedFromWindow() {
+        stopSeekRepeat()
         viewTreeObserver.removeOnPreDrawListener(topBarSyncListener)
         super.onDetachedFromWindow()
     }
@@ -266,10 +268,6 @@ class XtreamPlayerView @JvmOverloads constructor(
                 if (focused?.id == backId) {
                     return true
                 }
-            }
-            if (isLiveContent && event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
-                val handled = onOpenLiveGuide?.invoke() ?: false
-                if (handled) return true
             }
             if (fastSeekEnabled &&
                 !isLiveContent &&
@@ -360,7 +358,11 @@ class XtreamPlayerView @JvmOverloads constructor(
                     }
                     KeyEvent.KEYCODE_DPAD_RIGHT -> {
                         if (isLiveContent) {
-                            return onOpenLiveGuide?.invoke() ?: false
+                            val opened = onOpenLiveGuide?.invoke() ?: false
+                            if (opened) {
+                                suppressLiveGuideRightKeyUp = true
+                            }
+                            return opened
                         }
                     }
                 }
@@ -370,6 +372,24 @@ class XtreamPlayerView @JvmOverloads constructor(
                 return super.dispatchKeyEvent(event)
             }
         } else if (event.action == KeyEvent.ACTION_UP) {
+            if (isLiveGuideOpen) {
+                return when (event.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_UP,
+                    KeyEvent.KEYCODE_DPAD_DOWN,
+                    KeyEvent.KEYCODE_DPAD_LEFT,
+                    KeyEvent.KEYCODE_DPAD_RIGHT,
+                    KeyEvent.KEYCODE_DPAD_CENTER,
+                    KeyEvent.KEYCODE_ENTER,
+                    KeyEvent.KEYCODE_NUMPAD_ENTER,
+                    KeyEvent.KEYCODE_BACK,
+                    KeyEvent.KEYCODE_ESCAPE -> true
+                    else -> false
+                }
+            }
+            if (event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT && suppressLiveGuideRightKeyUp) {
+                suppressLiveGuideRightKeyUp = false
+                return true
+            }
             // Media3 PlayerView.dispatchKeyEvent does not check event action;
             // a D-pad ACTION_UP reaching super will show the controller.
             if (isLiveContent && !isControllerVisibleForNavigation() &&
@@ -387,6 +407,7 @@ class XtreamPlayerView @JvmOverloads constructor(
                 stopSeekRepeat()
                 return true
             }
+            suppressLiveGuideRightKeyUp = false
         }
         return super.dispatchKeyEvent(event)
     }
