@@ -130,7 +130,7 @@ fun FontSelectionDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                CloseButton(
+                DialogCloseButton(
                     focusRequester = closeFocusRequester,
                     onDismiss = onDismiss,
                     onNavigateUp = {
@@ -211,61 +211,6 @@ private fun FontOption(
             fontSize = 16.sp,
             fontFamily = font.fontFamily,
             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
-        )
-    }
-}
-
-@Composable
-private fun CloseButton(
-    focusRequester: FocusRequester,
-    onDismiss: () -> Unit,
-    onNavigateUp: () -> Unit
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isFocused by interactionSource.collectIsFocusedAsState()
-    val colors = AppTheme.colors
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .focusRequester(focusRequester)
-            .focusable(interactionSource = interactionSource)
-            .onKeyEvent {
-                if (it.type != KeyEventType.KeyDown) {
-                    false
-                } else when (it.key) {
-                    Key.DirectionUp -> {
-                        onNavigateUp()
-                        true
-                    }
-                    Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> {
-                        onDismiss()
-                        true
-                    }
-                    else -> false
-                }
-            }
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onDismiss
-            )
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (isFocused) colors.accent else colors.accentMutedAlt)
-            .border(
-                1.dp,
-                if (isFocused) colors.focus else colors.border,
-                RoundedCornerShape(8.dp)
-            )
-            .padding(vertical = 12.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = "Close",
-            color = if (isFocused) colors.textOnAccent else colors.textPrimary,
-            fontSize = 16.sp,
-            fontFamily = AppTheme.fontFamily,
-            fontWeight = FontWeight.SemiBold
         )
     }
 }

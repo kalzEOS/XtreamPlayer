@@ -2,6 +2,7 @@ package com.example.xtreamplayer.api
 
 import java.io.IOException
 import kotlin.math.min
+import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.Response
 import timber.log.Timber
@@ -16,6 +17,7 @@ class TransientRetryInterceptor(
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
+        val safeUrl = redactUrl(request.url)
         if (request.method != "GET" && request.method != "HEAD") {
             return chain.proceed(request)
         }
@@ -32,7 +34,7 @@ class TransientRetryInterceptor(
                 }
                 response.close()
                 Timber.w(
-                    "Retrying ${request.method} ${request.url} after HTTP ${response.code} " +
+                    "Retrying ${request.method} $safeUrl after HTTP ${response.code} " +
                         "(attempt ${attempt + 1}/$maxRetries)"
                 )
             } catch (ioe: IOException) {
@@ -42,7 +44,7 @@ class TransientRetryInterceptor(
                 }
                 Timber.w(
                     ioe,
-                    "Retrying ${request.method} ${request.url} after transient network failure " +
+                    "Retrying ${request.method} $safeUrl after transient network failure " +
                         "(attempt ${attempt + 1}/$maxRetries)"
                 )
             }
@@ -52,7 +54,7 @@ class TransientRetryInterceptor(
             backoffMs = min(backoffMs * 2, MAX_BACKOFF_MS)
         }
 
-        throw lastError ?: IOException("Request failed after retries for ${request.url}")
+        throw lastError ?: IOException("Request failed after retries for $safeUrl")
     }
 
     private fun sleepBackoff(backoffMs: Long) {
@@ -72,6 +74,14 @@ class TransientRetryInterceptor(
             error is java.net.SocketException ||
             error is java.net.ConnectException ||
             error is java.net.UnknownHostException
+    }
+
+    private fun redactUrl(url: HttpUrl): String {
+        // Never log credentials or other query params.
+        return url.newBuilder()
+            .query(null)
+            .build()
+            .toString()
     }
 
     private companion object {

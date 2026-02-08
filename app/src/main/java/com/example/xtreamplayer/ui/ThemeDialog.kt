@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,13 +33,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -213,61 +210,11 @@ fun ThemeSelectionDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                CloseButton(
+                DialogCloseButton(
                     focusRequester = closeFocusRequester,
                     onDismiss = onDismiss
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun CloseButton(
-    focusRequester: FocusRequester,
-    onDismiss: () -> Unit
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isFocused by interactionSource.collectIsFocusedAsState()
-    val colors = AppTheme.colors
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .focusRequester(focusRequester)
-            .focusable(interactionSource = interactionSource)
-            .onKeyEvent {
-                if (it.type != KeyEventType.KeyDown) {
-                    false
-                } else when (it.key) {
-                    Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> {
-                        onDismiss()
-                        true
-                    }
-                    else -> false
-                }
-            }
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onDismiss
-            )
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (isFocused) colors.accent else colors.accentMutedAlt)
-            .border(
-                1.dp,
-                if (isFocused) colors.focus else colors.border,
-                RoundedCornerShape(8.dp)
-            )
-            .padding(vertical = 12.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = "Close",
-            color = if (isFocused) colors.textOnAccent else colors.textPrimary,
-            fontSize = 16.sp,
-            fontFamily = AppTheme.fontFamily,
-            fontWeight = FontWeight.SemiBold
-        )
     }
 }

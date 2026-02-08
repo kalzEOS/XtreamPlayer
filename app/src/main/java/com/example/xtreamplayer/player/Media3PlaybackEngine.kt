@@ -45,6 +45,7 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
     private var loudnessSessionId: Int = C.AUDIO_SESSION_ID_UNSET
     private var boostDb: Float = 0f
     private var lastSettings: SettingsState = SettingsState()
+    private var subtitleTrackSelectionListener: Player.Listener? = null
 
     init {
         updateLoudnessEnhancer(player.audioSessionId)
@@ -101,6 +102,7 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
     }
 
     fun release() {
+        clearSubtitleTrackSelectionListener(player)
         player.removeListener(playerListener)
         loudnessEnhancer?.release()
         loudnessEnhancer = null
@@ -109,6 +111,7 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
 
     fun reset() {
         val oldPlayer = player
+        clearSubtitleTrackSelectionListener(oldPlayer)
         oldPlayer.removeListener(playerListener)
         oldPlayer.release()
         loudnessEnhancer?.release()
@@ -156,6 +159,14 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
 
     companion object {
         private const val MAX_BOOST_DB = 12f
+        private const val MAX_TRACK_CHANGES_WITHOUT_SUBTITLE_SELECTION = 6
+    }
+
+    private fun clearSubtitleTrackSelectionListener(targetPlayer: Player) {
+        subtitleTrackSelectionListener?.let { listener ->
+            runCatching { targetPlayer.removeListener(listener) }
+            subtitleTrackSelectionListener = null
+        }
     }
 
     private fun buildPlayer(loadControl: DefaultLoadControl): ExoPlayer {
@@ -187,6 +198,7 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
         val playWhenReady = oldPlayer.playWhenReady
         val trackParameters = oldPlayer.trackSelectionParameters
 
+        clearSubtitleTrackSelectionListener(oldPlayer)
         oldPlayer.removeListener(playerListener)
         oldPlayer.release()
         loudnessEnhancer?.release()
@@ -344,6 +356,7 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
         mimeType: String = MimeTypes.APPLICATION_SUBRIP
     ) {
         val currentItem = player.currentMediaItem ?: return
+        clearSubtitleTrackSelectionListener(player)
 
         Timber.d("Adding subtitle: uri=$subtitleUri, language=$language, mimeType=$mimeType")
 
@@ -416,6 +429,7 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
         }
 
         // Register listener before replacing to avoid missing an early tracks update.
+        var trackChangesWithoutSelection = 0
         val listener = object : Player.Listener {
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                 Timber.d("onTracksChanged: ${tracks.groups.size} groups")
@@ -426,14 +440,24 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
                         group.type == C.TRACK_TYPE_TEXT && (0 until group.length).any { group.isTrackSelected(it) }
                     }
                     Timber.d("After selection - text track selected: $textSelected")
-                    player.removeListener(this)
+                    clearSubtitleTrackSelectionListener(player)
+                    return
+                }
+                trackChangesWithoutSelection++
+                if (trackChangesWithoutSelection >= MAX_TRACK_CHANGES_WITHOUT_SUBTITLE_SELECTION) {
+                    Timber.w(
+                        "Subtitle track selection timed out after $trackChangesWithoutSelection track updates"
+                    )
+                    clearSubtitleTrackSelectionListener(player)
                 }
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 Timber.e(error, "Player error during subtitle loading")
+                clearSubtitleTrackSelectionListener(player)
             }
         }
+        subtitleTrackSelectionListener = listener
         player.addListener(listener)
 
         replaceMediaItemPreservingState(newItem)
@@ -448,7 +472,7 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
 
         // Try immediately in case tracks are already available.
         if (selectTextTrack(player.currentTracks)) {
-            player.removeListener(listener)
+            clearSubtitleTrackSelectionListener(player)
         }
     }
 
