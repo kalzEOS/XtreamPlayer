@@ -6093,6 +6093,9 @@ fun FavoritesScreen(
     var pendingSeriesPlaybackTransition by remember { mutableStateOf(false) }
     var pendingViewFocus by remember { mutableStateOf(false) }
     var pendingCategoryEnterFocus by remember { mutableStateOf(false) }
+    var pendingCategoryReturnFocus by remember { mutableStateOf(false) }
+    var lastSelectedFavoriteCategoryId by remember { mutableStateOf<String?>(null) }
+    var lastSelectedFavoriteCategoryIndex by remember { mutableIntStateOf(0) }
     var lastMenuSelection by remember { mutableStateOf(FavoritesView.ITEMS) }
     val menuFocusRequesters = remember { listOf(FocusRequester(), FocusRequester()) }
     val backFocusRequester = remember { FocusRequester() }
@@ -6118,6 +6121,7 @@ fun FavoritesScreen(
             pendingSeriesReturnFocus = false
             pendingSeriesPlaybackTransition = false
             pendingCategoryEnterFocus = false
+            pendingCategoryReturnFocus = false
             pendingEpisodeFocus = false
         }
     }
@@ -6165,11 +6169,13 @@ fun FavoritesScreen(
             selectedCategory = null
             pendingViewFocus = true
             pendingCategoryEnterFocus = false
+            pendingCategoryReturnFocus = true
         } else {
             lastMenuSelection = activeView
             activeView = FavoritesView.MENU
             pendingViewFocus = true
             pendingCategoryEnterFocus = false
+            pendingCategoryReturnFocus = false
         }
     }
 
@@ -6249,6 +6255,7 @@ fun FavoritesScreen(
                 val requester =
                         contentItemFocusRequester
                 requester.requestFocus()
+                pendingCategoryReturnFocus = false
             }
         }
         pendingViewFocus = false
@@ -6301,12 +6308,14 @@ fun FavoritesScreen(
                                         selectedCategory = null
                                         pendingCategoryEnterFocus = false
                                         pendingViewFocus = true
+                                        pendingCategoryReturnFocus = true
                                     }
                                     else -> {
                                         lastMenuSelection = activeView
                                         activeView = FavoritesView.MENU
                                         pendingCategoryEnterFocus = false
                                         pendingViewFocus = true
+                                        pendingCategoryReturnFocus = false
                                     }
                                 }
                             },
@@ -6789,7 +6798,22 @@ fun FavoritesScreen(
                         ) {
                             items(sortedCategories.size) { index ->
                                 val category = sortedCategories[index]
-                                val requester = if (index == 0) contentItemFocusRequester else null
+                                val isReturnTargetById =
+                                        pendingCategoryReturnFocus &&
+                                                lastSelectedFavoriteCategoryId != null &&
+                                                category.id == lastSelectedFavoriteCategoryId
+                                val isReturnTargetByIndex =
+                                        pendingCategoryReturnFocus &&
+                                                lastSelectedFavoriteCategoryId == null &&
+                                                index == lastSelectedFavoriteCategoryIndex
+                                val requester =
+                                        when {
+                                            isReturnTargetById || isReturnTargetByIndex ->
+                                                    contentItemFocusRequester
+                                            !pendingCategoryReturnFocus && index == 0 ->
+                                                    contentItemFocusRequester
+                                            else -> null
+                                        }
                                 val isLeftEdge = index % categoryColumns == 0
                                 val isTopRow = index < categoryColumns
                                 val categoryThumbnailUrl by
@@ -6815,8 +6839,11 @@ fun FavoritesScreen(
                                         imageUrl = categoryThumbnailUrl,
                                         onActivate = {
                                             selectedSeries = null
+                                            lastSelectedFavoriteCategoryId = category.id
+                                            lastSelectedFavoriteCategoryIndex = index
                                             selectedCategory = category
                                             pendingCategoryEnterFocus = true
+                                            pendingCategoryReturnFocus = false
                                         },
                                         onMoveLeft = onMoveLeft,
                                         onMoveUp =
