@@ -1021,6 +1021,10 @@ internal fun PlayerOverlay(
             showPlaybackSpeedDialog -> showPlaybackSpeedDialog = false
             showResolutionDialog -> showResolutionDialog = false
             else -> {
+                if (playerView?.isControllerFullyVisible == true) {
+                    playerView?.hideController()
+                    return@BackHandler
+                }
                 val dismissed = playerView?.dismissSettingsWindowIfShowing() == true
                 if (!dismissed) {
                     onExit()
@@ -1185,6 +1189,10 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                             ) {
                                 if (showLiveGuide) {
                                     closeLiveGuide()
+                                    return@setOnKeyListener true
+                                }
+                                if (isControllerFullyVisible()) {
+                                    hideController()
                                     return@setOnKeyListener true
                                 }
                                 val dismissed = dismissSettingsWindowIfShowing()
