@@ -280,6 +280,26 @@ class XtreamPlayerView @JvmOverloads constructor(
             val controlsShowing = isControllerVisibleForNavigation()
             val controlsFullyVisible = isControllerFullyVisible
             if (controlsShowing &&
+                event.repeatCount > 0 &&
+                (event.keyCode == KeyEvent.KEYCODE_DPAD_UP ||
+                    event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN ||
+                    event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
+                    event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)
+            ) {
+                val focusedId = findFocus()?.id
+                val isProgressSeekRepeat =
+                    fastSeekEnabled &&
+                        !isLiveContent &&
+                        (event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
+                            event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) &&
+                        controlsFullyVisible &&
+                        focusedId == Media3UiR.id.exo_progress
+                if (!isProgressSeekRepeat) {
+                    // Block hold-repeat run-through on controller navigation.
+                    return true
+                }
+            }
+            if (controlsShowing &&
                 (event.keyCode == KeyEvent.KEYCODE_BACK ||
                     event.keyCode == KeyEvent.KEYCODE_ESCAPE)
             ) {

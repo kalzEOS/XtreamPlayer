@@ -266,6 +266,40 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
     }
 
     @OptIn(UnstableApi::class)
+    fun getAvailableSubtitleTracks(): List<SubtitleTrackInfo> {
+        val tracks = mutableListOf<SubtitleTrackInfo>()
+        val currentTracks = player.currentTracks
+
+        currentTracks.groups.forEachIndexed { groupIndex, trackGroup ->
+            if (trackGroup.type == C.TRACK_TYPE_TEXT) {
+                for (i in 0 until trackGroup.length) {
+                    val format = trackGroup.getTrackFormat(i)
+                    val languageCode = format.language ?: "und"
+                    val languageName = getLanguageName(languageCode)
+                    val isForced =
+                        (format.selectionFlags and C.SELECTION_FLAG_FORCED) != 0 ||
+                            format.label?.contains("forced", ignoreCase = true) == true
+                    val label = buildSubtitleTrackLabel(format, languageName, isForced)
+                    val isSelected = trackGroup.isTrackSelected(i)
+                    val isSupported = trackGroup.isTrackSupported(i)
+                    tracks.add(
+                        SubtitleTrackInfo(
+                            groupIndex = groupIndex,
+                            trackIndex = i,
+                            label = label,
+                            language = languageName,
+                            isSelected = isSelected,
+                            isSupported = isSupported,
+                            isForced = isForced
+                        )
+                    )
+                }
+            }
+        }
+        return tracks
+    }
+
+    @OptIn(UnstableApi::class)
     fun getAvailableVideoTracks(): List<VideoTrackInfo> {
         val tracks = mutableListOf<VideoTrackInfo>()
         val currentTracks = player.currentTracks
@@ -349,6 +383,32 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
     }
 
     @OptIn(UnstableApi::class)
+    fun selectSubtitleTrack(groupIndex: Int, trackIndex: Int) {
+        val currentTracks = player.currentTracks
+        if (groupIndex >= currentTracks.groups.size) return
+
+        val trackGroup = currentTracks.groups[groupIndex]
+        if (trackGroup.type != C.TRACK_TYPE_TEXT) return
+        if (trackIndex < 0 || trackIndex >= trackGroup.length) return
+        if (!trackGroup.isTrackSupported(trackIndex)) return
+
+        val wasPlaying = player.isPlaying
+        val builder = player.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            .setOverrideForType(
+                TrackSelectionOverride(
+                    trackGroup.mediaTrackGroup,
+                    listOf(trackIndex)
+                )
+            )
+        player.trackSelectionParameters = builder.build()
+
+        if (wasPlaying && !player.isPlaying) {
+            player.play()
+        }
+    }
+
+    @OptIn(UnstableApi::class)
     fun addSubtitle(
         subtitleUri: Uri,
         language: String = "en",
@@ -397,35 +457,96 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
 
         fun selectTextTrack(tracks: androidx.media3.common.Tracks): Boolean {
             Timber.d("Checking text tracks (groupCount=${tracks.groups.size})")
+            data class Candidate(
+                val groupIndex: Int,
+                val trackIndex: Int,
+                val trackGroup: androidx.media3.common.Tracks.Group,
+                val format: Format,
+                val score: Int
+            )
+
+            val desiredLanguage = language.trim().lowercase()
+            val desiredLanguageBase = desiredLanguage.substringBefore('-')
+            val desiredLabel = label.trim().lowercase()
+            var fallback: Candidate? = null
+            var best: Candidate? = null
+
             tracks.groups.forEachIndexed { groupIndex, trackGroup ->
-                if (trackGroup.type == C.TRACK_TYPE_TEXT) {
+                if (trackGroup.type != C.TRACK_TYPE_TEXT) return@forEachIndexed
+                Timber.d(
+                    "Found text track group: groupIndex=$groupIndex, length=${trackGroup.length}"
+                )
+                for (i in 0 until trackGroup.length) {
+                    val format = trackGroup.getTrackFormat(i)
+                    val supported = trackGroup.isTrackSupported(i)
+                    val selected = trackGroup.isTrackSelected(i)
+                    val trackLabel = format.label?.trim().orEmpty()
+                    val trackLabelLower = trackLabel.lowercase()
+                    val trackLanguage = format.language?.trim().orEmpty().lowercase()
+                    val trackLanguageBase = trackLanguage.substringBefore('-')
+                    val isForced =
+                        (format.selectionFlags and C.SELECTION_FLAG_FORCED) != 0 ||
+                            trackLabelLower.contains("forced")
                     Timber.d(
-                        "Found text track group: groupIndex=$groupIndex, length=${trackGroup.length}"
+                        "  Track $i: supported=$supported, selected=$selected, label=${format.label}, lang=${format.language}, mimeType=${format.sampleMimeType}, forced=$isForced"
                     )
-                    for (i in 0 until trackGroup.length) {
-                        val format = trackGroup.getTrackFormat(i)
-                        Timber.d("  Track $i: supported=${trackGroup.isTrackSupported(i)}, selected=${trackGroup.isTrackSelected(i)}, label=${format.label}, lang=${format.language}, mimeType=${format.sampleMimeType}")
-                        if (trackGroup.isTrackSupported(i)) {
-                            Timber.d("Selecting text track: groupIndex=$groupIndex, trackIndex=$i")
-                            val newBuilder = player.trackSelectionParameters.buildUpon()
-                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                                .setPreferredTextLanguage(language)
-                                .setOverrideForType(
-                                    TrackSelectionOverride(
-                                        trackGroup.mediaTrackGroup,
-                                        listOf(i)
-                                    )
-                                )
-                            player.trackSelectionParameters = newBuilder.build()
-                            Timber.d("Text track selected successfully")
-                            return true
+                    if (!supported) continue
+
+                    var score = 0
+                    if (desiredLabel.isNotBlank()) {
+                        if (trackLabelLower == desiredLabel) {
+                            score += 1000
+                        } else if (trackLabelLower.contains(desiredLabel)) {
+                            score += 800
                         }
                     }
-                    Timber.w("Found text track group but no supported tracks")
+                    if (desiredLanguage.isNotBlank()) {
+                        if (trackLanguage == desiredLanguage) {
+                            score += 500
+                        } else if (
+                            desiredLanguageBase.isNotBlank() &&
+                                trackLanguageBase == desiredLanguageBase
+                        ) {
+                            score += 350
+                        }
+                    }
+                    if (isForced) {
+                        score -= 500
+                    } else {
+                        score += 120
+                    }
+
+                    val candidate = Candidate(groupIndex, i, trackGroup, format, score)
+                    if (fallback == null) {
+                        fallback = candidate
+                    }
+                    if (best == null || candidate.score > best!!.score) {
+                        best = candidate
+                    }
                 }
             }
-            Timber.d("No text track groups found in ${tracks.groups.size} total groups")
-            return false
+
+            val selectedCandidate = best ?: fallback
+            if (selectedCandidate == null) {
+                Timber.d("No supported text tracks found in ${tracks.groups.size} total groups")
+                return false
+            }
+
+            Timber.d(
+                "Selecting text track: groupIndex=${selectedCandidate.groupIndex}, trackIndex=${selectedCandidate.trackIndex}, score=${selectedCandidate.score}, label=${selectedCandidate.format.label}, lang=${selectedCandidate.format.language}, mimeType=${selectedCandidate.format.sampleMimeType}"
+            )
+            val newBuilder = player.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                .setPreferredTextLanguage(language)
+                .setOverrideForType(
+                    TrackSelectionOverride(
+                        selectedCandidate.trackGroup.mediaTrackGroup,
+                        listOf(selectedCandidate.trackIndex)
+                    )
+                )
+            player.trackSelectionParameters = newBuilder.build()
+            Timber.d("Text track selected successfully")
+            return true
         }
 
         // Register listener before replacing to avoid missing an early tracks update.
@@ -582,6 +703,27 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
         return parts.joinToString(" \u2022 ")
     }
 
+    private fun buildSubtitleTrackLabel(
+        format: Format,
+        languageName: String,
+        isForced: Boolean
+    ): String {
+        val parts = mutableListOf<String>()
+        val baseLabel =
+            format.label?.takeIf { it.isNotBlank() }
+                ?: languageName.takeIf { it != "Unknown" }
+                ?: "Subtitle"
+        parts.add(baseLabel)
+
+        if (isForced) {
+            parts.add("Forced")
+        } else if ((format.selectionFlags and C.SELECTION_FLAG_DEFAULT) != 0) {
+            parts.add("Default")
+        }
+
+        return parts.joinToString(" \u2022 ")
+    }
+
     private fun formatChannelCount(channelCount: Int): String? {
         if (channelCount <= 0) return null
         return when (channelCount) {
@@ -653,6 +795,16 @@ data class VideoTrackInfo(
     val bitrate: Int,
     val isSelected: Boolean,
     val isSupported: Boolean
+)
+
+data class SubtitleTrackInfo(
+    val groupIndex: Int,
+    val trackIndex: Int,
+    val label: String,
+    val language: String,
+    val isSelected: Boolean,
+    val isSupported: Boolean,
+    val isForced: Boolean
 )
 
 enum class BufferProfile(
