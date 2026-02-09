@@ -588,8 +588,11 @@ class XtreamPlayerView @JvmOverloads constructor(
         setViewVisible(Media3UiR.id.exo_next, true)
         setViewVisible(Media3UiR.id.exo_rew_with_amount, !isLive)
         setViewVisible(Media3UiR.id.exo_ffwd_with_amount, !isLive)
-        setViewVisible(Media3UiR.id.exo_shuffle, !isLive)
-        setViewVisible(Media3UiR.id.exo_repeat_toggle, !isLive)
+        setViewVisible(Media3UiR.id.exo_shuffle, false)
+        setViewVisible(Media3UiR.id.exo_repeat_toggle, false)
+        setViewVisible(Media3UiR.id.exo_subtitle, false)
+        setViewVisible(R.id.exo_subtitle_timing, !isLive)
+        setViewVisible(R.id.exo_subtitle_download, !isLive)
         bindPrevNextView()
         updateFocusOrder()
     }
