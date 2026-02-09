@@ -58,6 +58,7 @@ import android.content.Context
 import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import com.example.xtreamplayer.api.SubtitleSearchResult
+import com.example.xtreamplayer.player.SubtitleTrackInfo
 import com.example.xtreamplayer.player.VideoTrackInfo
 import com.example.xtreamplayer.ui.theme.AppTheme
 import kotlin.math.abs
@@ -101,11 +102,13 @@ fun SubtitleSearchDialog(
     onSearch: (String) -> Unit,
     onSelect: (SubtitleSearchResult) -> Unit,
     onToggleSubtitles: () -> Unit,
+    onSelectSubtitleTrack: () -> Unit,
     onDismiss: () -> Unit
 ) {
     var query by remember { mutableStateOf(initialQuery) }
     val searchFocusRequester = remember { FocusRequester() }
     val searchButtonFocusRequester = remember { FocusRequester() }
+    val subtitleTrackFocusRequester = remember { FocusRequester() }
     val toggleFocusRequester = remember { FocusRequester() }
     val closeFocusRequester = remember { FocusRequester() }
 
@@ -205,7 +208,7 @@ fun SubtitleSearchDialog(
                                             true
                                         }
                                         Key.DirectionRight -> {
-                                            toggleFocusRequester.requestFocus()
+                                            subtitleTrackFocusRequester.requestFocus()
                                             true
                                         }
                                         Key.DirectionDown -> {
@@ -219,6 +222,43 @@ fun SubtitleSearchDialog(
                     ) {
                         Text(
                             text = "Search",
+                            fontFamily = AppTheme.fontFamily,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    FocusableButton(
+                        onClick = onSelectSubtitleTrack,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = SecondaryBorderColor,
+                            contentColor = AppTheme.colors.textPrimary
+                        ),
+                        modifier = Modifier
+                            .focusRequester(subtitleTrackFocusRequester)
+                            .onKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyDown) {
+                                    when (event.key) {
+                                        Key.DirectionLeft -> {
+                                            searchButtonFocusRequester.requestFocus()
+                                            true
+                                        }
+                                        Key.DirectionRight -> {
+                                            toggleFocusRequester.requestFocus()
+                                            true
+                                        }
+                                        Key.DirectionDown -> {
+                                            closeFocusRequester.requestFocus()
+                                            true
+                                        }
+                                        else -> false
+                                    }
+                                } else false
+                            }
+                    ) {
+                        Text(
+                            text = "Subtitle track",
                             fontFamily = AppTheme.fontFamily,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -244,7 +284,7 @@ fun SubtitleSearchDialog(
                                 if (event.type == KeyEventType.KeyDown) {
                                     when (event.key) {
                                         Key.DirectionLeft -> {
-                                            searchButtonFocusRequester.requestFocus()
+                                            subtitleTrackFocusRequester.requestFocus()
                                             true
                                         }
                                         Key.DirectionDown -> {
@@ -490,12 +530,15 @@ private fun SearchField(
 @Composable
 fun SubtitleOptionsDialog(
     subtitlesEnabled: Boolean,
+    showSubtitleTrackOption: Boolean,
     onToggleSubtitles: () -> Unit,
+    onSelectSubtitleTrack: () -> Unit,
     onDownloadSubtitles: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val primaryFocusRequester = remember { FocusRequester() }
     val secondaryFocusRequester = remember { FocusRequester() }
+    val tertiaryFocusRequester = remember { FocusRequester() }
     val closeFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
@@ -567,9 +610,26 @@ fun SubtitleOptionsDialog(
                     )
                 }
 
+                if (showSubtitleTrackOption) {
+                    FocusableButton(
+                        onClick = onSelectSubtitleTrack,
+                        modifier = Modifier.focusRequester(secondaryFocusRequester),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = SecondaryBorderColor,
+                            contentColor = AppTheme.colors.textPrimary
+                        )
+                    ) {
+                        Text(
+                            text = "Subtitle track",
+                            fontFamily = AppTheme.fontFamily,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
                 FocusableButton(
                     onClick = onDownloadSubtitles,
-                    modifier = Modifier.focusRequester(secondaryFocusRequester),
+                    modifier = Modifier.focusRequester(tertiaryFocusRequester),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = SecondaryBorderColor,
                         contentColor = AppTheme.colors.textPrimary
@@ -886,6 +946,199 @@ private fun SubtitleItem(
                         fontSize = 11.sp,
                         fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SubtitleTrackDialog(
+    availableTracks: List<SubtitleTrackInfo>,
+    onTrackSelected: (Int, Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val closeFocusRequester = remember { FocusRequester() }
+    val supportedTrackCount = availableTracks.count { it.isSupported }
+    val hasSingleTrack = supportedTrackCount <= 1
+
+    LaunchedEffect(Unit) {
+        closeFocusRequester.requestFocus()
+    }
+
+    AppDialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.5f)
+                .clip(RoundedCornerShape(12.dp))
+                .background(DialogBackground)
+                .border(1.dp, SecondaryBorderColor, RoundedCornerShape(12.dp))
+                .padding(24.dp)
+        ) {
+            Column {
+                Text(
+                    text = "Subtitle Tracks",
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontFamily = AppTheme.fontFamily,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                if (availableTracks.isEmpty()) {
+                    Text(
+                        text = "No subtitle tracks available",
+                        color = MutedTextColor,
+                        fontSize = 14.sp,
+                        fontFamily = AppTheme.fontFamily,
+                        modifier = Modifier.padding(vertical = 24.dp)
+                    )
+                } else {
+                    if (!availableTracks.any { it.isSupported }) {
+                        Text(
+                            text = "No supported subtitle tracks available",
+                            color = MutedTextColor,
+                            fontSize = 12.sp,
+                            fontFamily = AppTheme.fontFamily,
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        )
+                    }
+                    if (hasSingleTrack) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(AppTheme.colors.textSecondary)
+                            )
+                            Text(
+                                text = "Only one subtitle track available",
+                                color = MutedTextColor,
+                                fontSize = 12.sp,
+                                fontFamily = AppTheme.fontFamily
+                            )
+                        }
+                    }
+
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f, fill = false)
+                    ) {
+                        items(availableTracks) { track ->
+                            val interactionSource = remember { MutableInteractionSource() }
+                            val isFocused by interactionSource.collectIsFocusedAsState()
+                            val isSelectable = track.isSupported && !hasSingleTrack
+                            val isSelected = track.isSelected || (hasSingleTrack && track.isSupported)
+                            val borderColor =
+                                if (isFocused && isSelectable) {
+                                    FocusBorderColor
+                                } else {
+                                    SecondaryBorderColor
+                                }
+                            val backgroundColor =
+                                if (isSelected) AppTheme.colors.panelBackground
+                                else ContentAreaBackground
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(backgroundColor)
+                                    .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+                                    .then(
+                                        if (isSelectable) {
+                                            Modifier.clickable(
+                                                interactionSource = interactionSource,
+                                                indication = null
+                                            ) {
+                                                onTrackSelected(track.groupIndex, track.trackIndex)
+                                                onDismiss()
+                                            }
+                                        } else {
+                                            Modifier
+                                        }
+                                    )
+                                    .padding(16.dp)
+                                    .then(
+                                        if (isSelectable) {
+                                            Modifier.focusable(interactionSource = interactionSource)
+                                        } else {
+                                            Modifier
+                                        }
+                                    ),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (isSelected) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .background(EnabledIndicatorColor, CircleShape)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                }
+
+                                Text(
+                                    text = track.label,
+                                    color = if (!track.isSupported || hasSingleTrack) {
+                                        MutedTextColor
+                                    } else {
+                                        Color.White
+                                    },
+                                    fontSize = 14.sp,
+                                    fontFamily = AppTheme.fontFamily
+                                )
+
+                                if (track.language != "Unknown" && !track.label.contains(track.language)) {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "(${track.language})",
+                                        color = MutedTextColor,
+                                        fontSize = 12.sp,
+                                        fontFamily = AppTheme.fontFamily
+                                    )
+                                }
+
+                                if (!track.isSupported) {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Unsupported",
+                                        color = MutedTextColor,
+                                        fontSize = 12.sp,
+                                        fontFamily = AppTheme.fontFamily
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                FocusableButton(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = AppTheme.colors.borderStrong,
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .focusRequester(closeFocusRequester)
+                ) {
+                    Text(
+                        text = "Close",
+                        fontSize = 14.sp,
+                        fontFamily = AppTheme.fontFamily,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }

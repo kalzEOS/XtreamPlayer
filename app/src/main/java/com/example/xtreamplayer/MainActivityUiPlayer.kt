@@ -73,6 +73,7 @@ import com.example.xtreamplayer.ui.SubtitleDialogState
 import com.example.xtreamplayer.ui.SubtitleOffsetDialog
 import com.example.xtreamplayer.ui.SubtitleOptionsDialog
 import com.example.xtreamplayer.ui.SubtitleSearchDialog
+import com.example.xtreamplayer.ui.SubtitleTrackDialog
 import com.example.xtreamplayer.ui.VideoResolutionDialog
 import com.example.xtreamplayer.ui.theme.AppTheme
 import kotlinx.coroutines.Dispatchers
@@ -432,6 +433,7 @@ internal fun PlayerOverlay(
     var playerView by remember { mutableStateOf<XtreamPlayerView?>(null) }
     var showSubtitleDialog by remember { mutableStateOf(false) }
     var showSubtitleOptionsDialog by remember { mutableStateOf(false) }
+    var showSubtitleTrackDialog by remember { mutableStateOf(false) }
     var showAudioTrackDialog by remember { mutableStateOf(false) }
     var showAudioBoostDialog by remember { mutableStateOf(false) }
     var showPlaybackSettingsDialog by remember { mutableStateOf(false) }
@@ -461,7 +463,8 @@ internal fun PlayerOverlay(
                     showAudioBoostDialog ||
                     showPlaybackSpeedDialog ||
                     showSubtitleDialog ||
-                    showSubtitleOptionsDialog
+                    showSubtitleOptionsDialog ||
+                    showSubtitleTrackDialog
     val isPlayerModalOpen = hasModalOpen || showSubtitleTimingDialog
     var showLiveGuide by remember { mutableStateOf(false) }
     var liveGuideLevel by remember { mutableStateOf(LiveGuideLevel.CHANNELS) }
@@ -1017,6 +1020,7 @@ internal fun PlayerOverlay(
         when {
             showLiveGuide -> closeLiveGuide()
             showSubtitleTimingDialog -> showSubtitleTimingDialog = false
+            showSubtitleTrackDialog -> showSubtitleTrackDialog = false
             showPlaybackSettingsDialog -> showPlaybackSettingsDialog = false
             showPlaybackSpeedDialog -> showPlaybackSpeedDialog = false
             showResolutionDialog -> showResolutionDialog = false
@@ -1436,6 +1440,10 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                     }
                 },
                 onToggleSubtitles = { toggleSubtitles() },
+                onSelectSubtitleTrack = {
+                    showSubtitleDialog = false
+                    showSubtitleTrackDialog = true
+                },
                 onDismiss = {
                     showSubtitleDialog = false
                     subtitleDialogState = SubtitleDialogState.Idle
@@ -1444,17 +1452,34 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
     }
 
     if (showSubtitleOptionsDialog) {
+        val availableSubtitleTracks = playbackEngine.getAvailableSubtitleTracks()
+        val canSelectSubtitleTrack = availableSubtitleTracks.count { it.isSupported } > 1
         SubtitleOptionsDialog(
                 subtitlesEnabled = subtitlesEnabled,
+                showSubtitleTrackOption = canSelectSubtitleTrack,
                 onToggleSubtitles = {
                     toggleSubtitles()
                     showSubtitleOptionsDialog = false
+                },
+                onSelectSubtitleTrack = {
+                    showSubtitleOptionsDialog = false
+                    showSubtitleTrackDialog = true
                 },
                 onDownloadSubtitles = {
                     showSubtitleOptionsDialog = false
                     showSubtitleDialog = true
                 },
                 onDismiss = { showSubtitleOptionsDialog = false }
+        )
+    }
+
+    if (showSubtitleTrackDialog) {
+        SubtitleTrackDialog(
+                availableTracks = playbackEngine.getAvailableSubtitleTracks(),
+                onTrackSelected = { groupIndex, trackIndex ->
+                    playbackEngine.selectSubtitleTrack(groupIndex, trackIndex)
+                },
+                onDismiss = { showSubtitleTrackDialog = false }
         )
     }
 
