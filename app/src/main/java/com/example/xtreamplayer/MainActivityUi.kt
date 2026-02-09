@@ -298,7 +298,9 @@ fun RootScreen(
     val showAppearanceState = remember { mutableStateOf(false) }
     var showAppearance by showAppearanceState
     var focusAppearanceOnSettingsReturn by remember { mutableStateOf(false) }
+    var focusManageListsOnSettingsReturn by remember { mutableStateOf(false) }
     var wasShowingAppearance by remember { mutableStateOf(false) }
+    var wasShowingManageLists by remember { mutableStateOf(false) }
     var updateUiState by remember { mutableStateOf(UpdateUiState()) }
     var updateCheckJob by remember { mutableStateOf<Job?>(null) }
     var startupUpdateCheckEnabled by remember { mutableStateOf<Boolean?>(null) }
@@ -545,6 +547,15 @@ fun RootScreen(
             focusAppearanceOnSettingsReturn = false
         }
         wasShowingAppearance = showAppearance
+    }
+
+    LaunchedEffect(showManageLists, selectedSection) {
+        if (wasShowingManageLists && !showManageLists && selectedSection == Section.SETTINGS) {
+            focusManageListsOnSettingsReturn = true
+            requestFocusWithFrames(contentItemFocusRequester, "settings-manage-lists-back")
+            focusManageListsOnSettingsReturn = false
+        }
+        wasShowingManageLists = showManageLists
     }
 
     LaunchedEffect(settings.autoSignIn, settings.rememberLogin, savedConfig) {
@@ -1632,6 +1643,7 @@ fun RootScreen(
                         showManageListsState = showManageListsState,
                         showAppearanceState = showAppearanceState,
                         focusAppearanceOnSettingsReturn = focusAppearanceOnSettingsReturn,
+                        focusManageListsOnSettingsReturn = focusManageListsOnSettingsReturn,
                         showThemeDialogState = showThemeDialogState,
                         showFontDialogState = showFontDialogState,
                         showUiScaleDialogState = showUiScaleDialogState,

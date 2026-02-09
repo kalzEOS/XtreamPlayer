@@ -56,6 +56,7 @@ fun SettingsScreen(
     appVersionLabel: String,
     contentItemFocusRequester: FocusRequester,
     focusAppearanceOnReturn: Boolean,
+    focusManageListsOnReturn: Boolean,
     onMoveLeft: () -> Unit,
     onToggleAutoPlay: () -> Unit,
     onOpenNextEpisodeThreshold: () -> Unit,
@@ -143,11 +144,17 @@ fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 var actionIndex = 0
+                val focusTargetLabel =
+                    when {
+                        focusManageListsOnReturn -> "Manage lists"
+                        focusAppearanceOnReturn -> "Appearance"
+                        else -> null
+                    }
                 @Composable
                 fun renderAction(action: SettingsAction) {
                     val shouldFocusThisAction =
-                        if (focusAppearanceOnReturn) {
-                            action.label == "Appearance"
+                        if (focusTargetLabel != null) {
+                            action.label == focusTargetLabel
                         } else {
                             actionIndex == 0
                         }
