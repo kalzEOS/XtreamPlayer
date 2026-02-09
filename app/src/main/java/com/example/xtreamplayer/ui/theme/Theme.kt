@@ -298,6 +298,38 @@ private val CopperLightAppColors =
         overlayStrong = Color(0x4D0C0E10)
     )
 
+private val MidnightAuroraAppColors =
+    AppColors(
+        background = Color(0xFF0A1222),
+        backgroundAlt = Color(0xFF132D39),
+        panelBackground = Color(0xCC0D1A2A),
+        panelBorder = Color(0xFF264355),
+        surface = Color(0xFF102033),
+        surfaceAlt = Color(0xFF173046),
+        surfaceMuted = Color(0xFF0E1C2E),
+        surfaceFocused = Color(0xFF1E3A52),
+        border = Color(0xFF274055),
+        borderStrong = Color(0xFF33526A),
+        focus = Color(0xFFA8D9FF),
+        accent = Color(0xFF3E90C4),
+        accentAlt = Color(0xFF68B7D8),
+        accentMuted = Color(0xFF233949),
+        accentMutedAlt = Color(0xFF1A2D3C),
+        accentSelected = Color(0xFF1F4862),
+        accentSelectedAlt = Color(0xFF17394F),
+        textPrimary = Color(0xFFE4EFF8),
+        textSecondary = Color(0xFF9DB3C5),
+        textTertiary = Color(0xFF849CAF),
+        navText = Color(0xFFE4EFF8),
+        textOnAccent = Color(0xFF071622),
+        warning = Color(0xFFFFD59A),
+        success = Color(0xFF42D097),
+        error = Color(0xFFF0A1A8),
+        overlay = Color(0x99070E19),
+        overlaySoft = Color(0x66000000),
+        overlayStrong = Color(0xB2070E19)
+    )
+
 private val LocalAppColors = staticCompositionLocalOf { DefaultAppColors }
 private val LocalAppFontFamily = staticCompositionLocalOf<FontFamily> { FontFamily.Serif }
 
@@ -323,6 +355,7 @@ fun XtreamPlayerTheme(
             AppThemeOption.DARK_GREEN_LIGHT -> GreenLightAppColors
             AppThemeOption.DUSK_COPPER -> CopperAppColors
             AppThemeOption.DUSK_COPPER_LIGHT -> CopperLightAppColors
+            AppThemeOption.MIDNIGHT_AURORA -> MidnightAuroraAppColors
             else -> DefaultAppColors
         }
     val colorScheme =

@@ -10,7 +10,8 @@ enum class AppThemeOption(val label: String) {
     DARK_GREEN("Dark Green"),
     DARK_GREEN_LIGHT("Green Light"),
     DUSK_COPPER("Dusk Copper"),
-    DUSK_COPPER_LIGHT("Copper Light")
+    DUSK_COPPER_LIGHT("Copper Light"),
+    MIDNIGHT_AURORA("Midnight Aurora")
 }
 
 enum class ClockFormatOption(val label: String) {
