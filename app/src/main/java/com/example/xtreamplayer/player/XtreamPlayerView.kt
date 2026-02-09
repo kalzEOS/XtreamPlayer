@@ -1,11 +1,19 @@
 package com.example.xtreamplayer.player
 
 import android.content.Context
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.util.AttributeSet
 import android.text.TextUtils
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
+import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.PopupWindow
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.os.Handler
 import android.os.Looper
@@ -127,7 +135,14 @@ class XtreamPlayerView @JvmOverloads constructor(
     private var repeatSeekRunnable: Runnable? = null
     private var longSeekStartMs: Long = 0L
     private var suppressSeekKeyUp = false
+    private var suppressHideControllerBackKeyUp = false
+    private var suppressHiddenSeekKeyUp = false
+    private var isHiddenSeek = false
     private var suppressLiveGuideRightKeyUp = false
+    private var seekHudLayout: LinearLayout? = null
+    private var seekHudText: TextView? = null
+    private var seekHudProgress: ProgressBar? = null
+    private var seekHudHideRunnable: Runnable? = null
     private val topBarSyncListener = ViewTreeObserver.OnPreDrawListener {
         syncTopBarWithControlsBackground()
         true
@@ -201,6 +216,7 @@ class XtreamPlayerView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         stopSeekRepeat()
+        hideSeekHud()
         viewTreeObserver.removeOnPreDrawListener(topBarSyncListener)
         super.onDetachedFromWindow()
     }
@@ -262,6 +278,15 @@ class XtreamPlayerView @JvmOverloads constructor(
                 return true
             }
             val controlsShowing = isControllerVisibleForNavigation()
+            val controlsFullyVisible = isControllerFullyVisible
+            if (controlsShowing &&
+                (event.keyCode == KeyEvent.KEYCODE_BACK ||
+                    event.keyCode == KeyEvent.KEYCODE_ESCAPE)
+            ) {
+                hideController()
+                suppressHideControllerBackKeyUp = true
+                return true
+            }
             if (controlsShowing && event.keyCode == KeyEvent.KEYCODE_DPAD_UP) {
                 val focused = findFocus()
                 val backId = backButtonView?.id ?: R.id.exo_back
@@ -277,17 +302,30 @@ class XtreamPlayerView @JvmOverloads constructor(
                 if (player == null) {
                     return super.dispatchKeyEvent(event)
                 }
+                // Once a seek cycle is armed, consume repeated key-down events even if
+                // controller visibility/focus changes mid-hold.
+                if (pendingSeekKey == event.keyCode) {
+                    return true
+                }
                 val focused = findFocus()
-                val canHandleSeek =
-                    controlsShowing && focused?.id == Media3UiR.id.exo_progress
+                val canHandleVisibleSeek =
+                    controlsFullyVisible && focused?.id == Media3UiR.id.exo_progress
+                val canHandleHiddenSeek = !controlsFullyVisible
+                val canHandleSeek = canHandleVisibleSeek || canHandleHiddenSeek
                 if (canHandleSeek) {
+                    // Clear stale guard from any previous hidden-seek cycle.
+                    suppressHiddenSeekKeyUp = false
                     if (pendingSeekKey == null) {
+                        val hidden = canHandleHiddenSeek
+                        isHiddenSeek = hidden
                         pendingSeekKey = event.keyCode
                         isLongSeekActive = false
                         longPressRunnable = Runnable {
                             isLongSeekActive = true
-                            setControllerShowTimeoutMs(0)
-                            showController()
+                            if (!hidden) {
+                                setControllerShowTimeoutMs(0)
+                                showController()
+                            }
                             longSeekStartMs = SystemClock.uptimeMillis()
                             val direction = pendingSeekKey
                             repeatSeekRunnable = object : Runnable {
@@ -314,6 +352,9 @@ class XtreamPlayerView @JvmOverloads constructor(
                                             }
                                         }
                                         currentPlayer.seekTo(target)
+                                        if (hidden) {
+                                            updateSeekHud(direction ?: event.keyCode)
+                                        }
                                         keyHandler.postDelayed(this, LONG_SEEK_REPEAT_MS)
                                     }
                                 }
@@ -390,6 +431,13 @@ class XtreamPlayerView @JvmOverloads constructor(
                 suppressLiveGuideRightKeyUp = false
                 return true
             }
+            if (suppressHideControllerBackKeyUp &&
+                (event.keyCode == KeyEvent.KEYCODE_BACK ||
+                    event.keyCode == KeyEvent.KEYCODE_ESCAPE)
+            ) {
+                suppressHideControllerBackKeyUp = false
+                return true
+            }
             // Media3 PlayerView.dispatchKeyEvent does not check event action;
             // a D-pad ACTION_UP reaching super will show the controller.
             if (isLiveContent && !isControllerVisibleForNavigation() &&
@@ -402,12 +450,22 @@ class XtreamPlayerView @JvmOverloads constructor(
                 suppressSeekKeyUp = true
                 return true
             }
+            // Robust guard: consume hidden-seek Left/Right key-ups only when
+            // no pending seek was handled above.
+            if (suppressHiddenSeekKeyUp &&
+                (event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
+                    event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)
+            ) {
+                suppressHiddenSeekKeyUp = false
+                return true
+            }
         } else if (event.action == android.view.MotionEvent.ACTION_CANCEL) {
             if (pendingSeekKey != null) {
                 stopSeekRepeat()
                 return true
             }
             suppressLiveGuideRightKeyUp = false
+            suppressHideControllerBackKeyUp = false
         }
         return super.dispatchKeyEvent(event)
     }
@@ -437,7 +495,21 @@ class XtreamPlayerView @JvmOverloads constructor(
             suppressSeekKeyUp = false
             return super.onKeyUp(keyCode, event)
         }
+        if (suppressHideControllerBackKeyUp &&
+            (keyCode == KeyEvent.KEYCODE_BACK ||
+                keyCode == KeyEvent.KEYCODE_ESCAPE)
+        ) {
+            suppressHideControllerBackKeyUp = false
+            return true
+        }
         if (handleSeekKeyUp(keyCode)) {
+            return true
+        }
+        if (suppressHiddenSeekKeyUp &&
+            (keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
+                keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)
+        ) {
+            suppressHiddenSeekKeyUp = false
             return true
         }
         return super.onKeyUp(keyCode, event)
@@ -448,10 +520,16 @@ class XtreamPlayerView @JvmOverloads constructor(
         repeatSeekRunnable?.let { keyHandler.removeCallbacks(it) }
         longPressRunnable = null
         repeatSeekRunnable = null
+        val wasHidden = isHiddenSeek
         isLongSeekActive = false
+        isHiddenSeek = false
         pendingSeekKey = null
         longSeekStartMs = 0L
-        setControllerShowTimeoutMs(defaultControllerTimeoutMs)
+        if (wasHidden) {
+            suppressHiddenSeekKeyUp = true
+        } else {
+            setControllerShowTimeoutMs(defaultControllerTimeoutMs)
+        }
     }
 
     private fun handleSeekKeyUp(keyCode: Int): Boolean {
@@ -464,11 +542,11 @@ class XtreamPlayerView @JvmOverloads constructor(
         }
         if (pendingSeekKey == null) return false
         val wasLongSeek = isLongSeekActive
+        val wasHidden = isHiddenSeek
         stopSeekRepeat()
         if (!wasLongSeek) {
             val currentPlayer = player
             if (currentPlayer == null) {
-                stopSeekRepeat()
                 return true
             }
             if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
@@ -476,6 +554,10 @@ class XtreamPlayerView @JvmOverloads constructor(
             } else {
                 currentPlayer.seekForward()
             }
+        }
+        if (wasHidden) {
+            updateSeekHud(keyCode)
+            scheduleSeekHudHide()
         }
         return true
     }
@@ -652,18 +734,144 @@ class XtreamPlayerView @JvmOverloads constructor(
         }
     }
 
+    // ---- Seek HUD ----
+
+    private fun ensureSeekHud(): LinearLayout {
+        seekHudLayout?.let { return it }
+        val dp = resources.displayMetrics.density
+        val bg = GradientDrawable().apply {
+            setColor(Color.argb(190, 0, 0, 0))
+            cornerRadius = 12f * dp
+        }
+        val layout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding((20 * dp).toInt(), (8 * dp).toInt(), (20 * dp).toInt(), (8 * dp).toInt())
+            background = bg
+            isFocusable = false
+            isFocusableInTouchMode = false
+            isClickable = false
+            visibility = View.GONE
+        }
+        val text = TextView(context).apply {
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            isFocusable = false
+            isFocusableInTouchMode = false
+        }
+        layout.addView(
+            text,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+        val progress = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 1000
+            progress = 0
+            isFocusable = false
+            isFocusableInTouchMode = false
+            isClickable = false
+            progressTintList = ColorStateList.valueOf(Color.WHITE)
+            progressBackgroundTintList = ColorStateList.valueOf(Color.argb(80, 255, 255, 255))
+            minimumHeight = (3 * dp).toInt()
+            maxHeight = (3 * dp).toInt()
+        }
+        layout.addView(
+            progress,
+            LinearLayout.LayoutParams(
+                (200 * dp).toInt(),
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = (6 * dp).toInt()
+            }
+        )
+        val params = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            bottomMargin = (100 * dp).toInt()
+        }
+        addView(layout, params)
+        seekHudLayout = layout
+        seekHudText = text
+        seekHudProgress = progress
+        return layout
+    }
+
+    private fun updateSeekHud(directionKeyCode: Int) {
+        val currentPlayer = player ?: return
+        val layout = ensureSeekHud()
+        val posMs = currentPlayer.currentPosition.coerceAtLeast(0L)
+        val durMs = currentPlayer.duration
+        val arrow = if (directionKeyCode == KeyEvent.KEYCODE_DPAD_LEFT) "\u00AB " else " \u00BB"
+        if (durMs > 0) {
+            val posStr = formatTimeMs(posMs)
+            val durStr = formatTimeMs(durMs)
+            seekHudText?.text = if (directionKeyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                "$arrow$posStr / $durStr"
+            } else {
+                "$posStr / $durStr$arrow"
+            }
+            seekHudProgress?.progress = (posMs * 1000 / durMs).toInt().coerceIn(0, 1000)
+            seekHudProgress?.isIndeterminate = false
+        } else {
+            seekHudText?.text = if (directionKeyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                "${arrow}${formatTimeMs(posMs)}"
+            } else {
+                "${formatTimeMs(posMs)}$arrow"
+            }
+            seekHudProgress?.isIndeterminate = true
+        }
+        layout.visibility = View.VISIBLE
+        cancelSeekHudHide()
+    }
+
+    private fun scheduleSeekHudHide() {
+        cancelSeekHudHide()
+        val runnable = Runnable { seekHudLayout?.visibility = View.GONE }
+        seekHudHideRunnable = runnable
+        keyHandler.postDelayed(runnable, SEEK_HUD_HIDE_DELAY_MS)
+    }
+
+    private fun cancelSeekHudHide() {
+        seekHudHideRunnable?.let { keyHandler.removeCallbacks(it) }
+        seekHudHideRunnable = null
+    }
+
+    private fun hideSeekHud() {
+        cancelSeekHudHide()
+        seekHudLayout?.visibility = View.GONE
+    }
+
 }
 
 private fun resolveLongSeekStepMs(elapsedMs: Long): Long {
     return when {
-        elapsedMs < 2_000L -> 1_000L
-        elapsedMs < 4_000L -> 2_000L
-        elapsedMs < 7_000L -> 5_000L
-        elapsedMs < 11_000L -> 10_000L
-        elapsedMs < 15_000L -> 20_000L
-        else -> 30_000L
+        elapsedMs < 1_500L -> 10_000L
+        elapsedMs < 3_500L -> 20_000L
+        elapsedMs < 6_500L -> 30_000L
+        elapsedMs < 10_000L -> 45_000L
+        elapsedMs < 14_000L -> 60_000L
+        else -> 90_000L
     }
 }
 
 private const val LONG_SEEK_DELAY_MS = 350L
-private const val LONG_SEEK_REPEAT_MS = 80L
+private const val LONG_SEEK_REPEAT_MS = 65L
+private const val SEEK_HUD_HIDE_DELAY_MS = 1000L
+
+private fun formatTimeMs(ms: Long): String {
+    val totalSeconds = ms / 1000
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) {
+        String.format("%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format("%d:%02d", minutes, seconds)
+    }
+}

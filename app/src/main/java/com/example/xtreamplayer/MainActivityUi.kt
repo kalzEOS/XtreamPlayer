@@ -5203,6 +5203,7 @@ fun SectionScreen(
     var pendingSeriesInfo by remember { mutableStateOf<SeriesInfo?>(null) }
     var pendingSeriesReturnFocus by remember { mutableStateOf(false) }
     var pendingSeriesPlaybackTransition by remember { mutableStateOf(false) }
+    var lastAllFocusedKey by remember(section) { mutableStateOf<String?>(null) }
     val searchFocusRequester = remember { FocusRequester() }
     val searchDownContentFocusRequester = remember { FocusRequester() }
     val episodesFocusRequester = remember { FocusRequester() }
@@ -5455,10 +5456,16 @@ fun SectionScreen(
                                 }
                         ) { index ->
                             val item = lazyItems[index]
+                            val itemFocusKey =
+                                    item?.let { "${it.contentType.name}:${it.id}" }
                             val requester =
                                     when {
                                         index == (columns - 1).coerceAtMost(lazyItems.itemCount - 1) ->
                                                 searchDownContentFocusRequester
+                                        section == Section.ALL &&
+                                                itemFocusKey != null &&
+                                                itemFocusKey == lastAllFocusedKey ->
+                                                resumeFocusRequester
                                         item?.id != null && item.id == resumeFocusId ->
                                                 resumeFocusRequester
                                         index == 0 -> contentItemFocusRequester
@@ -5491,6 +5498,10 @@ fun SectionScreen(
                                     onActivate =
                                             if (item != null) {
                                                 {
+                                                    if (section == Section.ALL) {
+                                                        lastAllFocusedKey =
+                                                                "${item.contentType.name}:${item.id}"
+                                                    }
                                                     if (item.contentType == ContentType.SERIES &&
                                                                     item.containerExtension
                                                                             .isNullOrBlank()
@@ -5513,7 +5524,13 @@ fun SectionScreen(
                                             } else {
                                                 null
                                             },
-                                    onFocused = onItemFocused,
+                                    onFocused = { focusedItem ->
+                                        if (section == Section.ALL) {
+                                            lastAllFocusedKey =
+                                                    "${focusedItem.contentType.name}:${focusedItem.id}"
+                                        }
+                                        onItemFocused(focusedItem)
+                                    },
                                     onMoveLeft = onMoveLeft,
                                     onMoveUp =
                                             if (isTopRow) {
