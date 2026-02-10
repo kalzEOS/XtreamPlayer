@@ -88,6 +88,7 @@ import java.util.Locale
 private const val LIVE_EPG_REFRESH_INTERVAL_MS = 60_000L
 private const val LIVE_EPG_CHANNEL_CHANGE_DEBOUNCE_MS = 250L
 private const val LIVE_GUIDE_ROW_LOGO_SIZE_DP = 34
+private const val LIVE_GUIDE_CATEGORY_BADGE_SIZE_DP = 42
 private const val LIVE_GUIDE_MIN_ROWS_VISIBLE = 6
 private const val LIVE_GUIDE_MAX_ROWS_VISIBLE = 10
 private val LANGUAGE_PREFIX_REGEX = Regex("^\\s*[A-Z]{2,3}\\s*-\\s*")
@@ -107,6 +108,52 @@ private val LIVE_PROGRAM_TIME_FORMATTER = ThreadLocal.withInitial {
 private enum class LiveGuideLevel {
     CATEGORIES,
     CHANNELS
+}
+
+private data class LiveGuideCategoryVisual(
+        val badgeCode: String,
+        val badgeFlag: String?,
+        val groupCode: String?,
+        val detailCode: String?
+)
+
+private fun parseLiveGuideCategoryVisual(categoryName: String): LiveGuideCategoryVisual {
+    val tokens = categoryName.split('|').map { it.trim() }.filter { it.isNotBlank() }
+    val groupCode = tokens.firstOrNull()?.uppercase(Locale.ROOT)
+    val badgeSource = tokens.getOrNull(1) ?: tokens.firstOrNull().orEmpty()
+    val badgeCode = badgeSourceToCode(badgeSource)
+    val flagCode = when (badgeCode) {
+        "UK" -> "GB"
+        else -> badgeCode
+    }
+    val detailCode = tokens.getOrNull(2)?.uppercase(Locale.ROOT)
+    return LiveGuideCategoryVisual(
+            badgeCode = badgeCode.ifBlank { "TV" },
+            badgeFlag = countryCodeToFlagEmoji(flagCode),
+            groupCode = groupCode,
+            detailCode = detailCode
+    )
+}
+
+private fun badgeSourceToCode(source: String): String {
+    if (source.isBlank()) return ""
+    val words = source.uppercase(Locale.ROOT)
+            .replace(Regex("[^A-Z\\s]"), " ")
+            .split(MULTI_SPACE_REGEX)
+            .filter { it.isNotBlank() }
+    if (words.isEmpty()) return ""
+    if (words.size >= 2) {
+        return "${words[0].first()}${words[1].first()}"
+    }
+    return words[0].take(2)
+}
+
+private fun countryCodeToFlagEmoji(code: String): String? {
+    val normalized = code.uppercase(Locale.ROOT)
+    if (normalized.length != 2 || normalized.any { it !in 'A'..'Z' }) return null
+    val first = normalized[0].code - 'A'.code + 0x1F1E6
+    val second = normalized[1].code - 'A'.code + 0x1F1E6
+    return String(Character.toChars(first)) + String(Character.toChars(second))
 }
 
 private data class ActiveSubtitle(
@@ -425,7 +472,8 @@ internal fun PlayerOverlay(
         onLiveGuideChannelSelect: (ContentItem, List<ContentItem>) -> Unit,
         loadLiveNowNext: suspend (ContentItem) -> Result<LiveNowNextEpg?>,
         loadLiveCategories: suspend () -> Result<List<CategoryItem>>,
-        loadLiveCategoryChannels: suspend (CategoryItem) -> Result<List<ContentItem>>
+        loadLiveCategoryChannels: suspend (CategoryItem) -> Result<List<ContentItem>>,
+        loadLiveCategoryThumbnail: suspend (CategoryItem) -> Result<String?>
 ) {
     val context = LocalContext.current
     var controlsVisible by remember { mutableStateOf(false) }
@@ -478,6 +526,8 @@ internal fun PlayerOverlay(
     var liveGuideReturnCategoryAtTop by remember { mutableStateOf(false) }
     var liveGuidePreferredCategoryId by remember { mutableStateOf<String?>(null) }
     var liveGuideParentCategoryId by remember { mutableStateOf<String?>(null) }
+    val liveGuideCategoryThumbnails = remember { mutableStateMapOf<String, String?>() }
+    val liveGuideCategoryThumbnailRequested = remember { mutableStateMapOf<String, Boolean>() }
 
     // Next episode overlay state
     var showNextEpisodeOverlay by remember { mutableStateOf(false) }
@@ -705,6 +755,17 @@ internal fun PlayerOverlay(
             return
         }
         onLiveGuideChannelSelect(channel, liveGuideChannels)
+    }
+
+    fun ensureLiveGuideCategoryThumbnail(category: CategoryItem) {
+        if (liveGuideCategoryThumbnailRequested[category.id] == true) return
+        liveGuideCategoryThumbnailRequested[category.id] = true
+        subtitleCoroutineScope.launch {
+            val result =
+                    runCatching { loadLiveCategoryThumbnail(category) }
+                            .getOrElse { Result.failure(it) }
+            liveGuideCategoryThumbnails[category.id] = result.getOrNull()
+        }
     }
 
     LaunchedEffect(currentContentType) {
@@ -1344,7 +1405,13 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                     errorMessage = liveGuideErrorMessage,
                     selectedCategoryName = liveGuideSelectedCategory?.name,
                     alignCategorySelectionToTop = liveGuideReturnCategoryAtTop,
-                    onCategorySelectionAligned = { liveGuideReturnCategoryAtTop = false }
+                    onCategorySelectionAligned = { liveGuideReturnCategoryAtTop = false },
+                    categoryThumbnailProvider = { category ->
+                        liveGuideCategoryThumbnails[category.id]
+                    },
+                    onCategoryThumbnailNeeded = { category ->
+                        ensureLiveGuideCategoryThumbnail(category)
+                    }
             )
         }
 
@@ -1583,7 +1650,9 @@ private fun LiveGuidePanel(
         errorMessage: String?,
         selectedCategoryName: String?,
         alignCategorySelectionToTop: Boolean,
-        onCategorySelectionAligned: () -> Unit
+        onCategorySelectionAligned: () -> Unit,
+        categoryThumbnailProvider: (CategoryItem) -> String?,
+        onCategoryThumbnailNeeded: (CategoryItem) -> Unit
 ) {
     val listState = rememberLazyListState()
     val density = LocalDensity.current
@@ -1601,7 +1670,7 @@ private fun LiveGuidePanel(
     val firstVisibleIndex = effectiveVisibleItems.firstOrNull()?.index ?: selectedBoundedIndex
     val lastVisibleIndex = effectiveVisibleItems.lastOrNull()?.index ?: selectedBoundedIndex
     val selectedDisplayIndex = selectedBoundedIndex.coerceIn(firstVisibleIndex, lastVisibleIndex)
-    val rowHeight = if (level == LiveGuideLevel.CATEGORIES) 58.dp else 62.dp
+    val rowHeight = 62.dp
     val rowSpacing = 4.dp
     val headerHeight = 26.dp
 
@@ -1758,7 +1827,10 @@ private fun LiveGuidePanel(
                             ) { index, category ->
                                 LiveGuideCategoryRow(
                                         category = category,
-                                        selected = index == selectedDisplayIndex
+                                        rowIndex = index,
+                                        selected = index == selectedDisplayIndex,
+                                        thumbnailUrl = categoryThumbnailProvider(category),
+                                        onThumbnailNeeded = onCategoryThumbnailNeeded
                                 )
                             }
                         } else {
@@ -1783,42 +1855,146 @@ private fun LiveGuidePanel(
 @Composable
 private fun LiveGuideCategoryRow(
         category: CategoryItem,
-        selected: Boolean
+        rowIndex: Int,
+        selected: Boolean,
+        thumbnailUrl: String?,
+        onThumbnailNeeded: (CategoryItem) -> Unit
 ) {
+    val localContext = LocalContext.current
+    val visual = remember(category.id, category.name) { parseLiveGuideCategoryVisual(category.name) }
+    LaunchedEffect(category.id, thumbnailUrl) {
+        if (thumbnailUrl.isNullOrBlank()) {
+            onThumbnailNeeded(category)
+        }
+    }
     val shape = RoundedCornerShape(9.dp)
-    val borderColor = if (selected) AppTheme.colors.focus else Color.Transparent
+    val borderColor = if (selected) AppTheme.colors.focus else AppTheme.colors.borderStrong.copy(alpha = 0.22f)
+    val rowTintAlpha = if (rowIndex % 2 == 0) 0.07f else 0.13f
     val background =
-            if (selected) AppTheme.colors.focus.copy(alpha = 0.22f)
-            else Color.Transparent
-    Column(
+            if (selected) AppTheme.colors.focus.copy(alpha = 0.2f)
+            else AppTheme.colors.surfaceAlt.copy(alpha = rowTintAlpha)
+    Box(
             modifier = Modifier.fillMaxWidth()
-                    .height(58.dp)
+                    .height(62.dp)
                     .clip(shape)
                     .background(background)
                     .border(1.dp, borderColor, shape)
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(1.dp)
+                    .padding(horizontal = 9.dp, vertical = 6.dp)
+    ) {
+        if (selected) {
+            Box(
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                            .padding(end = 4.dp)
+                            .width(3.dp)
+                            .height(38.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(AppTheme.colors.focus.copy(alpha = 0.95f))
+            )
+        }
+        Row(
+                modifier = Modifier.fillMaxSize(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            val badgeShape = RoundedCornerShape(6.dp)
+            val badgeBackground =
+                    if (selected) AppTheme.colors.focus.copy(alpha = 0.24f)
+                    else AppTheme.colors.surfaceAlt.copy(alpha = 0.72f)
+            val badgeBorder =
+                    if (selected) AppTheme.colors.focus.copy(alpha = 0.7f)
+                    else AppTheme.colors.borderStrong.copy(alpha = 0.6f)
+            Box(
+                    modifier = Modifier.width(LIVE_GUIDE_CATEGORY_BADGE_SIZE_DP.dp)
+                            .height(LIVE_GUIDE_CATEGORY_BADGE_SIZE_DP.dp)
+                            .clip(badgeShape)
+                            .background(badgeBackground)
+                            .border(1.dp, badgeBorder, badgeShape),
+                    contentAlignment = Alignment.Center
+            ) {
+                if (thumbnailUrl.isNullOrBlank()) {
+                    val badgeText = visual.badgeFlag ?: visual.badgeCode
+                    Text(
+                            text = badgeText,
+                            color = AppTheme.colors.textPrimary,
+                            fontSize = if (visual.badgeFlag != null) 21.sp else 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            fontFamily = AppTheme.fontFamily,
+                            maxLines = 1
+                    )
+                } else {
+                    val imageRequest =
+                            remember(thumbnailUrl) {
+                                ImageRequest.Builder(localContext)
+                                        .data(thumbnailUrl)
+                                        .size(120)
+                                        .crossfade(true)
+                                        .build()
+                            }
+                    AsyncImage(
+                            model = imageRequest,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.matchParentSize()
+                    )
+                }
+            }
+            Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                        text = category.name,
+                        color = AppTheme.colors.textPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        fontFamily = AppTheme.fontFamily,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val typeLabel =
+                            when (category.type) {
+                                ContentType.LIVE -> "Live"
+                                ContentType.MOVIES -> "Movies"
+                                ContentType.SERIES -> "Series"
+                            }
+                    LiveGuideMetaChip(text = typeLabel, selected = selected)
+                    visual.groupCode?.takeIf { it.isNotBlank() }?.let {
+                        LiveGuideMetaChip(text = it, selected = selected)
+                    }
+                    visual.detailCode?.takeIf { it.isNotBlank() }?.let {
+                        LiveGuideMetaChip(text = it, selected = selected)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveGuideMetaChip(
+        text: String,
+        selected: Boolean
+) {
+    val chipShape = RoundedCornerShape(5.dp)
+    val chipBackground =
+            if (selected) AppTheme.colors.focus.copy(alpha = 0.18f)
+            else AppTheme.colors.surfaceAlt.copy(alpha = 0.55f)
+    val chipBorder =
+            if (selected) AppTheme.colors.focus.copy(alpha = 0.5f)
+            else AppTheme.colors.borderStrong.copy(alpha = 0.4f)
+    Box(
+            modifier = Modifier.clip(chipShape)
+                    .background(chipBackground)
+                    .border(1.dp, chipBorder, chipShape)
+                    .padding(horizontal = 6.dp, vertical = 1.dp)
     ) {
         Text(
-                text = category.name,
-                color = AppTheme.colors.textPrimary,
-                fontSize = 13.sp,
-                fontFamily = AppTheme.fontFamily,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-        )
-        Text(
-                text =
-                        when (category.type) {
-                            ContentType.LIVE -> "Live"
-                            ContentType.MOVIES -> "Movies"
-                            ContentType.SERIES -> "Series"
-                        },
+                text = text,
                 color = AppTheme.colors.textSecondary,
-                fontSize = 10.sp,
+                fontSize = 9.sp,
                 fontFamily = AppTheme.fontFamily,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                maxLines = 1
         )
     }
 }

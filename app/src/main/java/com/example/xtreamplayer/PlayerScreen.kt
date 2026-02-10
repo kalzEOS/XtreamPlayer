@@ -25,7 +25,8 @@ internal fun PlayerScreen(
     onLiveGuideChannelSelect: (ContentItem, List<ContentItem>) -> Unit,
     loadLiveNowNext: suspend (ContentItem) -> Result<LiveNowNextEpg?>,
     loadLiveCategories: suspend () -> Result<List<CategoryItem>>,
-    loadLiveCategoryChannels: suspend (CategoryItem) -> Result<List<ContentItem>>
+    loadLiveCategoryChannels: suspend (CategoryItem) -> Result<List<ContentItem>>,
+    loadLiveCategoryThumbnail: suspend (CategoryItem) -> Result<String?>
 ) {
     val queue = activePlaybackQueue ?: return
     val currentIndex = playbackEngine.player.currentMediaItemIndex
@@ -56,6 +57,7 @@ internal fun PlayerScreen(
         onLiveGuideChannelSelect = onLiveGuideChannelSelect,
         loadLiveNowNext = loadLiveNowNext,
         loadLiveCategories = loadLiveCategories,
-        loadLiveCategoryChannels = loadLiveCategoryChannels
+        loadLiveCategoryChannels = loadLiveCategoryChannels,
+        loadLiveCategoryThumbnail = loadLiveCategoryThumbnail
     )
 }
