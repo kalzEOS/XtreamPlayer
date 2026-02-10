@@ -117,6 +117,10 @@ private data class LiveGuideCategoryVisual(
         val detailCode: String?
 )
 
+private fun liveGuideCategoryUiKey(category: CategoryItem): String {
+    return "${category.id}::${category.name.trim().uppercase(Locale.ROOT)}"
+}
+
 private fun parseLiveGuideCategoryVisual(categoryName: String): LiveGuideCategoryVisual {
     val tokens = categoryName.split('|').map { it.trim() }.filter { it.isNotBlank() }
     val groupCode = tokens.firstOrNull()?.uppercase(Locale.ROOT)
@@ -572,6 +576,23 @@ internal fun PlayerOverlay(
                 .takeIf { it >= 0 }
     }
 
+    fun ensureLiveGuideCategoryThumbnail(category: CategoryItem) {
+        val key = liveGuideCategoryUiKey(category)
+        if (liveGuideCategoryThumbnailRequested[key] == true) return
+        liveGuideCategoryThumbnailRequested[key] = true
+        subtitleCoroutineScope.launch {
+            val result =
+                    runCatching { loadLiveCategoryThumbnail(category) }
+                            .getOrElse { Result.failure(it) }
+            if (result.isSuccess) {
+                liveGuideCategoryThumbnails[key] = result.getOrNull()?.takeIf { it.isNotBlank() }
+            } else {
+                // Allow retry later on transient failures.
+                liveGuideCategoryThumbnailRequested[key] = false
+            }
+        }
+    }
+
     fun refreshLiveCategories() {
         subtitleCoroutineScope.launch {
             liveGuideLoading = true
@@ -580,6 +601,10 @@ internal fun PlayerOverlay(
             result
                     .onSuccess { categories ->
                         liveGuideCategories = categories
+                        val validKeys = categories.map(::liveGuideCategoryUiKey).toSet()
+                        liveGuideCategoryThumbnails.keys.retainAll(validKeys)
+                        liveGuideCategoryThumbnailRequested.keys.retainAll(validKeys)
+                        categories.take(12).forEach(::ensureLiveGuideCategoryThumbnail)
                         val preferredCategoryId =
                                 normalizeCategoryId(liveGuidePreferredCategoryId)
                                         ?: normalizeCategoryId(liveGuideParentCategoryId)
@@ -689,6 +714,8 @@ internal fun PlayerOverlay(
         playerView?.requestFocus()
         if (liveGuideCategories.isEmpty()) {
             refreshLiveCategories()
+        } else {
+            liveGuideCategories.take(12).forEach(::ensureLiveGuideCategoryThumbnail)
         }
     }
 
@@ -755,17 +782,6 @@ internal fun PlayerOverlay(
             return
         }
         onLiveGuideChannelSelect(channel, liveGuideChannels)
-    }
-
-    fun ensureLiveGuideCategoryThumbnail(category: CategoryItem) {
-        if (liveGuideCategoryThumbnailRequested[category.id] == true) return
-        liveGuideCategoryThumbnailRequested[category.id] = true
-        subtitleCoroutineScope.launch {
-            val result =
-                    runCatching { loadLiveCategoryThumbnail(category) }
-                            .getOrElse { Result.failure(it) }
-            liveGuideCategoryThumbnails[category.id] = result.getOrNull()
-        }
     }
 
     LaunchedEffect(currentContentType) {
@@ -1407,7 +1423,7 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                     alignCategorySelectionToTop = liveGuideReturnCategoryAtTop,
                     onCategorySelectionAligned = { liveGuideReturnCategoryAtTop = false },
                     categoryThumbnailProvider = { category ->
-                        liveGuideCategoryThumbnails[category.id]
+                        liveGuideCategoryThumbnails[liveGuideCategoryUiKey(category)]
                     },
                     onCategoryThumbnailNeeded = { category ->
                         ensureLiveGuideCategoryThumbnail(category)
@@ -1823,7 +1839,7 @@ private fun LiveGuidePanel(
                         if (level == LiveGuideLevel.CATEGORIES) {
                             itemsIndexed(
                                     items = categories,
-                                    key = { _, category -> category.id }
+                                    key = { _, category -> liveGuideCategoryUiKey(category) }
                             ) { index, category ->
                                 LiveGuideCategoryRow(
                                         category = category,
@@ -1862,7 +1878,8 @@ private fun LiveGuideCategoryRow(
 ) {
     val localContext = LocalContext.current
     val visual = remember(category.id, category.name) { parseLiveGuideCategoryVisual(category.name) }
-    LaunchedEffect(category.id, thumbnailUrl) {
+    val categoryKey = remember(category.id, category.name) { liveGuideCategoryUiKey(category) }
+    LaunchedEffect(categoryKey, thumbnailUrl) {
         if (thumbnailUrl.isNullOrBlank()) {
             onThumbnailNeeded(category)
         }
@@ -1912,11 +1929,11 @@ private fun LiveGuideCategoryRow(
                     contentAlignment = Alignment.Center
             ) {
                 if (thumbnailUrl.isNullOrBlank()) {
-                    val badgeText = visual.badgeFlag ?: visual.badgeCode
+                    val badgeText = "TV"
                     Text(
                             text = badgeText,
                             color = AppTheme.colors.textPrimary,
-                            fontSize = if (visual.badgeFlag != null) 21.sp else 13.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                             fontFamily = AppTheme.fontFamily,
                             maxLines = 1
