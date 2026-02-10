@@ -11,7 +11,8 @@ enum class AppThemeOption(val label: String) {
     DARK_GREEN_LIGHT("Green Light"),
     DUSK_COPPER("Dusk Copper"),
     DUSK_COPPER_LIGHT("Copper Light"),
-    MIDNIGHT_AURORA("Midnight Aurora")
+    MIDNIGHT_AURORA("Midnight Aurora"),
+    MIDNIGHT_AURORA_LIGHT("Aurora Light")
 }
 
 enum class ClockFormatOption(val label: String) {

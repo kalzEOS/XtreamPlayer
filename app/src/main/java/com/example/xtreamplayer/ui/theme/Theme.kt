@@ -345,6 +345,46 @@ private val MidnightAuroraAppColors =
         backgroundGradientStyle = BackgroundGradientStyle.DIAGONAL
     )
 
+private val MidnightAuroraLightAppColors =
+    AppColors(
+        background = Color(0xFFF3F8FF),
+        backgroundAlt = Color(0xFFE8F2F7),
+        panelBackground = Color(0xF0F7FBFF),
+        panelBorder = Color(0xFFBED3E5),
+        surface = Color(0xFFFAFDFF),
+        surfaceAlt = Color(0xFFEBF4FA),
+        surfaceMuted = Color(0xFFE2EDF5),
+        surfaceFocused = Color(0xFFD8E9F5),
+        border = Color(0xFFBFD2E3),
+        borderStrong = Color(0xFFA9C0D5),
+        focus = Color(0xFF2B6E9F),
+        accent = Color(0xFF2F84B8),
+        accentAlt = Color(0xFF5DA9CA),
+        accentMuted = Color(0xFFD9E8F3),
+        accentMutedAlt = Color(0xFFCFE1EE),
+        accentSelected = Color(0xFF20688F),
+        accentSelectedAlt = Color(0xFF1B5778),
+        textPrimary = Color(0xFF173044),
+        textSecondary = Color(0xFF42617A),
+        textTertiary = Color(0xFF5C7890),
+        navText = Color(0xFF173044),
+        textOnAccent = Color(0xFFFFFFFF),
+        warning = Color(0xFFB86B1B),
+        success = Color(0xFF1B8F62),
+        error = Color(0xFFC6505D),
+        overlay = Color(0x1A07111C),
+        overlaySoft = Color(0x33000000),
+        overlayStrong = Color(0x4D07111C),
+        backgroundGradientColors =
+            listOf(
+                Color(0xFFF5FAFF),
+                Color(0xFFE8F4FF),
+                Color(0xFFEEF0FF),
+                Color(0xFFE6FAF1)
+            ),
+        backgroundGradientStyle = BackgroundGradientStyle.DIAGONAL
+    )
+
 private val LocalAppColors = staticCompositionLocalOf { DefaultAppColors }
 private val LocalAppFontFamily = staticCompositionLocalOf<FontFamily> { FontFamily.Serif }
 
@@ -371,6 +411,7 @@ fun XtreamPlayerTheme(
             AppThemeOption.DUSK_COPPER -> CopperAppColors
             AppThemeOption.DUSK_COPPER_LIGHT -> CopperLightAppColors
             AppThemeOption.MIDNIGHT_AURORA -> MidnightAuroraAppColors
+            AppThemeOption.MIDNIGHT_AURORA_LIGHT -> MidnightAuroraLightAppColors
             else -> DefaultAppColors
         }
     val colorScheme =
