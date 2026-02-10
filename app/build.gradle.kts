@@ -21,7 +21,6 @@ android {
     if (hasKeystoreProps) {
         keystoreProps.load(FileInputStream(keystorePropsFile))
     }
-//testing comment
     defaultConfig {
         applicationId = "com.example.xtreamplayer"
         minSdk = 24
@@ -88,7 +87,11 @@ androidComponents {
                 @Suppress("UNCHECKED_CAST")
                 output::class.java.getMethod("getOutputFileName").invoke(output) as Property<String>
             }.getOrNull()
-            outputFileName?.set("XtreamPlayerv3.0.5.apk")
+            val outputVersionName = runCatching {
+                @Suppress("UNCHECKED_CAST")
+                output::class.java.getMethod("getVersionName").invoke(output) as Property<String>
+            }.getOrNull()?.orNull ?: "3.0.6"
+            outputFileName?.set("XtreamPlayerv${outputVersionName}.apk")
         }
     }
 }
