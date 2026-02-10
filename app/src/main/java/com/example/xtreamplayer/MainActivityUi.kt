@@ -7004,8 +7004,6 @@ fun CategorySectionScreen(
     val activeQuery = searchState.debouncedQuery
 
     BackHandler(enabled = selectedCategory != null && selectedSeries == null) {
-        // Request focus immediately before state change to avoid focus flashing to MenuButton
-        runCatching { contentItemFocusRequester.requestFocus() }
         selectedCategory = null
         pendingCategoryReturnFocus = true
     }
@@ -7068,13 +7066,10 @@ fun CategorySectionScreen(
         repeat(12) {
             withFrameNanos {}
             if (categoryGridState.layoutInfo.visibleItemsInfo.isNotEmpty()) {
-                val focused = runCatching { contentItemFocusRequester.requestFocus() }.getOrDefault(false)
+                val focused =
+                    focusManager.moveFocus(FocusDirection.Down) ||
+                        focusManager.moveFocus(FocusDirection.Right)
                 if (focused) {
-                    pendingCategoryReturnFocus = false
-                    return@LaunchedEffect
-                }
-                // Fallback to directional move if requester focus fails.
-                if (focusManager.moveFocus(FocusDirection.Right)) {
                     pendingCategoryReturnFocus = false
                     return@LaunchedEffect
                 }
@@ -7290,13 +7285,9 @@ fun CategorySectionScreen(
                         withFrameNanos {}
                         if (contentGridState.layoutInfo.visibleItemsInfo.isNotEmpty()) {
                             val focused =
-                                runCatching { contentItemFocusRequester.requestFocus() }.getOrDefault(false)
+                                focusManager.moveFocus(FocusDirection.Right) ||
+                                    focusManager.moveFocus(FocusDirection.Down)
                             if (focused) {
-                                pendingCategoryEnterFocus = false
-                                return@LaunchedEffect
-                            }
-                            // Fallback to directional move if requester focus fails.
-                            if (focusManager.moveFocus(FocusDirection.Right)) {
                                 pendingCategoryEnterFocus = false
                                 return@LaunchedEffect
                             }
