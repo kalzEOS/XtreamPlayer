@@ -492,14 +492,20 @@ fun RootScreen(
                 }
             }
 
-    suspend fun requestFocusWithFrames(requester: FocusRequester, label: String): Boolean {
+    suspend fun requestFocusWithFrames(
+            requester: FocusRequester,
+            label: String,
+            frameRetries: Int = 3
+    ): Boolean {
         fun tryRequest(attempt: Int): Boolean {
             return runCatching { requester.requestFocus() }.getOrElse { error ->
                 Timber.w(error, "FocusDebug: $label focus request failed (attempt $attempt)")
                 false
             }
         }
-        repeat(3) { attempt ->
+        // Fast path to avoid visible lag when requester is already attached.
+        if (tryRequest(0)) return true
+        repeat(frameRetries) { attempt ->
             withFrameNanos {}
             if (tryRequest(attempt + 1)) return true
         }
@@ -509,17 +515,28 @@ fun RootScreen(
     LaunchedEffect(focusToContentTrigger) {
         if (focusToContentTrigger > 0) {
             Timber.d("FocusDebug: Requesting content focus for trigger=$focusToContentTrigger")
-            // First try directional handoff from nav -> content to avoid requester attach races.
-            repeat(10) {
-                withFrameNanos {}
-                if (focusManager.moveFocus(FocusDirection.Right)) {
-                    return@LaunchedEffect
-                }
-                delay(8)
+            val useDeterministicContentEntry =
+                    selectedSection == Section.SETTINGS || selectedSection == Section.CATEGORIES
+            if (useDeterministicContentEntry &&
+                            requestFocusWithFrames(
+                                    requester = contentItemFocusRequester,
+                                    label = "content-deterministic",
+                                    frameRetries = 1
+                            )
+            ) {
+                return@LaunchedEffect
+            }
+            // Fast directional handoff with a single-frame fallback.
+            if (focusManager.moveFocus(FocusDirection.Right)) {
+                return@LaunchedEffect
+            }
+            withFrameNanos {}
+            if (focusManager.moveFocus(FocusDirection.Right)) {
+                return@LaunchedEffect
             }
             val requesters = listOf(contentItemFocusRequester)
             requesters.forEach { requester ->
-                if (requestFocusWithFrames(requester, "content")) {
+                if (requestFocusWithFrames(requester, "content", frameRetries = 1)) {
                     return@LaunchedEffect
                 }
             }
@@ -870,10 +887,18 @@ fun RootScreen(
             player?.stop()
             player?.clearMediaItems()
             if (resumeFocusId != null) {
-                val resumeFocused = requestFocusWithFrames(resumeFocusRequester, "resume-content")
+                withFrameNanos {}
+                val resumeFocused =
+                        requestFocusWithFrames(
+                                requester = resumeFocusRequester,
+                                label = "resume-content",
+                                frameRetries = 6
+                        )
                 if (!resumeFocused) {
-                    requestFocusWithFrames(contentItemFocusRequester, "content-fallback")
+                    focusToContentTrigger++
                 }
+            } else {
+                focusToContentTrigger++
             }
         }
     }
@@ -882,6 +907,14 @@ fun RootScreen(
     BackHandler(enabled = showAppearance) { showAppearance = false }
 
     val handleItemFocused: (ContentItem) -> Unit = { item -> resumeFocusId = item.id }
+    val resolveResumeFocusTarget: (ContentItem) -> String = { item ->
+        val parent = activePlaybackSeriesParent
+        if (item.contentType == ContentType.SERIES && parent != null) {
+            parent.id
+        } else {
+            item.id
+        }
+    }
     val openMovieInfo: (ContentItem, List<ContentItem>) -> Unit = { item, items ->
         val config = authState.activeConfig
         if (config != null) {
@@ -945,7 +978,7 @@ fun RootScreen(
     val handlePlayItem: (ContentItem, List<ContentItem>) -> Unit = { item, items ->
         val config = authState.activeConfig
         if (config != null) {
-            resumeFocusId = item.id
+            resumeFocusId = resolveResumeFocusTarget(item)
             val playableItems = items.filter(::isPlayableContent)
             activePlaybackItems = playableItems
             activePlaybackItem = item
@@ -1005,7 +1038,7 @@ fun RootScreen(
     val handlePlayItemWithPosition: (ContentItem, Long) -> Unit = { item, positionMs ->
         val config = authState.activeConfig
         if (config != null) {
-            resumeFocusId = item.id
+            resumeFocusId = resolveResumeFocusTarget(item)
             val items = listOf(item)
             val playableItems = items.filter(::isPlayableContent)
             activePlaybackItems = playableItems
@@ -1026,7 +1059,7 @@ fun RootScreen(
             { item, items, positionMs ->
                 val config = authState.activeConfig
                 if (config != null) {
-                    resumeFocusId = item.id
+                    resumeFocusId = resolveResumeFocusTarget(item)
                     val playableItems = items.filter(::isPlayableContent)
                     activePlaybackItems = playableItems
                     activePlaybackItem = item
@@ -4009,6 +4042,7 @@ private fun ContentListItem(
     val shape = RoundedCornerShape(12.dp)
     val borderColor = if (isFocused) AppTheme.colors.focus else AppTheme.colors.borderStrong
     val background = if (isFocused) AppTheme.colors.surfaceFocused else AppTheme.colors.surfaceMuted
+    var longPressTriggered by remember { mutableStateOf(false) }
     var keyDownArmed by remember { mutableStateOf(false) }
     var keyClickHandled by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -4027,6 +4061,7 @@ private fun ContentListItem(
             }
     LaunchedEffect(isFocused) {
         if (!isFocused) {
+            longPressTriggered = false
             keyDownArmed = false
             keyClickHandled = false
         }
@@ -4068,7 +4103,10 @@ private fun ContentListItem(
                                                                         it.nativeKeyEvent
                                                                                 .repeatCount > 0)
                                                 ) {
-                                                    onLongClick()
+                                                    if (!longPressTriggered) {
+                                                        onLongClick()
+                                                        longPressTriggered = true
+                                                    }
                                                     true
                                                 } else {
                                                     keyDownArmed = true
@@ -4080,7 +4118,11 @@ private fun ContentListItem(
                                     }
                                     KeyEventType.KeyUp -> {
                                         if (isSelectKey) {
-                                            if (keyDownArmed) {
+                                            if (longPressTriggered) {
+                                                longPressTriggered = false
+                                                keyDownArmed = false
+                                                true
+                                            } else if (keyDownArmed) {
                                                 keyDownArmed = false
                                                 keyClickHandled = true
                                                 onActivate()
@@ -6961,7 +7003,6 @@ fun CategorySectionScreen(
 ) {
     val shape = RoundedCornerShape(18.dp)
     val context = LocalContext.current
-    val focusManager = LocalFocusManager.current
     var activeType by remember { mutableStateOf(ContentType.LIVE) }
     var selectedCategory by remember { mutableStateOf<CategoryItem?>(null) }
     var selectedSeries by remember { mutableStateOf<ContentItem?>(null) }
@@ -6970,6 +7011,8 @@ fun CategorySectionScreen(
     var pendingSeriesReturnFocus by remember { mutableStateOf(false) }
     var pendingCategoryReturnFocus by remember { mutableStateOf(false) }
     var pendingCategoryEnterFocus by remember { mutableStateOf(false) }
+    var lastSelectedCategoryId by remember { mutableStateOf<String?>(null) }
+    var lastSelectedCategoryIndex by remember { mutableIntStateOf(0) }
     var lastCategoryContentIndex by remember { mutableIntStateOf(0) }
     var lastCategoryContentId by remember { mutableStateOf<String?>(null) }
     var categories by remember { mutableStateOf<List<CategoryItem>>(emptyList()) }
@@ -7018,6 +7061,8 @@ fun CategorySectionScreen(
         pendingSeriesReturnFocus = false
         pendingCategoryReturnFocus = false
         pendingCategoryEnterFocus = false
+        lastSelectedCategoryId = null
+        lastSelectedCategoryIndex = 0
         pendingEpisodeFocus = false
         lastCategoryContentIndex = 0
         lastCategoryContentId = null
@@ -7048,8 +7093,6 @@ fun CategorySectionScreen(
         selectedSeries = item
     }
 
-    // Focus restore logic moved inside content grid block to access lazyItems
-
     LaunchedEffect(
             pendingCategoryReturnFocus,
             selectedCategory,
@@ -7062,19 +7105,13 @@ fun CategorySectionScreen(
         }
         // Wait for categories to be available
         if (categories.isEmpty()) return@LaunchedEffect
-        // Wait for visible category cells so requester is guaranteed attached.
-        repeat(12) {
+        // Request the tracked category card focus (or fallback card) once it is attached.
+        repeat(6) {
             withFrameNanos {}
-            if (categoryGridState.layoutInfo.visibleItemsInfo.isNotEmpty()) {
-                val focused =
-                    focusManager.moveFocus(FocusDirection.Down) ||
-                        focusManager.moveFocus(FocusDirection.Right)
-                if (focused) {
-                    pendingCategoryReturnFocus = false
-                    return@LaunchedEffect
-                }
+            if (runCatching { contentItemFocusRequester.requestFocus() }.getOrDefault(false)) {
+                pendingCategoryReturnFocus = false
+                return@LaunchedEffect
             }
-            delay(16)
         }
         pendingCategoryReturnFocus = false
     }
@@ -7280,19 +7317,16 @@ fun CategorySectionScreen(
                             return@LaunchedEffect
                     // Wait for items to be available before attempting focus
                     if (lazyItems.itemCount == 0) return@LaunchedEffect
-                    // Wait for visible content cells so requester is guaranteed attached.
-                    repeat(12) {
+                    // Force focus to the first content card (or mapped resume target), not the Back button.
+                    repeat(6) {
                         withFrameNanos {}
-                        if (contentGridState.layoutInfo.visibleItemsInfo.isNotEmpty()) {
-                            val focused =
-                                focusManager.moveFocus(FocusDirection.Right) ||
-                                    focusManager.moveFocus(FocusDirection.Down)
-                            if (focused) {
-                                pendingCategoryEnterFocus = false
-                                return@LaunchedEffect
-                            }
+                        val focused =
+                                runCatching { contentItemFocusRequester.requestFocus() }
+                                        .getOrDefault(false)
+                        if (focused) {
+                            pendingCategoryEnterFocus = false
+                            return@LaunchedEffect
                         }
-                        delay(16)
                     }
                     pendingCategoryEnterFocus = false
                 }
@@ -7630,6 +7664,20 @@ fun CategorySectionScreen(
                             } else {
                                 -1
                             }
+                    val returnTargetIndex =
+                            if (pendingCategoryReturnFocus && filteredCategories.isNotEmpty()) {
+                                val byId =
+                                        lastSelectedCategoryId?.let { targetId ->
+                                            filteredCategories.indexOfFirst { it.id == targetId }
+                                        } ?: -1
+                                if (byId >= 0) {
+                                    byId
+                                } else {
+                                    lastSelectedCategoryIndex.coerceIn(0, filteredCategories.lastIndex)
+                                }
+                            } else {
+                                -1
+                            }
                     LazyVerticalGrid(
                             columns = GridCells.Fixed(categoryColumns),
                             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -7641,8 +7689,11 @@ fun CategorySectionScreen(
                             val category = filteredCategories[index]
                             val requester =
                                     when {
+                                        pendingCategoryReturnFocus && index == returnTargetIndex ->
+                                                contentItemFocusRequester
                                         index == searchDownIndex -> searchDownCategoryFocusRequester
-                                        index == 0 -> contentItemFocusRequester
+                                        !pendingCategoryReturnFocus && index == 0 ->
+                                                contentItemFocusRequester
                                         else -> null
                                     }
                             val isLeftEdge = index % categoryColumns == 0
@@ -7670,8 +7721,11 @@ fun CategorySectionScreen(
                                     imageUrl = categoryThumbnailUrl,
                                     onActivate = {
                                         selectedSeries = null
+                                        lastSelectedCategoryId = category.id
+                                        lastSelectedCategoryIndex = index
                                         selectedCategory = category
                                         pendingCategoryEnterFocus = true
+                                        pendingCategoryReturnFocus = false
                                         lastCategoryContentIndex = 0
                                         lastCategoryContentId = null
                                     },

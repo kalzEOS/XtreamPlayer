@@ -23,9 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -153,14 +151,22 @@ internal fun MenuButton(expanded: Boolean, onToggle: () -> Unit, onMoveRight: ((
                     if (it.type != KeyEventType.KeyDown) {
                         false
                     } else if (it.key == Key.DirectionRight && onMoveRight != null) {
-                        onMoveRight()
-                        true
+                        if (it.nativeKeyEvent.repeatCount > 0) {
+                            true
+                        } else {
+                            onMoveRight()
+                            true
+                        }
                     } else if (it.key == Key.Enter ||
                         it.key == Key.NumPadEnter ||
                         it.key == Key.DirectionCenter
                     ) {
-                        onToggle()
-                        true
+                        if (it.nativeKeyEvent.repeatCount > 0) {
+                            true
+                        } else {
+                            onToggle()
+                            true
+                        }
                     } else {
                         false
                     }
@@ -214,7 +220,6 @@ private fun NavItem(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
-    var longPressTriggered by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(12.dp)
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
     val colors = AppTheme.colors
@@ -267,14 +272,22 @@ private fun NavItem(
                                 if (it.type != KeyEventType.KeyDown) {
                                     false
                                 } else if (it.key == Key.DirectionRight) {
-                                    onMoveRight()
-                                    true
+                                    if (it.nativeKeyEvent.repeatCount > 0) {
+                                        true
+                                    } else {
+                                        onMoveRight()
+                                        true
+                                    }
                                 } else if (it.key == Key.Enter ||
                                     it.key == Key.NumPadEnter ||
                                     it.key == Key.DirectionCenter
                                 ) {
-                                    onClick()
-                                    true
+                                    if (it.nativeKeyEvent.repeatCount > 0) {
+                                        true
+                                    } else {
+                                        onClick()
+                                        true
+                                    }
                                 } else {
                                     false
                                 }

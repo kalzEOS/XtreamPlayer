@@ -162,12 +162,32 @@ internal fun BrowseScreen(
 
     LaunchedEffect(navMoveToContentTrigger) {
         if (navMoveToContentTrigger <= 0) return@LaunchedEffect
-        repeat(8) {
-            withFrameNanos {}
-            if (focusManager.moveFocus(FocusDirection.Right)) {
+        val useDeterministicContentEntry =
+            selectedSection == Section.SETTINGS || selectedSection == Section.CATEGORIES
+        if (useDeterministicContentEntry) {
+            // These sections should always open at their top focus target.
+            val focusedNow =
+                runCatching { contentItemFocusRequester.requestFocus() }.getOrDefault(false)
+            if (focusedNow) {
                 return@LaunchedEffect
             }
-            delay(8)
+            withFrameNanos {}
+            val focusedAfterFrame =
+                runCatching { contentItemFocusRequester.requestFocus() }.getOrDefault(false)
+            if (focusedAfterFrame) {
+                return@LaunchedEffect
+            }
+            focusToContentTrigger++
+            return@LaunchedEffect
+        }
+        // Fast path before frame-based retries.
+        if (focusManager.moveFocus(FocusDirection.Right)) {
+            return@LaunchedEffect
+        }
+        // One-frame fallback for Compose attach timing.
+        withFrameNanos {}
+        if (focusManager.moveFocus(FocusDirection.Right)) {
+            return@LaunchedEffect
         }
         // Last-resort fallback used by legacy focus paths.
         focusToContentTrigger++
