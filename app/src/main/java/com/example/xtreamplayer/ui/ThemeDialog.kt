@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -60,9 +61,13 @@ fun ThemeSelectionDialog(
     val itemFocusRequesters =
         remember(themes.size) { List(themes.size) { FocusRequester() } }
     val selectedIndex = themes.indexOf(currentTheme).coerceAtLeast(0)
+    val listState = rememberLazyListState()
 
-    LaunchedEffect(themes.size, selectedIndex) {
+    LaunchedEffect(themes.size, selectedIndex, listState) {
         if (themes.isNotEmpty()) {
+            val targetIndex = selectedIndex.coerceIn(0, themes.lastIndex)
+            listState.scrollToItem(targetIndex)
+            delay(16)
             itemFocusRequesters.getOrNull(selectedIndex)?.requestFocus()
                 ?: itemFocusRequesters.firstOrNull()?.requestFocus()
         } else {
@@ -104,6 +109,7 @@ fun ThemeSelectionDialog(
                 } else {
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
+                        state = listState,
                         modifier = Modifier.weight(1f, fill = false)
                     ) {
                         itemsIndexed(themes) { index, theme ->

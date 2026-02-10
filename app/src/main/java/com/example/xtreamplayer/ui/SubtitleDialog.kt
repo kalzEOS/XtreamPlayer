@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -61,6 +63,7 @@ import com.example.xtreamplayer.api.SubtitleSearchResult
 import com.example.xtreamplayer.player.SubtitleTrackInfo
 import com.example.xtreamplayer.player.VideoTrackInfo
 import com.example.xtreamplayer.ui.theme.AppTheme
+import kotlinx.coroutines.delay
 import kotlin.math.abs
 
 private val DialogBackground: Color
@@ -960,11 +963,24 @@ fun SubtitleTrackDialog(
     onDismiss: () -> Unit
 ) {
     val closeFocusRequester = remember { FocusRequester() }
+    val itemFocusRequesters =
+        remember(availableTracks.size) { List(availableTracks.size) { FocusRequester() } }
+    val listState = rememberLazyListState()
     val supportedTrackCount = availableTracks.count { it.isSupported }
     val hasSingleTrack = supportedTrackCount <= 1
+    val selectedTrackIndex =
+        availableTracks.indexOfFirst { it.isSelected && it.isSupported && !hasSingleTrack }
+            .takeIf { it >= 0 }
+            ?: availableTracks.indexOfFirst { it.isSupported && !hasSingleTrack }.takeIf { it >= 0 }
 
-    LaunchedEffect(Unit) {
-        closeFocusRequester.requestFocus()
+    LaunchedEffect(availableTracks.size, selectedTrackIndex, listState) {
+        if (selectedTrackIndex != null) {
+            listState.scrollToItem(selectedTrackIndex)
+            delay(16)
+            itemFocusRequesters[selectedTrackIndex].requestFocus()
+        } else {
+            closeFocusRequester.requestFocus()
+        }
     }
 
     AppDialog(
@@ -1031,9 +1047,10 @@ fun SubtitleTrackDialog(
 
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
+                        state = listState,
                         modifier = Modifier.weight(1f, fill = false)
                     ) {
-                        items(availableTracks) { track ->
+                        itemsIndexed(availableTracks) { index, track ->
                             val interactionSource = remember { MutableInteractionSource() }
                             val isFocused by interactionSource.collectIsFocusedAsState()
                             val isSelectable = track.isSupported && !hasSingleTrack
@@ -1070,7 +1087,9 @@ fun SubtitleTrackDialog(
                                     .padding(16.dp)
                                     .then(
                                         if (isSelectable) {
-                                            Modifier.focusable(interactionSource = interactionSource)
+                                            Modifier
+                                                .focusRequester(itemFocusRequesters[index])
+                                                .focusable(interactionSource = interactionSource)
                                         } else {
                                             Modifier
                                         }

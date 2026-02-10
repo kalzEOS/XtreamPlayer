@@ -20,17 +20,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.xtreamplayer.auth.AuthConfig
@@ -53,9 +57,11 @@ import com.example.xtreamplayer.ui.theme.AppTheme
 import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import androidx.compose.runtime.withFrameNanos
 
 @Composable
 internal fun BrowseScreen(
@@ -151,6 +157,41 @@ internal fun BrowseScreen(
     var showNextEpisodeThresholdDialog by showNextEpisodeThresholdDialogState
     var showApiKeyDialog by showApiKeyDialogState
     var cacheClearNonce by cacheClearNonceState
+    val focusManager = LocalFocusManager.current
+    var navMoveToContentTrigger by remember { mutableStateOf(0) }
+
+    LaunchedEffect(navMoveToContentTrigger) {
+        if (navMoveToContentTrigger <= 0) return@LaunchedEffect
+        val useDeterministicContentEntry =
+            selectedSection == Section.SETTINGS || selectedSection == Section.CATEGORIES
+        if (useDeterministicContentEntry) {
+            // These sections should always open at their top focus target.
+            val focusedNow =
+                runCatching { contentItemFocusRequester.requestFocus() }.getOrDefault(false)
+            if (focusedNow) {
+                return@LaunchedEffect
+            }
+            withFrameNanos {}
+            val focusedAfterFrame =
+                runCatching { contentItemFocusRequester.requestFocus() }.getOrDefault(false)
+            if (focusedAfterFrame) {
+                return@LaunchedEffect
+            }
+            focusToContentTrigger++
+            return@LaunchedEffect
+        }
+        // Fast path before frame-based retries.
+        if (focusManager.moveFocus(FocusDirection.Right)) {
+            return@LaunchedEffect
+        }
+        // One-frame fallback for Compose attach timing.
+        withFrameNanos {}
+        if (focusManager.moveFocus(FocusDirection.Right)) {
+            return@LaunchedEffect
+        }
+        // Last-resort fallback used by legacy focus paths.
+        focusToContentTrigger++
+    }
 
 Row(modifier = Modifier.fillMaxSize()) {
     SideNav(
@@ -167,10 +208,8 @@ Row(modifier = Modifier.fillMaxSize()) {
                 // there
             },
             onMoveRight = {
-                Timber.d(
-                        "NavItem: onMoveRight called, incrementing focusToContentTrigger from $focusToContentTrigger to ${focusToContentTrigger + 1}"
-                )
-                focusToContentTrigger++
+                Timber.d("NavItem: onMoveRight called, attempting directional move to content")
+                navMoveToContentTrigger++
             },
             expanded = navSlideExpanded,
             layoutExpanded = navLayoutExpanded,
