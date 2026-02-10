@@ -4713,7 +4713,7 @@ private fun rememberSeriesCardMeta(
                                     )
                                 }
                                 .getOrNull()
-                if (summaries != null) {
+                if (!summaries.isNullOrEmpty()) {
                     value =
                             SeriesSeasonMeta(
                                     seasonCount = summaries.size,
@@ -4728,7 +4728,11 @@ private fun rememberSeriesCardMeta(
                                         )
                                     }
                                     .getOrNull()
-                    value = SeriesSeasonMeta(seasonCount = count, hasEpisodes = null)
+                    value =
+                            SeriesSeasonMeta(
+                                    seasonCount = count,
+                                    hasEpisodes = if (count == 0) false else null
+                            )
                 }
             }
     val count = seasonMeta?.seasonCount
