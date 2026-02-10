@@ -7,12 +7,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
@@ -28,8 +29,8 @@ class ProgressiveSyncCoordinator(
     private val settingsRepository: SettingsRepository,
     private val authConfig: AuthConfig
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scopeJob = SupervisorJob()
+    private val scope = CoroutineScope(scopeJob + Dispatchers.Default)
 
     private val _syncState = MutableStateFlow(ProgressiveSyncState())
     val syncState: StateFlow<ProgressiveSyncState> = _syncState.asStateFlow()
@@ -455,6 +456,8 @@ class ProgressiveSyncCoordinator(
             backgroundSyncJob?.cancel()
             onDemandJobs.values.forEach { it.cancel() }
             onDemandJobs.clear()
+            fastStartJob = null
+            backgroundSyncJob = null
             updateSyncState {
                 it.copy(
                     phase = SyncPhase.IDLE,
@@ -519,10 +522,9 @@ class ProgressiveSyncCoordinator(
         if (disposed) return
         disposed = true
         Timber.d("Disposing ProgressiveSyncCoordinator")
-        cleanupScope.launch {
+        runBlocking {
             cancelAllSyncsInternal()
-            scope.cancel()
-            cleanupScope.cancel()
+            scopeJob.cancelAndJoin()
         }
     }
 }
