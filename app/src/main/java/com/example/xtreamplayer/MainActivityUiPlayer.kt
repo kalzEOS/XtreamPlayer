@@ -1006,6 +1006,7 @@ internal fun PlayerOverlay(
         }
     }
 
+    val latestMediaId by rememberUpdatedState(mediaId)
     val toggleSubtitles: () -> Unit = {
         subtitleCoroutineScope.launch {
             if (subtitlesEnabled) {
@@ -1044,7 +1045,10 @@ internal fun PlayerOverlay(
                         }
                     }
 
-            if (requestedMediaId != mediaId || requestedPlayerMediaId != player.currentMediaItem?.mediaId) {
+            if (
+                requestedMediaId != latestMediaId ||
+                        requestedPlayerMediaId != player.currentMediaItem?.mediaId
+            ) {
                 return@launch
             }
 
