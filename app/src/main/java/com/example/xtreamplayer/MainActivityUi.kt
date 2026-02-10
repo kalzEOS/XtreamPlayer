@@ -68,9 +68,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
@@ -4219,6 +4221,7 @@ private fun ContentListItem(
 private fun ContentCard(
         item: ContentItem?,
         subtitleOverride: String? = null,
+        showComingSoonBadge: Boolean = false,
         focusRequester: FocusRequester?,
         isLeftEdge: Boolean,
         isFavorite: Boolean,
@@ -4417,8 +4420,48 @@ private fun ContentCard(
                     modifier = Modifier.fillMaxSize().alpha(liveImageAlpha)
             )
         }
+        if (showComingSoonBadge) {
+            val badgeShape = RoundedCornerShape(6.dp)
+            Box(
+                modifier =
+                    Modifier.align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .clip(badgeShape)
+                        .background(colors.overlay.copy(alpha = 0.62f))
+                        .border(1.dp, Color.White.copy(alpha = 0.22f), badgeShape)
+                        .padding(1.dp)
+            ) {
+                Box(
+                    modifier =
+                        Modifier.clip(badgeShape)
+                            .background(colors.accent.copy(alpha = 0.30f))
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = "Coming soon",
+                        color = Color(0xFFF4F7FF),
+                        fontSize = 10.sp,
+                        fontFamily = AppTheme.fontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        style =
+                            TextStyle(
+                                shadow =
+                                    Shadow(
+                                        color = Color.Black.copy(alpha = 0.35f),
+                                        offset = Offset(0f, 1f),
+                                        blurRadius = 2f
+                                    )
+                            )
+                    )
+                }
+            }
+        }
         if (isFavorite) {
-            FavoriteIndicator(modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
+            FavoriteIndicator(
+                modifier =
+                    Modifier.align(Alignment.TopEnd)
+                        .padding(top = if (showComingSoonBadge) 30.dp else 6.dp, end = 6.dp)
+            )
         }
         Box(
                 modifier =
@@ -4647,34 +4690,74 @@ private fun ContinueWatchingCard(
 }
 
 @Composable
-private fun rememberSeriesSubtitle(
+private fun rememberSeriesCardMeta(
         item: ContentItem?,
         contentRepository: ContentRepository,
         authConfig: AuthConfig
-): String? {
-    if (item == null) return null
+): SeriesCardMeta {
+    if (item == null) return SeriesCardMeta(subtitle = null, isComingSoon = false)
     if (item.contentType != ContentType.SERIES || !item.containerExtension.isNullOrBlank()) {
-        return null
+        return SeriesCardMeta(subtitle = null, isComingSoon = false)
     }
-    val seasonCount by
-            produceState<Int?>(initialValue = null, key1 = item.streamId, key2 = authConfig) {
-                value =
+    val seasonMeta by
+            produceState<SeriesSeasonMeta?>(
+                    initialValue = null,
+                    key1 = item.streamId,
+                    key2 = authConfig
+            ) {
+                val summaries =
                         runCatching {
-                                    contentRepository.loadSeriesSeasonCount(
+                                    contentRepository.loadSeriesSeasons(
                                             item.streamId,
                                             authConfig
                                     )
                                 }
                                 .getOrNull()
+                if (summaries != null) {
+                    value =
+                            SeriesSeasonMeta(
+                                    seasonCount = summaries.size,
+                                    hasEpisodes = summaries.any { it.episodeCount > 0 }
+                            )
+                } else {
+                    val count =
+                            runCatching {
+                                        contentRepository.loadSeriesSeasonCount(
+                                                item.streamId,
+                                                authConfig
+                                        )
+                                    }
+                                    .getOrNull()
+                    value = SeriesSeasonMeta(seasonCount = count, hasEpisodes = null)
+                }
             }
-    val count = seasonCount
-    return if (count != null && count > 0) {
+    val count = seasonMeta?.seasonCount
+    val subtitle = if (count != null && count > 0) {
         val label = if (count == 1) "Season" else "Seasons"
         "Series \u00b7 $count $label"
     } else {
         "Series"
     }
+    return SeriesCardMeta(
+        subtitle = subtitle,
+        isComingSoon =
+                when {
+                    seasonMeta?.hasEpisodes == false -> true
+                    count != null && count <= 0 -> true
+                    else -> false
+                }
+    )
 }
+
+private data class SeriesSeasonMeta(
+    val seasonCount: Int?,
+    val hasEpisodes: Boolean?
+)
+
+private data class SeriesCardMeta(
+    val subtitle: String?,
+    val isComingSoon: Boolean
+)
 
 @Composable
 private fun CategoryCard(
@@ -5546,8 +5629,8 @@ fun SectionScreen(
                                     }
                             val isLeftEdge = index % columns == 0
                             val isTopRow = index < columns
-                            val subtitleOverride =
-                                    rememberSeriesSubtitle(item, contentRepository, authConfig)
+                            val seriesCardMeta =
+                                    rememberSeriesCardMeta(item, contentRepository, authConfig)
                             val useContrastText =
                                     section == Section.ALL &&
                                             (item?.contentType == ContentType.MOVIES ||
@@ -5564,7 +5647,8 @@ fun SectionScreen(
                                     }
                             ContentCard(
                                     item = item,
-                                    subtitleOverride = subtitleOverride,
+                                    subtitleOverride = seriesCardMeta.subtitle,
+                                    showComingSoonBadge = seriesCardMeta.isComingSoon,
                                     focusRequester = requester,
                                     isLeftEdge = isLeftEdge,
                                     isFavorite = item != null && isItemFavorite(item),
@@ -6531,15 +6615,16 @@ fun FavoritesScreen(
                                     }
                             val isLeftEdge = index % posterColumns == 0
                             val isTopRow = index < posterColumns
-                            val subtitleOverride =
-                                    rememberSeriesSubtitle(item, contentRepository, authConfig)
+                            val seriesCardMeta =
+                                    rememberSeriesCardMeta(item, contentRepository, authConfig)
                             val posterHint =
                                     item.contentType == ContentType.MOVIES ||
                                             (item.contentType == ContentType.SERIES &&
                                                     item.containerExtension.isNullOrBlank())
                             ContentCard(
                                     item = item,
-                                    subtitleOverride = subtitleOverride,
+                                    subtitleOverride = seriesCardMeta.subtitle,
+                                    showComingSoonBadge = seriesCardMeta.isComingSoon,
                                     focusRequester = requester,
                                     isLeftEdge = isLeftEdge,
                                     isFavorite = isItemFavorite(item),
@@ -6765,8 +6850,8 @@ fun FavoritesScreen(
                                             }
                                     val isLeftEdge = index % contentColumns == 0
                                     val isTopRow = index < contentColumns
-                                    val subtitleOverride =
-                                            rememberSeriesSubtitle(
+                                    val seriesCardMeta =
+                                            rememberSeriesCardMeta(
                                                     item,
                                                     contentRepository,
                                                     authConfig
@@ -6776,7 +6861,8 @@ fun FavoritesScreen(
                                                     category.type == ContentType.SERIES
                                     ContentCard(
                                             item = item,
-                                            subtitleOverride = subtitleOverride,
+                                            subtitleOverride = seriesCardMeta.subtitle,
+                                            showComingSoonBadge = seriesCardMeta.isComingSoon,
                                             focusRequester = requester,
                                             isLeftEdge = isLeftEdge,
                                             isFavorite = item != null && isItemFavorite(item),
@@ -7499,8 +7585,8 @@ fun CategorySectionScreen(
                                                     else -> null
                                                 }
                                             } else null
-                                    val subtitleOverride =
-                                            rememberSeriesSubtitle(
+                                    val seriesCardMeta =
+                                            rememberSeriesCardMeta(
                                                     item,
                                                     contentRepository,
                                                     authConfig
@@ -7510,7 +7596,8 @@ fun CategorySectionScreen(
                                                     activeType == ContentType.SERIES
                                     ContentCard(
                                             item = item,
-                                            subtitleOverride = subtitleOverride,
+                                            subtitleOverride = seriesCardMeta.subtitle,
+                                            showComingSoonBadge = seriesCardMeta.isComingSoon,
                                             focusRequester = requester,
                                             isLeftEdge = isLeftEdge,
                                             isFavorite = item != null && isItemFavorite(item),
@@ -9213,6 +9300,22 @@ fun SeriesSeasonsScreen(
                         seasonFullEpisodes.isNotEmpty() -> seasonFullEpisodes
                         else -> fallbackEpisodes
                     }
+                val hasSeasonEpisodeStructure =
+                    seasonGroups.isNotEmpty() ||
+                        !selectedSeasonLabel.isNullOrBlank() ||
+                        allEpisodes.isNotEmpty() ||
+                        displayEpisodes.isNotEmpty()
+                val shouldShowEpisodesLoading =
+                    hasSeasonEpisodeStructure &&
+                        lazyItems.loadState.refresh is LoadState.Loading &&
+                        lazyItems.itemCount == 0
+                val shouldShowComingSoon =
+                    displayEpisodes.isEmpty() &&
+                        !isSeasonLoading &&
+                        seasonError == null &&
+                        allEpisodesError == null &&
+                        seasonGroups.isEmpty() &&
+                        allEpisodes.isEmpty()
                 val shouldRequestEpisodeFocus = pendingEpisodeFocus || internalEpisodeFocusRequested
                 if (isSeasonLoading) {
                     Text(
@@ -9228,9 +9331,14 @@ fun SeriesSeasonsScreen(
                         fontSize = 13.sp,
                         fontFamily = AppTheme.fontFamily
                     )
-                } else if (lazyItems.loadState.refresh is LoadState.Loading &&
-                    lazyItems.itemCount == 0
-                ) {
+                } else if (shouldShowComingSoon) {
+                    Text(
+                        text = "Coming soon",
+                        color = colors.textSecondary,
+                        fontSize = 13.sp,
+                        fontFamily = AppTheme.fontFamily
+                    )
+                } else if (shouldShowEpisodesLoading) {
                     Text(
                         text = "Loading episodes...",
                         color = colors.textSecondary,
