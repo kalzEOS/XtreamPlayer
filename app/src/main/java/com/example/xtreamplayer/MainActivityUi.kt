@@ -65,6 +65,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
@@ -85,6 +86,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.res.painterResource
@@ -439,6 +441,7 @@ fun RootScreen(
     val settingsNavItemFocusRequester = remember { FocusRequester() }
     val contentItemFocusRequester = remember { FocusRequester() }
     val localFiles = remember { mutableStateListOf<LocalFileItem>() }
+    val focusManager = LocalFocusManager.current
 
     fun scanLocalMedia(
             replaceExisting: Boolean,
@@ -506,13 +509,15 @@ fun RootScreen(
     LaunchedEffect(focusToContentTrigger) {
         if (focusToContentTrigger > 0) {
             Timber.d("FocusDebug: Requesting content focus for trigger=$focusToContentTrigger")
-            val resumeKey = resumeFocusId
-            val requesters =
-                    if (resumeKey != null) {
-                        listOf(resumeFocusRequester, contentItemFocusRequester)
-                    } else {
-                        listOf(contentItemFocusRequester)
-                    }
+            // First try directional handoff from nav -> content to avoid requester attach races.
+            repeat(10) {
+                withFrameNanos {}
+                if (focusManager.moveFocus(FocusDirection.Right)) {
+                    return@LaunchedEffect
+                }
+                delay(8)
+            }
+            val requesters = listOf(contentItemFocusRequester)
             requesters.forEach { requester ->
                 if (requestFocusWithFrames(requester, "content")) {
                     return@LaunchedEffect
