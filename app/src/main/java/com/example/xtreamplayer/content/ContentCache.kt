@@ -1,6 +1,9 @@
 package com.example.xtreamplayer.content
 
 import android.content.Context
+import android.system.ErrnoException
+import android.system.Os
+import android.util.AtomicFile
 import android.util.JsonReader
 import android.util.JsonToken
 import com.example.xtreamplayer.Section
@@ -351,7 +354,17 @@ class ContentCache(context: Context) {
 
     private fun writeTextWithTrim(file: File, payload: String) {
         runCatching {
-            file.writeText(payload)
+            val atomicFile = AtomicFile(file)
+            val encoded = payload.toByteArray(Charsets.UTF_8)
+            var stream: java.io.FileOutputStream? = null
+            try {
+                stream = atomicFile.startWrite()
+                stream.write(encoded)
+                atomicFile.finishWrite(stream)
+            } catch (error: Exception) {
+                stream?.let { atomicFile.failWrite(it) }
+                throw error
+            }
             trimCacheIfNeeded()
         }
     }
@@ -729,8 +742,14 @@ class ContentCache(context: Context) {
         withContext(Dispatchers.IO) {
             if (!staging.exists()) return@withContext
             runCatching {
-                staging.copyTo(target, overwrite = true)
-                staging.delete()
+                try {
+                    Os.rename(staging.absolutePath, target.absolutePath)
+                } catch (error: ErrnoException) {
+                    throw IOException(
+                        "Failed to commit staging index for section=$section",
+                        error
+                    )
+                }
             }
         }
     }

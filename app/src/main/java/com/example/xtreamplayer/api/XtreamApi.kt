@@ -23,6 +23,8 @@ import okhttp3.ResponseBody
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
+import java.io.InputStream
+import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.net.SocketException
 import java.net.SocketTimeoutException
@@ -90,7 +92,7 @@ class XtreamApi(
                 }
                 Result.success(Unit)
             } catch (e: Exception) {
-                Timber.e(e, "Authentication failed for ${config.baseUrl}")
+                Timber.e("Authentication failed for ${config.baseUrl}: ${e.javaClass.simpleName}")
                 Result.failure(e)
             }
         }
@@ -189,12 +191,20 @@ class XtreamApi(
                             )
                         )
                     }
-                    body.charStream().use { stream ->
-                        val reader = JsonReader(stream)
-                        val items = parsePageAll(reader, section)
-                        val elapsed = System.currentTimeMillis() - startTime
-                        Timber.d("Bulk fetch completed for $section: ${items.size} items in ${elapsed}ms")
-                        Result.success(items)
+                    body.byteStream().use { input ->
+                        val limitedInput =
+                            sizeLimitedStream(
+                                input = input,
+                                maxBytes = MAX_BULK_RESPONSE_BYTES,
+                                operation = "bulk fetch section=$section"
+                            )
+                        InputStreamReader(limitedInput, Charsets.UTF_8).use { stream ->
+                            val reader = JsonReader(stream)
+                            val items = parsePageAll(reader, section)
+                            val elapsed = System.currentTimeMillis() - startTime
+                            Timber.d("Bulk fetch completed for $section: ${items.size} items in ${elapsed}ms")
+                            Result.success(items)
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -844,6 +854,42 @@ class XtreamApi(
                 output.write(buffer, 0, read)
             }
             return output.toString(Charsets.UTF_8.name())
+        }
+    }
+
+    private fun sizeLimitedStream(input: InputStream, maxBytes: Long, operation: String): InputStream {
+        return object : InputStream() {
+            private var totalRead = 0L
+
+            override fun read(): Int {
+                val value = input.read()
+                if (value != -1) {
+                    totalRead += 1
+                    enforceLimit(operation, totalRead, maxBytes)
+                }
+                return value
+            }
+
+            override fun read(buffer: ByteArray, off: Int, len: Int): Int {
+                val read = input.read(buffer, off, len)
+                if (read > 0) {
+                    totalRead += read.toLong()
+                    enforceLimit(operation, totalRead, maxBytes)
+                }
+                return read
+            }
+
+            override fun close() {
+                input.close()
+            }
+        }
+    }
+
+    private fun enforceLimit(operation: String, totalRead: Long, maxBytes: Long) {
+        if (totalRead > maxBytes) {
+            throw IllegalStateException(
+                "Response exceeded limit for $operation: $totalRead bytes (limit=$maxBytes)"
+            )
         }
     }
 

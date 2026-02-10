@@ -15,6 +15,7 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import timber.log.Timber
 
 private val Context.authDataStore by preferencesDataStore(name = "auth")
 
@@ -73,7 +74,10 @@ class AuthRepository(private val context: Context) {
             System.arraycopy(cipher.iv, 0, payload, 0, cipher.iv.size)
             System.arraycopy(encrypted, 0, payload, cipher.iv.size, encrypted.size)
             "$ENCRYPTED_PREFIX${Base64.encodeToString(payload, Base64.NO_WRAP)}"
-        }.getOrElse { password }
+        }.getOrElse { error ->
+            Timber.w(error, "Keystore encryption failed, storing password as plaintext")
+            password
+        }
     }
 
     private fun decryptPassword(stored: String): String {

@@ -49,8 +49,9 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        // Release player only when activity is destroyed, not on recomposition
-        playbackEngine.release()
+        if (isFinishing) {
+            playbackEngine.release()
+        }
         super.onDestroy()
     }
 }

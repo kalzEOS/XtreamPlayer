@@ -98,6 +98,7 @@ private val TRAILING_YEAR_DASH_REGEX = Regex("\\s+-\\s*\\d{4}\\s*$")
 private val TRAILING_YEAR_REGEX = Regex("\\s+\\d{4}\\s*$")
 private val TRAILING_SEASON_EPISODE_REGEX = Regex("\\s+S\\d+\\s*E\\d+.*$", RegexOption.IGNORE_CASE)
 private val MULTI_SPACE_REGEX = Regex("\\s+")
+private val LIVE_GUIDE_NON_ALNUM_REGEX = Regex("[^a-z0-9]+")
 private val SRT_TIME_PATTERN = Regex("""(\d{2}):(\d{2}):(\d{2}),(\d{3})""")
 private val VTT_TIME_PATTERN = Regex("""(?:(\d{2}):)?(\d{2}):(\d{2})[.](\d{3})""")
 private val ASS_TIME_PATTERN = Regex("""(\d+):(\d{2}):(\d{2})[.](\d{2})""")
@@ -382,9 +383,9 @@ private fun normalizeCategoryId(raw: String?): String? =
 
 private fun normalizeLiveGuideText(raw: String): String =
         raw.lowercase(Locale.US)
-                .replace("[^a-z0-9]+".toRegex(), " ")
+                .replace(LIVE_GUIDE_NON_ALNUM_REGEX, " ")
                 .trim()
-                .replace("\\s+".toRegex(), " ")
+                .replace(MULTI_SPACE_REGEX, " ")
 
 private fun tokenizeLiveGuideText(normalized: String): Set<String> =
         normalized.split(' ')
@@ -1006,23 +1007,31 @@ internal fun PlayerOverlay(
     }
 
     val toggleSubtitles: () -> Unit = {
-        if (subtitlesEnabled) {
-            if (hasExternalSubtitles(player)) {
-                playbackEngine.clearExternalSubtitles()
-            } else {
-                playbackEngine.setSubtitlesEnabled(false)
+        subtitleCoroutineScope.launch {
+            if (subtitlesEnabled) {
+                if (hasExternalSubtitles(player)) {
+                    playbackEngine.clearExternalSubtitles()
+                } else {
+                    playbackEngine.setSubtitlesEnabled(false)
+                }
+                return@launch
             }
-        } else {
+
             if (hasEmbeddedTextTracks(player)) {
                 playbackEngine.refreshMediaItem()
                 playbackEngine.setSubtitlesEnabled(true)
-            } else {
-                val fallbackSubtitle =
-                        if (mediaId.isBlank()) {
-                            null
-                        } else {
+                return@launch
+            }
+
+            val requestedMediaId = mediaId
+            val requestedPlayerMediaId = player.currentMediaItem?.mediaId
+            val fallbackSubtitle =
+                    if (requestedMediaId.isBlank()) {
+                        null
+                    } else {
+                        withContext(Dispatchers.IO) {
                             subtitleRepository
-                                    .getCachedSubtitlesForMedia(mediaId)
+                                    .getCachedSubtitlesForMedia(requestedMediaId)
                                     .firstOrNull()
                                     ?.let { cached ->
                                         ActiveSubtitle(
@@ -1033,23 +1042,28 @@ internal fun PlayerOverlay(
                                         )
                                     }
                         }
-                val subtitleToApply = activeSubtitle ?: fallbackSubtitle
-                if (subtitleToApply == null) {
-                    Toast.makeText(
-                                    context,
-                                    "No cached subtitles for this title",
-                                    Toast.LENGTH_SHORT
-                            )
-                            .show()
-                } else {
-                    activeSubtitle = subtitleToApply
-                    playbackEngine.addSubtitle(
-                            subtitleUri = subtitleToApply.uri,
-                            language = subtitleToApply.language,
-                            label = subtitleToApply.label,
-                            mimeType = subtitleMimeType(subtitleToApply.fileName)
-                    )
-                }
+                    }
+
+            if (requestedMediaId != mediaId || requestedPlayerMediaId != player.currentMediaItem?.mediaId) {
+                return@launch
+            }
+
+            val subtitleToApply = activeSubtitle ?: fallbackSubtitle
+            if (subtitleToApply == null) {
+                Toast.makeText(
+                                context,
+                                "No cached subtitles for this title",
+                                Toast.LENGTH_SHORT
+                        )
+                        .show()
+            } else {
+                activeSubtitle = subtitleToApply
+                playbackEngine.addSubtitle(
+                        subtitleUri = subtitleToApply.uri,
+                        language = subtitleToApply.language,
+                        label = subtitleToApply.label,
+                        mimeType = subtitleMimeType(subtitleToApply.fileName)
+                )
             }
         }
     }
@@ -1168,7 +1182,77 @@ internal fun PlayerOverlay(
         }
     }
 
-Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    val bindMutablePlayerCallbacks: (XtreamPlayerView) -> Unit = { view ->
+        view.resizeMode = resizeMode.resizeMode
+        view.forcedAspectRatio = resizeMode.forcedAspectRatio
+        view.setResizeModeLabel(resizeMode.label)
+        view.titleText = title
+        view.nowPlayingInfoText = nowPlayingInfoLabel
+        view.onResizeModeClick = { resizeMode = nextResizeMode(resizeMode) }
+        view.onBackClick = onExit
+        view.onSubtitleDownloadClick = { showSubtitleDialog = true }
+        view.onSubtitleToggleClick = { showSubtitleOptionsDialog = true }
+        view.onSubtitleTimingClick = openSubtitleTimingDialog
+        view.onAudioTrackClick = { showAudioTrackDialog = true }
+        view.onAudioBoostClick = { showAudioBoostDialog = true }
+        view.onSettingsClick = { showPlaybackSettingsDialog = true }
+        view.isLiveContent = currentContentType == ContentType.LIVE
+        view.fastSeekEnabled = currentContentType != ContentType.LIVE
+        view.defaultControllerTimeoutMs = 3000
+        view.onToggleControls = {
+            if (showLiveGuide || isPlayerModalOpen) {
+                false
+            } else {
+                if (view.isControllerFullyVisible()) {
+                    view.hideController()
+                } else {
+                    view.showController()
+                }
+                true
+            }
+        }
+        view.onChannelUp = {
+            if (!isPlayerModalOpen && currentContentType == ContentType.LIVE) {
+                onLiveChannelSwitch(1)
+            } else {
+                false
+            }
+        }
+        view.onChannelDown = {
+            if (!isPlayerModalOpen && currentContentType == ContentType.LIVE) {
+                onLiveChannelSwitch(-1)
+            } else {
+                false
+            }
+        }
+        view.onOpenLiveGuide = {
+            if (!isPlayerModalOpen && currentContentType == ContentType.LIVE) {
+                showLiveGuidePanel()
+                true
+            } else {
+                false
+            }
+        }
+        view.isLiveGuideOpen = showLiveGuide
+        view.onLiveGuideMove = {
+            moveLiveGuideSelection(it)
+            true
+        }
+        view.onLiveGuideSelect = {
+            activateLiveGuideSelection()
+            true
+        }
+        view.onLiveGuideBack = {
+            navigateLiveGuideBackOneLevel()
+            true
+        }
+        view.onLiveGuideDismiss = {
+            closeLiveGuide()
+            true
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { context ->
@@ -1180,72 +1264,7 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                         defaultControllerTimeoutMs = 3000
                         setShutterBackgroundColor(AndroidColor.BLACK)
                         setBackgroundColor(AndroidColor.BLACK)
-                        this.resizeMode = resizeMode.resizeMode
-                        forcedAspectRatio = resizeMode.forcedAspectRatio
-                        setResizeModeLabel(resizeMode.label)
-                        titleText = title
-                        nowPlayingInfoText = nowPlayingInfoLabel
-                        onResizeModeClick = { resizeMode = nextResizeMode(resizeMode) }
-                        onBackClick = onExit
-                        onSubtitleDownloadClick = { showSubtitleDialog = true }
-                        onSubtitleToggleClick = { showSubtitleOptionsDialog = true }
-                        onSubtitleTimingClick = openSubtitleTimingDialog
-                        onAudioTrackClick = { showAudioTrackDialog = true }
-                        onAudioBoostClick = { showAudioBoostDialog = true }
-                        onSettingsClick = { showPlaybackSettingsDialog = true }
-                        isLiveContent = currentContentType == ContentType.LIVE
-                        fastSeekEnabled = currentContentType != ContentType.LIVE
-                        onToggleControls = {
-                            if (showLiveGuide || isPlayerModalOpen) {
-                                false
-                            } else {
-                                if (isControllerFullyVisible()) {
-                                    hideController()
-                                } else {
-                                    showController()
-                                }
-                                true
-                            }
-                        }
-                        onChannelUp = {
-                            if (!isPlayerModalOpen && currentContentType == ContentType.LIVE) {
-                                onLiveChannelSwitch(1)
-                            } else {
-                                false
-                            }
-                        }
-                        onChannelDown = {
-                            if (!isPlayerModalOpen && currentContentType == ContentType.LIVE) {
-                                onLiveChannelSwitch(-1)
-                            } else {
-                                false
-                            }
-                        }
-                        onOpenLiveGuide = {
-                            if (!isPlayerModalOpen && currentContentType == ContentType.LIVE) {
-                                showLiveGuidePanel()
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                        isLiveGuideOpen = showLiveGuide
-                        onLiveGuideMove = {
-                            moveLiveGuideSelection(it)
-                            true
-                        }
-                        onLiveGuideSelect = {
-                            activateLiveGuideSelection()
-                            true
-                        }
-                        onLiveGuideBack = {
-                            navigateLiveGuideBackOneLevel()
-                            true
-                        }
-                        onLiveGuideDismiss = {
-                            closeLiveGuide()
-                            true
-                        }
+                        bindMutablePlayerCallbacks(this)
                         isFocusable = true
                         isFocusableInTouchMode = true
                         requestFocus()
@@ -1304,73 +1323,7 @@ Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                     if (showLiveGuide) {
                         view.hideController()
                     }
-                    view.resizeMode = resizeMode.resizeMode
-                    view.forcedAspectRatio = resizeMode.forcedAspectRatio
-                    view.setResizeModeLabel(resizeMode.label)
-                    view.titleText = title
-                    view.nowPlayingInfoText = nowPlayingInfoLabel
-                    view.onResizeModeClick = { resizeMode = nextResizeMode(resizeMode) }
-                    view.onBackClick = onExit
-                    view.onSubtitleDownloadClick = { showSubtitleDialog = true }
-                    view.onSubtitleToggleClick = { showSubtitleOptionsDialog = true }
-                    view.onSubtitleTimingClick = openSubtitleTimingDialog
-                    view.onAudioTrackClick = { showAudioTrackDialog = true }
-                    view.onAudioBoostClick = { showAudioBoostDialog = true }
-                    view.onSettingsClick = { showPlaybackSettingsDialog = true }
-                    view.isLiveContent = currentContentType == ContentType.LIVE
-                    view.fastSeekEnabled = currentContentType != ContentType.LIVE
-                    view.defaultControllerTimeoutMs = 3000
-                    view.onToggleControls = {
-                        if (showLiveGuide || isPlayerModalOpen) {
-                            false
-                        } else {
-                            if (view.isControllerFullyVisible()) {
-                                view.hideController()
-                            } else {
-                                view.showController()
-                            }
-                            true
-                        }
-                    }
-                    view.onChannelUp = {
-                        if (!isPlayerModalOpen && currentContentType == ContentType.LIVE) {
-                            onLiveChannelSwitch(1)
-                        } else {
-                            false
-                        }
-                    }
-                    view.onChannelDown = {
-                        if (!isPlayerModalOpen && currentContentType == ContentType.LIVE) {
-                            onLiveChannelSwitch(-1)
-                        } else {
-                            false
-                        }
-                    }
-                    view.onOpenLiveGuide = {
-                        if (!isPlayerModalOpen && currentContentType == ContentType.LIVE) {
-                            showLiveGuidePanel()
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    view.isLiveGuideOpen = showLiveGuide
-                    view.onLiveGuideMove = {
-                        moveLiveGuideSelection(it)
-                        true
-                    }
-                    view.onLiveGuideSelect = {
-                        activateLiveGuideSelection()
-                        true
-                    }
-                    view.onLiveGuideBack = {
-                        navigateLiveGuideBackOneLevel()
-                        true
-                    }
-                    view.onLiveGuideDismiss = {
-                        closeLiveGuide()
-                        true
-                    }
+                    bindMutablePlayerCallbacks(view)
                     if (playerView != view) {
                         playerView = view
                     }
@@ -2241,7 +2194,7 @@ private enum class PlayerResizeMode(
 }
 
 private fun nextResizeMode(current: PlayerResizeMode): PlayerResizeMode {
-    val values = PlayerResizeMode.values()
+    val values = PlayerResizeMode.entries
     return values[(current.ordinal + 1) % values.size]
 }
 
