@@ -430,7 +430,7 @@ class XtreamApi(
     suspend fun fetchSeriesSeasonSummaries(
         config: AuthConfig,
         seriesId: String
-    ): Result<List<com.example.xtreamplayer.content.SeasonSummary>> {
+    ): Result<SeriesSeasonSummariesPayload> {
         return withContext(Dispatchers.IO) {
             try {
                 val url = buildApiUrl(
@@ -1050,6 +1050,11 @@ class XtreamApi(
         val plot: String? = null
     )
 
+    data class SeriesSeasonSummariesPayload(
+        val summaries: List<com.example.xtreamplayer.content.SeasonSummary>,
+        val seasonCount: Int?
+    )
+
     private fun parseSeriesSeasonCount(reader: JsonReader): Int {
         if (reader.peek() != JsonToken.BEGIN_OBJECT) {
             reader.skipValue()
@@ -1102,48 +1107,54 @@ class XtreamApi(
 
     private fun parseSeriesSeasonSummaries(
         reader: JsonReader
-    ): List<com.example.xtreamplayer.content.SeasonSummary> {
+    ): SeriesSeasonSummariesPayload {
         if (reader.peek() != JsonToken.BEGIN_OBJECT) {
             reader.skipValue()
-            return emptyList()
+            return SeriesSeasonSummariesPayload(summaries = emptyList(), seasonCount = null)
         }
         reader.beginObject()
         val summaries = mutableListOf<com.example.xtreamplayer.content.SeasonSummary>()
+        var seasonCountFromSeasons: Int? = null
+        var sawEpisodes = false
         while (reader.hasNext()) {
             val name = reader.nextName()
-            if (name != "episodes") {
-                reader.skipValue()
-                continue
-            }
-            if (reader.peek() != JsonToken.BEGIN_OBJECT) {
-                reader.skipValue()
-                break
-            }
-            reader.beginObject()
-            while (reader.hasNext()) {
-                val seasonKey = reader.nextName()
-                if (reader.peek() != JsonToken.BEGIN_ARRAY) {
-                    reader.skipValue()
-                    continue
+            when (name) {
+                "seasons" -> seasonCountFromSeasons = parseSeasonArrayCount(reader)
+                "episodes" -> {
+                    sawEpisodes = true
+                    if (reader.peek() != JsonToken.BEGIN_OBJECT) {
+                        reader.skipValue()
+                        continue
+                    }
+                    reader.beginObject()
+                    while (reader.hasNext()) {
+                        val seasonKey = reader.nextName()
+                        if (reader.peek() != JsonToken.BEGIN_ARRAY) {
+                            reader.skipValue()
+                            continue
+                        }
+                        reader.beginArray()
+                        var count = 0
+                        while (reader.hasNext()) {
+                            reader.skipValue()
+                            count++
+                        }
+                        reader.endArray()
+                        summaries.add(
+                            com.example.xtreamplayer.content.SeasonSummary(
+                                label = seasonKey,
+                                episodeCount = count
+                            )
+                        )
+                    }
+                    reader.endObject()
                 }
-                reader.beginArray()
-                var count = 0
-                while (reader.hasNext()) {
-                    reader.skipValue()
-                    count++
-                }
-                reader.endArray()
-                summaries.add(
-                    com.example.xtreamplayer.content.SeasonSummary(
-                        label = seasonKey,
-                        episodeCount = count
-                    )
-                )
+                else -> reader.skipValue()
             }
-            reader.endObject()
         }
         reader.endObject()
-        return summaries
+        val seasonCount = seasonCountFromSeasons ?: if (sawEpisodes) summaries.size else null
+        return SeriesSeasonSummariesPayload(summaries = summaries, seasonCount = seasonCount)
     }
 
     private fun parseLivePrograms(raw: Any?): List<LiveProgramInfo> {

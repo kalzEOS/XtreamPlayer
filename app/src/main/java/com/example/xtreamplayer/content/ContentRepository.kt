@@ -453,8 +453,12 @@ class ContentRepository(
             seriesSeasonsCache[key]?.let { return it }
         }
         val result = api.fetchSeriesSeasonSummaries(authConfig, seriesId)
-        val summaries = result.getOrElse { throw it }
+        val payload = result.getOrElse { throw it }
+        val summaries = payload.summaries
         seriesSeasonsMutex.withLock { seriesSeasonsCache[key] = summaries }
+        payload.seasonCount?.let { count ->
+            seriesSeasonCountMutex.withLock { seriesSeasonCountCache[key] = count }
+        }
         return summaries
     }
 
