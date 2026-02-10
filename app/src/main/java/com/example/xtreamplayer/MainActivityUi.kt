@@ -5202,6 +5202,7 @@ fun SectionScreen(
 ) {
     val shape = RoundedCornerShape(18.dp)
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     // Live uses landscape cards (3 cols at 100%), Movies/Series use poster cards (4 cols at 100%)
     val baseColumns = remember(settings.uiScale, section) {
         if (section == Section.LIVE) {
@@ -6960,6 +6961,7 @@ fun CategorySectionScreen(
 ) {
     val shape = RoundedCornerShape(18.dp)
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     var activeType by remember { mutableStateOf(ContentType.LIVE) }
     var selectedCategory by remember { mutableStateOf<CategoryItem?>(null) }
     var selectedSeries by remember { mutableStateOf<ContentItem?>(null) }
@@ -7062,17 +7064,22 @@ fun CategorySectionScreen(
         }
         // Wait for categories to be available
         if (categories.isEmpty()) return@LaunchedEffect
-        // Wait for composition to complete
-        withFrameNanos {}
-        delay(32)
-        withFrameNanos {}
-        // Retry focus request multiple times
-        repeat(5) { attempt ->
-            runCatching { contentItemFocusRequester.requestFocus() }
-            if (attempt < 4) {
-                delay(32)
-                withFrameNanos {}
+        // Wait for visible category cells so requester is guaranteed attached.
+        repeat(12) {
+            withFrameNanos {}
+            if (categoryGridState.layoutInfo.visibleItemsInfo.isNotEmpty()) {
+                val focused = runCatching { contentItemFocusRequester.requestFocus() }.getOrDefault(false)
+                if (focused) {
+                    pendingCategoryReturnFocus = false
+                    return@LaunchedEffect
+                }
+                // Fallback to directional move if requester focus fails.
+                if (focusManager.moveFocus(FocusDirection.Right)) {
+                    pendingCategoryReturnFocus = false
+                    return@LaunchedEffect
+                }
             }
+            delay(16)
         }
         pendingCategoryReturnFocus = false
     }
@@ -7278,17 +7285,23 @@ fun CategorySectionScreen(
                             return@LaunchedEffect
                     // Wait for items to be available before attempting focus
                     if (lazyItems.itemCount == 0) return@LaunchedEffect
-                    // Wait for composition to complete with multiple frame delays
-                    withFrameNanos {}
-                    delay(32)
-                    withFrameNanos {}
-                    // Retry focus request multiple times to handle composition timing
-                    repeat(5) { attempt ->
-                        runCatching { contentItemFocusRequester.requestFocus() }
-                        if (attempt < 4) {
-                            delay(32)
-                            withFrameNanos {}
+                    // Wait for visible content cells so requester is guaranteed attached.
+                    repeat(12) {
+                        withFrameNanos {}
+                        if (contentGridState.layoutInfo.visibleItemsInfo.isNotEmpty()) {
+                            val focused =
+                                runCatching { contentItemFocusRequester.requestFocus() }.getOrDefault(false)
+                            if (focused) {
+                                pendingCategoryEnterFocus = false
+                                return@LaunchedEffect
+                            }
+                            // Fallback to directional move if requester focus fails.
+                            if (focusManager.moveFocus(FocusDirection.Right)) {
+                                pendingCategoryEnterFocus = false
+                                return@LaunchedEffect
+                            }
                         }
+                        delay(16)
                     }
                     pendingCategoryEnterFocus = false
                 }
