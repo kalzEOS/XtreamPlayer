@@ -906,7 +906,11 @@ fun RootScreen(
     BackHandler(enabled = showManageLists) { showManageLists = false }
     BackHandler(enabled = showAppearance) { showAppearance = false }
 
-    val handleItemFocused: (ContentItem) -> Unit = { item -> resumeFocusId = item.id }
+    val handleItemFocused: (ContentItem) -> Unit = { item ->
+        if (activePlaybackQueue == null) {
+            resumeFocusId = item.id
+        }
+    }
     val resolveResumeFocusTarget: (ContentItem) -> String = { item ->
         val parent = activePlaybackSeriesParent
         if (item.contentType == ContentType.SERIES && parent != null) {
@@ -1969,6 +1973,17 @@ fun RootScreen(
                             if (page >= 100) break
                         }
                         items.distinctBy { it.id }
+                    }
+                },
+                loadLiveCategoryThumbnail = loadLiveCategoryThumbnail@{ category ->
+                    val config = authState.activeConfig
+                            ?: return@loadLiveCategoryThumbnail Result.success(null)
+                    runCatching {
+                        contentRepository.categoryThumbnail(
+                                type = ContentType.LIVE,
+                                categoryId = category.id,
+                                authConfig = config
+                        )
                     }
                 }
         )
@@ -7563,6 +7578,17 @@ fun CategorySectionScreen(
                     // SeriesSeasonsScreen overlay - shown on top when selected
                     if (selectedSeries != null) {
                         val activeSeries = selectedSeries!!
+                        val pinSeriesReturnTarget = {
+                            onItemFocused(activeSeries)
+                            lastCategoryContentId = activeSeries.id
+                            val activeSeriesIndex =
+                                    lazyItems.itemSnapshotList.items.indexOfFirst {
+                                        it?.id == activeSeries.id
+                                    }
+                            if (activeSeriesIndex >= 0) {
+                                lastCategoryContentIndex = activeSeriesIndex
+                            }
+                        }
                         val closeSeriesDetails = {
                             onItemFocused(activeSeries)
                             runCatching { contentItemFocusRequester.requestFocus() }
@@ -7591,11 +7617,13 @@ fun CategorySectionScreen(
                                     onEpisodeFocusHandled = { pendingEpisodeFocus = false },
                                     onItemFocused = onItemFocused,
                                     onPlay = { playItem, items ->
+                                        pinSeriesReturnTarget()
                                         dismissSeriesDetailsForPlayback()
                                         onSeriesPlaybackStart(activeSeries)
                                         onPlay(playItem, items)
                                     },
                                     onPlayWithPosition = { playItem, items, position ->
+                                        pinSeriesReturnTarget()
                                         dismissSeriesDetailsForPlayback()
                                         onSeriesPlaybackStart(activeSeries)
                                         onPlayWithPosition(playItem, items, position)
