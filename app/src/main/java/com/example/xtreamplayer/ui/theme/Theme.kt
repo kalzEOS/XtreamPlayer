@@ -385,6 +385,86 @@ private val MidnightAuroraLightAppColors =
         backgroundGradientStyle = BackgroundGradientStyle.DIAGONAL
     )
 
+private val VioletNebulaAppColors =
+    AppColors(
+        background = Color(0xFF100F1C),
+        backgroundAlt = Color(0xFF17172A),
+        panelBackground = Color(0xFF131325),
+        panelBorder = Color(0xFF2B2E4B),
+        surface = Color(0xFF17172B),
+        surfaceAlt = Color(0xFF21233C),
+        surfaceMuted = Color(0xFF131426),
+        surfaceFocused = Color(0xFF2A2E49),
+        border = Color(0xFF2C2F48),
+        borderStrong = Color(0xFF393D58),
+        focus = Color(0xFFC8C3ED),
+        accent = Color(0xFF7E77B8),
+        accentAlt = Color(0xFFA09BCB),
+        accentMuted = Color(0xFF2C2D48),
+        accentMutedAlt = Color(0xFF22233A),
+        accentSelected = Color(0xFF484674),
+        accentSelectedAlt = Color(0xFF3A385E),
+        textPrimary = Color(0xFFEAE8F4),
+        textSecondary = Color(0xFFB8B4CC),
+        textTertiary = Color(0xFF9994B0),
+        navText = Color(0xFFEAE8F4),
+        textOnAccent = Color(0xFF121223),
+        warning = Color(0xFFFFD59A),
+        success = Color(0xFF4DD09A),
+        error = Color(0xFFF0A1B0),
+        overlay = Color(0x99100F1C),
+        overlaySoft = Color(0x66000000),
+        overlayStrong = Color(0xB2100F1C),
+        backgroundGradientColors =
+            listOf(
+                Color(0xFF0F0E1A),
+                Color(0xFF1B1C2E),
+                Color(0xFF24203A),
+                Color(0xFF1A1F34)
+            ),
+        backgroundGradientStyle = BackgroundGradientStyle.DIAGONAL
+    )
+
+private val VioletNebulaLightAppColors =
+    AppColors(
+        background = Color(0xFFF6F5FB),
+        backgroundAlt = Color(0xFFEDEBF5),
+        panelBackground = Color(0xFFF9F8FD),
+        panelBorder = Color(0xFFD2CEE0),
+        surface = Color(0xFFFCFBFF),
+        surfaceAlt = Color(0xFFEAE8F2),
+        surfaceMuted = Color(0xFFE1DEE9),
+        surfaceFocused = Color(0xFFD8D4E5),
+        border = Color(0xFFCCC7DB),
+        borderStrong = Color(0xFFB8B2CC),
+        focus = Color(0xFF6B63A6),
+        accent = Color(0xFF6B63A6),
+        accentAlt = Color(0xFF8C86B8),
+        accentMuted = Color(0xFFE2DEEE),
+        accentMutedAlt = Color(0xFFD6D1E5),
+        accentSelected = Color(0xFF595293),
+        accentSelectedAlt = Color(0xFF4B447D),
+        textPrimary = Color(0xFF201D32),
+        textSecondary = Color(0xFF4F4A68),
+        textTertiary = Color(0xFF6B6586),
+        navText = Color(0xFF201D32),
+        textOnAccent = Color(0xFFFFFFFF),
+        warning = Color(0xFFB86B1B),
+        success = Color(0xFF1B8F62),
+        error = Color(0xFFC6505D),
+        overlay = Color(0x1A100F1C),
+        overlaySoft = Color(0x33000000),
+        overlayStrong = Color(0x4D100F1C),
+        backgroundGradientColors =
+            listOf(
+                Color(0xFFF8F7FD),
+                Color(0xFFF1EFF8),
+                Color(0xFFECEAF6),
+                Color(0xFFE8EAF4)
+            ),
+        backgroundGradientStyle = BackgroundGradientStyle.DIAGONAL
+    )
+
 private val LocalAppColors = staticCompositionLocalOf { DefaultAppColors }
 private val LocalAppFontFamily = staticCompositionLocalOf<FontFamily> { FontFamily.Serif }
 
@@ -412,6 +492,8 @@ fun XtreamPlayerTheme(
             AppThemeOption.DUSK_COPPER_LIGHT -> CopperLightAppColors
             AppThemeOption.MIDNIGHT_AURORA -> MidnightAuroraAppColors
             AppThemeOption.MIDNIGHT_AURORA_LIGHT -> MidnightAuroraLightAppColors
+            AppThemeOption.VIOLET_NEBULA -> VioletNebulaAppColors
+            AppThemeOption.VIOLET_NEBULA_LIGHT -> VioletNebulaLightAppColors
             else -> DefaultAppColors
         }
     val colorScheme =
