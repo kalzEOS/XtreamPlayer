@@ -13,7 +13,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
@@ -30,6 +29,7 @@ class ProgressiveSyncCoordinator(
     private val authConfig: AuthConfig
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val _syncState = MutableStateFlow(ProgressiveSyncState())
     val syncState: StateFlow<ProgressiveSyncState> = _syncState.asStateFlow()
@@ -41,6 +41,7 @@ class ProgressiveSyncCoordinator(
     private val syncMutex = Mutex()
     private val activeSyncSections = mutableSetOf<Section>()
     private val activeSyncMutex = Mutex()
+    @Volatile private var disposed = false
 
     /**
      * Start fast start sync: 2 pages per section for immediate search capability
@@ -515,8 +516,13 @@ class ProgressiveSyncCoordinator(
      * Clean up resources
      */
     fun dispose() {
+        if (disposed) return
+        disposed = true
         Timber.d("Disposing ProgressiveSyncCoordinator")
-        runBlocking { cancelAllSyncsInternal() }
-        scope.cancel()
+        cleanupScope.launch {
+            cancelAllSyncsInternal()
+            scope.cancel()
+            cleanupScope.cancel()
+        }
     }
 }

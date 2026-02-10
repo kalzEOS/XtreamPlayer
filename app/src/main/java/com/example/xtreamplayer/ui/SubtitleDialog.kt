@@ -998,7 +998,7 @@ fun SubtitleTrackDialog(
             Column {
                 Text(
                     text = "Subtitle Tracks",
-                    color = Color.White,
+                    color = AppTheme.colors.textPrimary,
                     fontSize = 20.sp,
                     fontFamily = AppTheme.fontFamily,
                     fontWeight = FontWeight.Bold
@@ -1110,7 +1110,7 @@ fun SubtitleTrackDialog(
                                     color = if (!track.isSupported || hasSingleTrack) {
                                         MutedTextColor
                                     } else {
-                                        Color.White
+                                        AppTheme.colors.textPrimary
                                     },
                                     fontSize = 14.sp,
                                     fontFamily = AppTheme.fontFamily
@@ -1146,7 +1146,7 @@ fun SubtitleTrackDialog(
                     onClick = onDismiss,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = AppTheme.colors.borderStrong,
-                        contentColor = Color.White
+                        contentColor = AppTheme.colors.textPrimary
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1195,7 +1195,7 @@ fun AudioTrackDialog(
             Column {
                 Text(
                     text = "Audio Tracks",
-                    color = Color.White,
+                    color = AppTheme.colors.textPrimary,
                     fontSize = 20.sp,
                     fontFamily = AppTheme.fontFamily,
                     fontWeight = FontWeight.Bold
@@ -1304,7 +1304,7 @@ fun AudioTrackDialog(
                                     color = if (!track.isSupported || hasSingleTrack) {
                                         MutedTextColor
                                     } else {
-                                        Color.White
+                                        AppTheme.colors.textPrimary
                                     },
                                     fontSize = 14.sp,
                                     fontFamily = AppTheme.fontFamily
@@ -1340,7 +1340,7 @@ fun AudioTrackDialog(
                     onClick = onDismiss,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = AppTheme.colors.borderStrong,
-                        contentColor = Color.White
+                        contentColor = AppTheme.colors.textPrimary
                     ),
                     modifier = Modifier
                         .fillMaxWidth()

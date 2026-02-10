@@ -1305,10 +1305,8 @@ fun RootScreen(
 
     LaunchedEffect(activePlaybackQueue, pendingPlayerReset) {
         if (activePlaybackQueue == null && pendingPlayerReset) {
-            if (activePlaybackQueue == null && pendingPlayerReset) {
-                playbackEngine.reset()
-                playerResetNonce++
-            }
+            playbackEngine.reset()
+            playerResetNonce++
             pendingPlayerReset = false
         }
     }
@@ -1577,7 +1575,7 @@ fun RootScreen(
                                 Row(
                                     modifier =
                                         Modifier.background(
-                                                Color(0xFF2E7D32),
+                                                colors.success,
                                                 RoundedCornerShape(4.dp)
                                             )
                                             .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -1586,14 +1584,14 @@ fun RootScreen(
                                     Icon(
                                         imageVector = Icons.Default.Check,
                                         contentDescription = null,
-                                        tint = Color.White,
+                                        tint = colors.textOnAccent,
                                         modifier = Modifier.size(16.dp)
                                     )
                                     Spacer(Modifier.width(6.dp))
                                     Text(
                                         "Quick Search Ready",
                                         fontSize = 12.sp,
-                                        color = Color.White,
+                                        color = colors.textOnAccent,
                                         fontFamily = AppTheme.fontFamily
                                     )
                                 }
@@ -1604,7 +1602,7 @@ fun RootScreen(
                                 Row(
                                     modifier =
                                         Modifier.background(
-                                                Color(0xFF424242),
+                                                colors.surfaceAlt,
                                                 RoundedCornerShape(4.dp)
                                             )
                                             .padding(horizontal = 12.dp, vertical = 6.dp)
@@ -1622,7 +1620,7 @@ fun RootScreen(
                                     androidx.compose.material3.CircularProgressIndicator(
                                         modifier = Modifier.size(14.dp),
                                         strokeWidth = 2.dp,
-                                        color = Color.White
+                                        color = colors.textPrimary
                                     )
                                     Spacer(Modifier.width(8.dp))
                                     val currentSection = syncState.currentSection
@@ -1639,14 +1637,14 @@ fun RootScreen(
                                     Text(
                                         text,
                                         fontSize = 11.sp,
-                                        color = Color.White,
+                                        color = colors.textPrimary,
                                         fontFamily = AppTheme.fontFamily
                                     )
                                     Spacer(Modifier.width(12.dp))
                                     Text(
                                         text = if (syncState.isPaused) "Resume" else "Pause",
                                         fontSize = 11.sp,
-                                        color = Color(0xFF81C784),
+                                        color = colors.accent,
                                         fontFamily = AppTheme.fontFamily
                                     )
                                 }
@@ -1773,7 +1771,7 @@ fun RootScreen(
 
                 if (showThemeDialog) {
                     ThemeSelectionDialog(
-                        themes = com.example.xtreamplayer.settings.AppThemeOption.values().toList(),
+                        themes = com.example.xtreamplayer.settings.AppThemeOption.entries.toList(),
                         currentTheme = settings.appTheme,
                         onThemeSelected = { settingsViewModel.setAppTheme(it) },
                         onDismiss = { showThemeDialog = false }
@@ -1782,7 +1780,7 @@ fun RootScreen(
 
                 if (showFontDialog) {
                     FontSelectionDialog(
-                        fonts = com.example.xtreamplayer.ui.theme.AppFont.values().toList(),
+                        fonts = com.example.xtreamplayer.ui.theme.AppFont.entries.toList(),
                         currentFont = settings.appFont,
                         onFontSelected = { settingsViewModel.setAppFont(it) },
                         onDismiss = { showFontDialog = false }
@@ -7049,7 +7047,7 @@ fun CategorySectionScreen(
     val categoryColumns = rememberReflowColumns(3, navLayoutExpanded)
     val categoryGridState = rememberLazyGridState()
     val contentGridState = rememberLazyGridState()
-    val tabFocusRequesters = remember { ContentType.values().map { FocusRequester() } }
+    val tabFocusRequesters = remember { ContentType.entries.map { FocusRequester() } }
     val backTabFocusRequester = remember { FocusRequester() }
     val searchFocusRequester = remember { FocusRequester() }
     val searchDownCategoryFocusRequester = remember { FocusRequester() }
@@ -7172,7 +7170,7 @@ fun CategorySectionScreen(
                                 onMoveRight = { tabFocusRequesters.first().requestFocus() }
                         )
                     }
-                    ContentType.values().forEachIndexed { index, type ->
+                    ContentType.entries.forEachIndexed { index, type ->
                         val requester = tabFocusRequesters[index]
                         CategoryTypeTab(
                                 label = type.label,

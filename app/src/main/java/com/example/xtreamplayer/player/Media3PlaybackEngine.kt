@@ -137,8 +137,19 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
         val targetGainMb = (boostDb * 100).toInt()
         val enhancer = loudnessEnhancer
         if (enhancer != null) {
-            enhancer.setTargetGain(targetGainMb)
-            enhancer.enabled = boostDb > 0f
+            val applyResult = runCatching {
+                enhancer.setTargetGain(targetGainMb)
+                enhancer.enabled = boostDb > 0f
+            }
+            if (applyResult.isFailure) {
+                Timber.w(
+                    applyResult.exceptionOrNull(),
+                    "Failed to apply loudness boost; resetting enhancer"
+                )
+                runCatching { enhancer.release() }
+                loudnessEnhancer = null
+                loudnessSessionId = C.AUDIO_SESSION_ID_UNSET
+            }
         }
     }
 
@@ -632,12 +643,9 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
     private fun replaceMediaItemPreservingState(item: MediaItem) {
         val currentPosition = player.currentPosition
         val wasPlaying = player.isPlaying
-        player.setMediaItem(item)
+        player.setMediaItem(item, currentPosition.coerceAtLeast(0L))
         player.prepare()
-        player.seekTo(currentPosition)
-        if (wasPlaying) {
-            player.play()
-        }
+        player.playWhenReady = wasPlaying
     }
 
     private fun getLanguageName(languageCode: String): String {
