@@ -39,8 +39,15 @@ data class AppColors(
     val error: Color,
     val overlay: Color,
     val overlaySoft: Color,
-    val overlayStrong: Color
+    val overlayStrong: Color,
+    val backgroundGradientColors: List<Color> = listOf(background, backgroundAlt),
+    val backgroundGradientStyle: BackgroundGradientStyle = BackgroundGradientStyle.VERTICAL
 )
+
+enum class BackgroundGradientStyle {
+    VERTICAL,
+    DIAGONAL
+}
 
 private val DefaultAppColors =
     AppColors(
@@ -327,7 +334,15 @@ private val MidnightAuroraAppColors =
         error = Color(0xFFF0A1A8),
         overlay = Color(0x99070E19),
         overlaySoft = Color(0x66000000),
-        overlayStrong = Color(0xB2070E19)
+        overlayStrong = Color(0xB2070E19),
+        backgroundGradientColors =
+            listOf(
+                Color(0xFF081224),
+                Color(0xFF13314A),
+                Color(0xFF22284B),
+                Color(0xFF183B36)
+            ),
+        backgroundGradientStyle = BackgroundGradientStyle.DIAGONAL
     )
 
 private val LocalAppColors = staticCompositionLocalOf { DefaultAppColors }

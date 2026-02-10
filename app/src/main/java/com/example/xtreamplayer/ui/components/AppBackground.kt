@@ -12,21 +12,22 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.example.xtreamplayer.ui.theme.AppTheme
+import com.example.xtreamplayer.ui.theme.BackgroundGradientStyle
 
 @Composable
 fun AppBackground(content: @Composable BoxScope.() -> Unit) {
     val colors = AppTheme.colors
+    val backgroundBrush =
+        when (colors.backgroundGradientStyle) {
+            BackgroundGradientStyle.DIAGONAL ->
+                Brush.linearGradient(colors = colors.backgroundGradientColors)
+            BackgroundGradientStyle.VERTICAL ->
+                Brush.verticalGradient(colors = colors.backgroundGradientColors)
+        }
     Box(
         modifier =
             Modifier.fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            colors.background,
-                            colors.backgroundAlt
-                        )
-                    )
-                )
+                .background(backgroundBrush)
     ) {
         Box(
             modifier =
