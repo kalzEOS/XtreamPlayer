@@ -7,13 +7,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
@@ -219,7 +219,7 @@ class ProgressiveSyncCoordinator(
                         activeSyncMutex.withLock { activeSyncSections.clear() }
                     }
 
-                    if (error is kotlinx.coroutines.CancellationException && _syncState.value.isPaused) {
+                    if (error is CancellationException && _syncState.value.isPaused) {
                         Timber.i("Background sync paused (cancelled)")
                         updateSyncState {
                             it.copy(
@@ -228,6 +228,14 @@ class ProgressiveSyncCoordinator(
                             )
                         }
                         settingsRepository.saveSyncState(_syncState.value, accountKey())
+                    } else if (error is CancellationException) {
+                        Timber.i("Background sync cancelled")
+                        updateSyncState {
+                            it.copy(
+                                phase = SyncPhase.IDLE,
+                                currentSection = null
+                            )
+                        }
                     } else {
                         Timber.e(error, "Background sync failed")
 
@@ -518,13 +526,21 @@ class ProgressiveSyncCoordinator(
     /**
      * Clean up resources
      */
-    fun dispose() {
+    suspend fun dispose() {
         if (disposed) return
         disposed = true
         Timber.d("Disposing ProgressiveSyncCoordinator")
-        runBlocking {
+        cancelAllSyncsInternal()
+        scopeJob.cancelAndJoin()
+    }
+
+    fun disposeAsync() {
+        if (disposed) return
+        disposed = true
+        Timber.d("Disposing ProgressiveSyncCoordinator")
+        scope.launch {
             cancelAllSyncsInternal()
-            scopeJob.cancelAndJoin()
+            scopeJob.cancel()
         }
     }
 }
