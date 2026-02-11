@@ -1990,6 +1990,27 @@ fun RootScreen(
 
         if (movieInfoItem != null) {
             val item = movieInfoItem!!
+            val activeMovieMatches =
+                    activePlaybackItem?.let {
+                        it.contentType == ContentType.MOVIES &&
+                                (it.id == item.id || it.streamId == item.streamId)
+                    } == true
+            val playbackVideoTrackLabel =
+                    if (activeMovieMatches) {
+                        val videoTracks = playbackEngine.getAvailableVideoTracks()
+                        videoTracks.firstOrNull { it.isSelected }?.label
+                                ?: videoTracks.firstOrNull()?.label
+                    } else {
+                        null
+                    }
+            val playbackAudioTrackLabel =
+                    if (activeMovieMatches) {
+                        val audioTracks = playbackEngine.getAvailableAudioTracks()
+                        audioTracks.firstOrNull { it.isSelected }?.label
+                                ?: audioTracks.firstOrNull()?.label
+                    } else {
+                        null
+                    }
             val isInContinueWatching =
                     continueWatchingEntries.any {
                         it.item.contentType == ContentType.MOVIES &&
@@ -1998,6 +2019,8 @@ fun RootScreen(
             MovieInfoDialog(
                     item = item,
                     info = movieInfoInfo,
+                    playbackVideoTrackLabel = playbackVideoTrackLabel,
+                    playbackAudioTrackLabel = playbackAudioTrackLabel,
                     queueItems = movieInfoQueue,
                     isFavorite = isContentFavorite(item),
                     onToggleFavorite = { handleToggleFavorite(it) },
@@ -3344,6 +3367,8 @@ private fun FullscreenSeriesDetailsDialog(
 private fun MovieInfoDialog(
         item: ContentItem,
         info: MovieInfo?,
+        playbackVideoTrackLabel: String?,
+        playbackAudioTrackLabel: String?,
         queueItems: List<ContentItem>,
         isFavorite: Boolean,
         onToggleFavorite: (ContentItem) -> Unit,
@@ -3613,14 +3638,27 @@ private fun MovieInfoDialog(
                                 Spacer(modifier = Modifier.height(10.dp))
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text(
-                                            text = "Video: ${formatVideoSummary(info)}",
+                                            text =
+                                                    "Video: ${
+                                                        formatVideoSummary(
+                                                            info = info,
+                                                            title = item.title,
+                                                            playbackVideoTrackLabel = playbackVideoTrackLabel
+                                                        )
+                                                    }",
                                             color = colors.textSecondary,
                                             fontSize = 9.sp,
                                             fontFamily = AppTheme.fontFamily,
                                             lineHeight = 13.sp
                                     )
                                     Text(
-                                            text = "Audio: ${formatAudioSummary(info)}",
+                                            text =
+                                                    "Audio: ${
+                                                        formatAudioSummary(
+                                                            info = info,
+                                                            playbackAudioTrackLabel = playbackAudioTrackLabel
+                                                        )
+                                                    }",
                                             color = colors.textSecondary,
                                             fontSize = 9.sp,
                                             fontFamily = AppTheme.fontFamily,
@@ -3673,36 +3711,59 @@ private fun MovieInfoRow(
     }
 }
 
-private fun formatVideoSummary(info: MovieInfo?): String {
-    if (info == null) return "N/A"
-    val hasAny =
-        !info.videoResolution.isNullOrBlank() ||
-            !info.videoCodec.isNullOrBlank() ||
-            !info.videoHdr.isNullOrBlank()
-    if (!hasAny) {
-        return "Resolution: N/A \u2022 Codec: N/A \u2022 Dynamic Range: N/A"
+private val RESOLUTION_TOKEN_REGEX = Regex("(?i)\\b(8k|4k|2160p|1440p|1080p|720p|[0-9]{3,4}p)\\b")
+private val CHANNELS_TOKEN_REGEX = Regex("\\b([1-9]\\.[0-9])\\b")
+
+private fun normalizeResolutionToken(token: String): String {
+    val normalized = token.trim()
+    return when (normalized.lowercase()) {
+        "4k" -> "4K"
+        "8k" -> "8K"
+        else -> normalized.uppercase()
     }
-    val resolution = info.videoResolution?.takeIf { it.isNotBlank() } ?: "N/A"
-    val codec = info.videoCodec?.takeIf { it.isNotBlank() } ?: "N/A"
-    val range = info.videoHdr?.takeIf { it.isNotBlank() } ?: "SDR"
-    return "Resolution: $resolution \u2022 Codec: $codec \u2022 Dynamic Range: $range"
 }
 
-private fun formatAudioSummary(info: MovieInfo?): String {
-    if (info == null) return "N/A"
-    val hasAny =
-        !info.audioCodec.isNullOrBlank() ||
-            !info.audioChannels.isNullOrBlank() ||
-            info.audioLanguages.any { it.isNotBlank() }
-    if (!hasAny) {
-        return "Codec: N/A \u2022 Channels: N/A \u2022 Language: N/A"
-    }
-    val codec = info.audioCodec?.takeIf { it.isNotBlank() } ?: "N/A"
-    val channels = info.audioChannels?.takeIf { it.isNotBlank() } ?: "N/A"
-    val languages =
-        info.audioLanguages.filter { it.isNotBlank() }.distinct().takeIf { it.isNotEmpty() }
-            ?: listOf("N/A")
-    return "Codec: $codec \u2022 Channels: $channels \u2022 Language: ${languages.joinToString(", ")}"
+private fun extractResolutionFromTrackLabel(label: String?): String? {
+    val source = label?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val primary = source.substringBefore("\u2022").trim()
+    val token = RESOLUTION_TOKEN_REGEX.find(primary)?.value ?: RESOLUTION_TOKEN_REGEX.find(source)?.value
+    return token?.let(::normalizeResolutionToken)
+}
+
+private fun extractResolutionFromTitle(title: String?): String? {
+    val source = title?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val token = RESOLUTION_TOKEN_REGEX.find(source)?.value ?: return null
+    return normalizeResolutionToken(token)
+}
+
+private fun extractChannelsFromTrackLabel(label: String?): String? {
+    val source = label?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    return CHANNELS_TOKEN_REGEX.find(source)?.groupValues?.getOrNull(1)
+}
+
+private fun formatVideoSummary(
+        info: MovieInfo?,
+        title: String?,
+        playbackVideoTrackLabel: String?
+): String {
+    val resolution =
+            extractResolutionFromTrackLabel(playbackVideoTrackLabel)
+                    ?: info?.videoResolution?.takeIf { it.isNotBlank() }
+                    ?: extractResolutionFromTitle(title)
+                    ?: "N/A"
+    val range = info?.videoHdr?.takeIf { it.isNotBlank() } ?: "SDR"
+    return "Resolution: $resolution \u2022 Dynamic Range: $range"
+}
+
+private fun formatAudioSummary(
+        info: MovieInfo?,
+        playbackAudioTrackLabel: String?
+): String {
+    val channels =
+            extractChannelsFromTrackLabel(playbackAudioTrackLabel)
+                    ?: info?.audioChannels?.takeIf { it.isNotBlank() }
+                    ?: "N/A"
+    return "Channels: $channels"
 }
 
 @Composable
