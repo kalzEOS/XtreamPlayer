@@ -7201,15 +7201,36 @@ fun CategorySectionScreen(
             selectedCategory,
             selectedSeries,
             categories.size,
-            activeQuery
+            activeQuery,
+            lastSelectedCategoryId,
+            lastSelectedCategoryIndex
     ) {
         if (!pendingCategoryReturnFocus || selectedCategory != null || selectedSeries != null) {
             return@LaunchedEffect
         }
         // Wait for categories to be available
         if (categories.isEmpty()) return@LaunchedEffect
+        val filteredCategories =
+                if (activeQuery.isBlank()) {
+                    categories
+                } else {
+                    withContext(Dispatchers.Default) {
+                        categories.filter { SearchNormalizer.matchesTitle(it.name, activeQuery) }
+                    }
+                }
+        if (filteredCategories.isEmpty()) {
+            pendingCategoryReturnFocus = false
+            return@LaunchedEffect
+        }
+        val returnTargetIndex =
+                lastSelectedCategoryId?.let { targetId ->
+                    filteredCategories.indexOfFirst { it.id == targetId }
+                }?.takeIf { it >= 0 } ?: lastSelectedCategoryIndex.coerceIn(0, filteredCategories.lastIndex)
+        if (returnTargetIndex > 0) {
+            runCatching { categoryGridState.scrollToItem(returnTargetIndex) }
+        }
         // Request the tracked category card focus (or fallback card) once it is attached.
-        repeat(6) {
+        repeat(10) {
             withFrameNanos {}
             if (runCatching { contentItemFocusRequester.requestFocus() }.getOrDefault(false)) {
                 pendingCategoryReturnFocus = false
