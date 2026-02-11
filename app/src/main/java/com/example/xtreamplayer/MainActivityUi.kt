@@ -190,6 +190,7 @@ import android.provider.Settings
 import okhttp3.OkHttpClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -362,28 +363,46 @@ fun RootScreen(
 
     // Progressive sync coordinator
     val settingsRepository = remember { com.example.xtreamplayer.settings.SettingsRepository(context) }
-    val progressiveSyncCoordinator = remember(authState.activeConfig) {
-        authState.activeConfig?.let { config ->
-            com.example.xtreamplayer.content.ProgressiveSyncCoordinator(
-                contentRepository = contentRepository,
-                settingsRepository = settingsRepository,
-                authConfig = config
-            )
+    var progressiveSyncCoordinator by
+            remember { mutableStateOf<com.example.xtreamplayer.content.ProgressiveSyncCoordinator?>(null) }
+    val emptySyncStateFlow =
+            remember { kotlinx.coroutines.flow.MutableStateFlow(com.example.xtreamplayer.content.ProgressiveSyncState()) }
+    val syncCoordinatorAccountKey =
+            authState.activeConfig?.let { config ->
+                "${config.baseUrl}|${config.username}|${config.listName}|${config.password}"
+            }
+    LaunchedEffect(syncCoordinatorAccountKey) {
+        val previousCoordinator = progressiveSyncCoordinator
+        if (previousCoordinator != null) {
+            withContext(NonCancellable) {
+                previousCoordinator.dispose()
+            }
+            progressiveSyncCoordinator = null
         }
+        progressiveSyncCoordinator =
+                authState.activeConfig?.let { config ->
+                    com.example.xtreamplayer.content.ProgressiveSyncCoordinator(
+                            contentRepository = contentRepository,
+                            settingsRepository = settingsRepository,
+                            authConfig = config
+                    )
+                }
     }
-    val syncState by (progressiveSyncCoordinator?.syncState ?: kotlinx.coroutines.flow.MutableStateFlow(
-        com.example.xtreamplayer.content.ProgressiveSyncState()
-    )).collectAsStateWithLifecycle()
+    val syncState by
+            (progressiveSyncCoordinator?.syncState ?: emptySyncStateFlow)
+                    .collectAsStateWithLifecycle()
+    val latestProgressiveSyncCoordinator by rememberUpdatedState(progressiveSyncCoordinator)
 
-    DisposableEffect(progressiveSyncCoordinator) {
+    DisposableEffect(Unit) {
         onDispose {
-            progressiveSyncCoordinator?.dispose()
+            latestProgressiveSyncCoordinator?.disposeAsync()
         }
     }
 
     // Auto-start fast start sync on first login
-    LaunchedEffect(authState.activeConfig) {
-        if (authState.activeConfig != null && progressiveSyncCoordinator != null) {
+    LaunchedEffect(authState.activeConfig, progressiveSyncCoordinator) {
+        val coordinator = progressiveSyncCoordinator ?: return@LaunchedEffect
+        if (authState.activeConfig != null) {
             val config = authState.activeConfig ?: return@LaunchedEffect
             val syncAccountKey = "${config.baseUrl}|${config.username}|${config.listName}"
             val savedState = settingsRepository.loadSyncState(syncAccountKey)
@@ -405,25 +424,26 @@ fun RootScreen(
                             }
 
             if (effectiveState != null) {
-                progressiveSyncCoordinator.restoreState(effectiveState)
+                coordinator.restoreState(effectiveState)
             }
 
             if (!hasFullIndex && (!hasAnySearchIndex || savedState == null || !savedState.fastStartReady)) {
-                progressiveSyncCoordinator.startFastStartSync()
+                coordinator.startFastStartSync()
             } else if (savedState?.phase == com.example.xtreamplayer.content.SyncPhase.BACKGROUND_FULL &&
                             savedState.isPaused.not() &&
                             savedState.fullIndexComplete.not()
             ) {
-                progressiveSyncCoordinator.resumeBackgroundSync()
+                coordinator.resumeBackgroundSync()
             }
         }
     }
 
     // Auto-start background sync after fast start completes
     LaunchedEffect(syncState.fastStartReady) {
-        if (syncState.fastStartReady && !syncState.fullIndexComplete && progressiveSyncCoordinator != null) {
+        val coordinator = progressiveSyncCoordinator ?: return@LaunchedEffect
+        if (syncState.fastStartReady && !syncState.fullIndexComplete) {
             kotlinx.coroutines.delay(2000) // 2 second grace period
-            progressiveSyncCoordinator.startBackgroundFullSync()
+            coordinator.startBackgroundFullSync()
         }
     }
 
@@ -6496,7 +6516,14 @@ fun FavoritesScreen(
                         } else {
                             contentItemFocusRequester
                         }
-                requester.requestFocus()
+                for (attempt in 0..2) {
+                    val focused = runCatching { requester.requestFocus() }.getOrDefault(false)
+                    if (focused) break
+                    if (attempt < 2) {
+                        delay(16)
+                        withFrameNanos {}
+                    }
+                }
             }
             FavoritesView.ITEMS -> {
                 val requester =
@@ -6521,7 +6548,14 @@ fun FavoritesScreen(
             FavoritesView.CATEGORIES -> {
                 val requester =
                         contentItemFocusRequester
-                requester.requestFocus()
+                for (attempt in 0..2) {
+                    val focused = runCatching { requester.requestFocus() }.getOrDefault(false)
+                    if (focused) break
+                    if (attempt < 2) {
+                        delay(16)
+                        withFrameNanos {}
+                    }
+                }
                 pendingCategoryReturnFocus = false
             }
         }

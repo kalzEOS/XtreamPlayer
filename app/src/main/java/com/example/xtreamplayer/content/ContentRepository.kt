@@ -6,6 +6,7 @@ import com.example.xtreamplayer.Section
 import com.example.xtreamplayer.api.XtreamApi
 import com.example.xtreamplayer.auth.AuthConfig
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -117,6 +118,12 @@ class ContentRepository(
             return size > 200
         }
     }
+    private val seriesSeasonCountUnavailableCache =
+        object : LinkedHashMap<String, Boolean>(200, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>): Boolean {
+                return size > 200
+            }
+        }
     private val movieInfoCache = object : LinkedHashMap<String, MovieInfo>(100, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MovieInfo>): Boolean {
             return size > 100
@@ -436,11 +443,17 @@ class ContentRepository(
     ): Int? {
         val key = seasonCountKey(seriesId, authConfig)
         seriesSeasonCountMutex.withLock {
+            if (seriesSeasonCountUnavailableCache[key] == true) {
+                return null
+            }
             seriesSeasonCountCache[key]?.let { return it }
         }
         val result = api.fetchSeriesSeasonCount(authConfig, seriesId)
         val count = result.getOrNull() ?: return null
-        seriesSeasonCountMutex.withLock { seriesSeasonCountCache[key] = count }
+        seriesSeasonCountMutex.withLock {
+            seriesSeasonCountCache[key] = count
+            seriesSeasonCountUnavailableCache.remove(key)
+        }
         return count
     }
 
@@ -456,8 +469,15 @@ class ContentRepository(
         val payload = result.getOrElse { throw it }
         val summaries = payload.summaries
         seriesSeasonsMutex.withLock { seriesSeasonsCache[key] = summaries }
-        payload.seasonCount?.let { count ->
-            seriesSeasonCountMutex.withLock { seriesSeasonCountCache[key] = count }
+        seriesSeasonCountMutex.withLock {
+            if (payload.seasonCount != null) {
+                seriesSeasonCountCache[key] = payload.seasonCount
+                seriesSeasonCountUnavailableCache.remove(key)
+            } else if (summaries.isEmpty()) {
+                // This series payload had neither episodes summaries nor a season count.
+                // Cache that fact to avoid a second identical get_series_info call.
+                seriesSeasonCountUnavailableCache[key] = true
+            }
         }
         return summaries
     }
@@ -1487,6 +1507,10 @@ class ContentRepository(
             if (error is SyncPausedException) {
                 return Result.success(Unit)
             }
+            if (error is CancellationException) {
+                Timber.i("Background sync cancelled for $section")
+                return Result.failure(error)
+            }
             if (error != null) {
                 Timber.e(error, "Background sync failed for $section, rolling back checkpoint")
                 lastError = error
@@ -1753,6 +1777,7 @@ class ContentRepository(
         searchReadinessMutex.withLock { searchReadinessCache.clear() }
         seriesEpisodesMutex.withLock { seriesEpisodesCache.clear() }
         seriesSeasonCountMutex.withLock { seriesSeasonCountCache.clear() }
+        seriesSeasonCountMutex.withLock { seriesSeasonCountUnavailableCache.clear() }
         movieInfoMutex.withLock { movieInfoCache.clear() }
         seriesInfoMutex.withLock { seriesInfoCache.clear() }
         seriesSeasonFullMutex.withLock { seriesSeasonFullCache.clear() }
