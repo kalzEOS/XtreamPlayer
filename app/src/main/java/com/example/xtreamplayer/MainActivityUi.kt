@@ -369,7 +369,7 @@ fun RootScreen(
             remember { kotlinx.coroutines.flow.MutableStateFlow(com.example.xtreamplayer.content.ProgressiveSyncState()) }
     val syncCoordinatorAccountKey =
             authState.activeConfig?.let { config ->
-                "${config.baseUrl}|${config.username}|${config.listName}"
+                "${config.baseUrl}|${config.username}|${config.listName}|${config.password}"
             }
     LaunchedEffect(syncCoordinatorAccountKey) {
         val previousCoordinator = progressiveSyncCoordinator

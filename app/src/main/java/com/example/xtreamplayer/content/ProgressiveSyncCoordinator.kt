@@ -538,9 +538,6 @@ class ProgressiveSyncCoordinator(
         if (disposed) return
         disposed = true
         Timber.d("Disposing ProgressiveSyncCoordinator")
-        scope.launch {
-            cancelAllSyncsInternal()
-            scopeJob.cancel()
-        }
+        scopeJob.cancel()
     }
 }
