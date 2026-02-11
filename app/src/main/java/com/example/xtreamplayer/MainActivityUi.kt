@@ -4285,10 +4285,12 @@ private fun ContentCard(
         showComingSoonBadge: Boolean = false,
         focusRequester: FocusRequester?,
         isLeftEdge: Boolean,
+        isRightEdge: Boolean = false,
         isFavorite: Boolean,
         onActivate: (() -> Unit)?,
         onFocused: ((ContentItem) -> Unit)?,
         onMoveLeft: () -> Unit,
+        onMoveRight: (() -> Unit)? = null,
         onMoveUp: (() -> Unit)? = null,
         onLongClick: ((ContentItem) -> Unit)? = null,
         titleFontSize: TextUnit = 16.sp,
@@ -4391,6 +4393,12 @@ private fun ContentCard(
                                                                 onMoveUp != null &&
                                                                         it.key == Key.DirectionUp -> {
                                                                     onMoveUp()
+                                                                    true
+                                                                }
+                                                                isRightEdge &&
+                                                                        onMoveRight != null &&
+                                                                        it.key == Key.DirectionRight -> {
+                                                                    onMoveRight()
                                                                     true
                                                                 }
                                                                 isSelectKey &&
@@ -4562,12 +4570,14 @@ private fun ContinueWatchingCard(
         entry: ContinueWatchingDisplayEntry,
         focusRequester: FocusRequester?,
         isLeftEdge: Boolean,
+        isRightEdge: Boolean = false,
         isFavorite: Boolean,
         progressPercent: Int,
         fontScaleFactor: Float = 1f,
         onActivate: () -> Unit,
         onFocused: () -> Unit,
         onMoveLeft: () -> Unit,
+        onMoveRight: (() -> Unit)? = null,
         onLongClick: () -> Unit,
         onRemove: () -> Unit
 ) {
@@ -4636,6 +4646,12 @@ private fun ContinueWatchingCard(
                                         when {
                                             isLeftEdge && it.key == Key.DirectionLeft -> {
                                                 onMoveLeft()
+                                                true
+                                            }
+                                            isRightEdge &&
+                                                    onMoveRight != null &&
+                                                    it.key == Key.DirectionRight -> {
+                                                onMoveRight()
                                                 true
                                             }
                                             it.key == Key.Menu -> {
@@ -4829,11 +4845,13 @@ private fun CategoryCard(
         label: String,
         focusRequester: FocusRequester?,
         isLeftEdge: Boolean,
+        isRightEdge: Boolean = false,
         isFavorite: Boolean,
         thumbnail: ThumbnailSpec? = null,
         imageUrl: String? = null,
         onActivate: () -> Unit,
         onMoveLeft: () -> Unit,
+        onMoveRight: (() -> Unit)? = null,
         onMoveUp: (() -> Unit)? = null,
         onMoveDown: (() -> Unit)? = null,
         onLongClick: (() -> Unit)? = null,
@@ -4907,6 +4925,12 @@ private fun CategoryCard(
                                             }
                                             onMoveUp != null && it.key == Key.DirectionUp -> {
                                                 onMoveUp()
+                                                true
+                                            }
+                                            isRightEdge &&
+                                                    onMoveRight != null &&
+                                                    it.key == Key.DirectionRight -> {
+                                                onMoveRight()
                                                 true
                                             }
                                             onMoveDown != null && it.key == Key.DirectionDown -> {
@@ -5405,6 +5429,7 @@ fun SectionScreen(
 ) {
     val shape = RoundedCornerShape(18.dp)
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     // Live uses landscape cards (3 cols at 100%), Movies/Series use poster cards (4 cols at 100%)
     val baseColumns = remember(settings.uiScale, section) {
@@ -5609,7 +5634,9 @@ fun SectionScreen(
                             modifier = Modifier.width(240.dp),
                             onMoveLeft = onMoveLeft,
                             onMoveDown = {
-                                val hasSearchDownTarget = lazyItems.itemCount > 1 && columns > 1
+                                val targetIndex =
+                                        (columns - 1).coerceAtMost(lazyItems.itemCount - 1)
+                                val hasSearchDownTarget = targetIndex >= 0
                                 val focused =
                                     if (hasSearchDownTarget) {
                                         runCatching {
@@ -5619,7 +5646,21 @@ fun SectionScreen(
                                         false
                                     }
                                 if (!focused) {
-                                    runCatching { contentItemFocusRequester.requestFocus() }
+                                    if (hasSearchDownTarget) {
+                                        coroutineScope.launch {
+                                            runCatching { gridState.scrollToItem(targetIndex) }
+                                            withFrameNanos {}
+                                            val focusedAfterScroll =
+                                                    runCatching {
+                                                        searchDownContentFocusRequester.requestFocus()
+                                                    }.getOrDefault(false)
+                                            if (!focusedAfterScroll) {
+                                                runCatching { contentItemFocusRequester.requestFocus() }
+                                            }
+                                        }
+                                    } else {
+                                        runCatching { contentItemFocusRequester.requestFocus() }
+                                    }
                                 }
                             },
                             onSearch = { searchState.performSearch() }
@@ -5693,6 +5734,9 @@ fun SectionScreen(
                                         else -> null
                                     }
                             val isLeftEdge = index % columns == 0
+                            val isRightEdge =
+                                    ((index + 1) % columns == 0) ||
+                                            index == lazyItems.itemCount - 1
                             val isTopRow = index < columns
                             val seriesCardMeta =
                                     rememberSeriesCardMeta(item, contentRepository, authConfig)
@@ -5716,6 +5760,7 @@ fun SectionScreen(
                                     showComingSoonBadge = seriesCardMeta.isComingSoon,
                                     focusRequester = requester,
                                     isLeftEdge = isLeftEdge,
+                                    isRightEdge = isRightEdge,
                                     isFavorite = item != null && isItemFavorite(item),
                                     onActivate =
                                             if (item != null) {
@@ -5754,6 +5799,7 @@ fun SectionScreen(
                                         onItemFocused(focusedItem)
                                     },
                                     onMoveLeft = onMoveLeft,
+                                    onMoveRight = { searchFocusRequester.requestFocus() },
                                     onMoveUp =
                                             if (isTopRow) {
                                                 { searchFocusRequester.requestFocus() }
@@ -6283,6 +6329,7 @@ fun FavoritesScreen(
 ) {
     val shape = RoundedCornerShape(18.dp)
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     // Poster content scales with UI, categories stay fixed
     val basePosterColumns = remember(settings.uiScale) {
         kotlin.math.ceil(4.0 / settings.uiScale).toInt().coerceIn(4, 8)
@@ -6309,8 +6356,11 @@ fun FavoritesScreen(
     var lastMenuSelection by remember { mutableStateOf(FavoritesView.ITEMS) }
     val menuFocusRequesters = remember { listOf(FocusRequester(), FocusRequester()) }
     val backFocusRequester = remember { FocusRequester() }
+    val backDownFocusRequester = remember { FocusRequester() }
+    val itemsFirstFocusRequester = remember { FocusRequester() }
     val episodesFocusRequester = remember { FocusRequester() }
     var pendingEpisodeFocus by remember { mutableStateOf(false) }
+    var selectedCategoryContentCount by remember { mutableIntStateOf(0) }
     val gridState = rememberLazyGridState()
     val categoryContentGridState = rememberLazyGridState()
     val sortedContent =
@@ -6449,17 +6499,24 @@ fun FavoritesScreen(
                 requester.requestFocus()
             }
             FavoritesView.ITEMS -> {
-                val shouldResume =
-                        resumeFocusId != null && sortedContent.any { it.id == resumeFocusId }
                 val requester =
                         if (sortedContent.isEmpty()) {
                             contentItemFocusRequester
-                        } else if (shouldResume) {
-                            resumeFocusRequester
                         } else {
-                            contentItemFocusRequester
+                            itemsFirstFocusRequester
                         }
-                requester.requestFocus()
+                // Wait for the grid node to attach, then move focus off Back to the first card.
+                repeat(8) { attempt ->
+                    val focused = runCatching { requester.requestFocus() }.getOrDefault(false)
+                    if (focused) {
+                        pendingViewFocus = false
+                        return@LaunchedEffect
+                    }
+                    if (attempt < 7) {
+                        delay(32)
+                        withFrameNanos {}
+                    }
+                }
             }
             FavoritesView.CATEGORIES -> {
                 val requester =
@@ -6500,7 +6557,52 @@ fun FavoritesScreen(
                 )
                 Spacer(modifier = Modifier.weight(1f))
                 if (activeView != FavoritesView.MENU) {
-                    val backMoveDown: () -> Unit = { contentItemFocusRequester.requestFocus() }
+                    val backMoveDown: () -> Unit = {
+                        val targetIndex =
+                                when {
+                                    selectedCategory != null -> {
+                                        val contentColumns =
+                                                if (selectedCategory?.type == ContentType.LIVE) {
+                                                    liveColumns
+                                                } else {
+                                                    posterColumns
+                                                }
+                                        (contentColumns - 1).coerceAtMost(selectedCategoryContentCount - 1)
+                                    }
+                                    activeView == FavoritesView.ITEMS ->
+                                            (posterColumns - 1).coerceAtMost(sortedContent.lastIndex)
+                                    activeView == FavoritesView.CATEGORIES ->
+                                            (categoryColumns - 1).coerceAtMost(sortedCategories.lastIndex)
+                                    else -> -1
+                                }
+                        if (targetIndex < 0) {
+                            runCatching { contentItemFocusRequester.requestFocus() }
+                        } else {
+                            val focused =
+                                    runCatching { backDownFocusRequester.requestFocus() }
+                                            .getOrDefault(false)
+                            if (!focused) {
+                                coroutineScope.launch {
+                                    when {
+                                        selectedCategory != null -> {
+                                            runCatching { categoryContentGridState.scrollToItem(targetIndex) }
+                                        }
+                                        activeView == FavoritesView.ITEMS ||
+                                                activeView == FavoritesView.CATEGORIES -> {
+                                            runCatching { gridState.scrollToItem(targetIndex) }
+                                        }
+                                    }
+                                    withFrameNanos {}
+                                    val focusedAfterScroll =
+                                            runCatching { backDownFocusRequester.requestFocus() }
+                                                    .getOrDefault(false)
+                                    if (!focusedAfterScroll) {
+                                        runCatching { contentItemFocusRequester.requestFocus() }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     CategoryTypeTab(
                             label = "Back",
                             selected = false,
@@ -6672,13 +6774,19 @@ fun FavoritesScreen(
                                 key = { index -> "${sortedContent[index].id}-$index" }
                         ) { index ->
                             val item = sortedContent[index]
+                            val backDownTargetIndex =
+                                    (posterColumns - 1).coerceAtMost(sortedContent.lastIndex)
                             val requester =
                                     when {
+                                        index == 0 -> itemsFirstFocusRequester
+                                        index == backDownTargetIndex -> backDownFocusRequester
                                         item.id == resumeFocusId -> resumeFocusRequester
-                                        index == 0 -> contentItemFocusRequester
                                         else -> null
                                     }
                             val isLeftEdge = index % posterColumns == 0
+                            val isRightEdge =
+                                    ((index + 1) % posterColumns == 0) ||
+                                            index == sortedContent.lastIndex
                             val isTopRow = index < posterColumns
                             val seriesCardMeta =
                                     rememberSeriesCardMeta(item, contentRepository, authConfig)
@@ -6692,6 +6800,7 @@ fun FavoritesScreen(
                                     showComingSoonBadge = seriesCardMeta.isComingSoon,
                                     focusRequester = requester,
                                     isLeftEdge = isLeftEdge,
+                                    isRightEdge = isRightEdge,
                                     isFavorite = isItemFavorite(item),
                                     onActivate = {
                                         if (item.contentType == ContentType.SERIES &&
@@ -6708,6 +6817,7 @@ fun FavoritesScreen(
                                     },
                                     onFocused = onItemFocused,
                                     onMoveLeft = onMoveLeft,
+                                    onMoveRight = { backFocusRequester.requestFocus() },
                                     onMoveUp =
                                             if (isTopRow) {
                                                 { backFocusRequester.requestFocus() }
@@ -6737,6 +6847,9 @@ fun FavoritesScreen(
                                         .flow
                             }
                     val lazyItems = pagerFlow.collectAsLazyPagingItems()
+                    LaunchedEffect(lazyItems.itemCount) {
+                        selectedCategoryContentCount = lazyItems.itemCount
+                    }
 
                     LaunchedEffect(
                             pendingCategoryEnterFocus,
@@ -6906,14 +7019,24 @@ fun FavoritesScreen(
                                         }
                                 ) { index ->
                                     val item = lazyItems[index]
+                                    val backDownTargetIndex =
+                                            if (lazyItems.itemCount > 0) {
+                                                (contentColumns - 1).coerceAtMost(lazyItems.itemCount - 1)
+                                            } else {
+                                                -1
+                                            }
                                     val requester =
                                             when {
+                                                index == backDownTargetIndex -> backDownFocusRequester
                                                 item?.id != null && item.id == resumeFocusId ->
                                                         resumeFocusRequester
                                                 index == 0 -> contentItemFocusRequester
                                                 else -> null
                                             }
                                     val isLeftEdge = index % contentColumns == 0
+                                    val isRightEdge =
+                                            ((index + 1) % contentColumns == 0) ||
+                                                    index == lazyItems.itemCount - 1
                                     val isTopRow = index < contentColumns
                                     val seriesCardMeta =
                                             rememberSeriesCardMeta(
@@ -6930,6 +7053,7 @@ fun FavoritesScreen(
                                             showComingSoonBadge = seriesCardMeta.isComingSoon,
                                             focusRequester = requester,
                                             isLeftEdge = isLeftEdge,
+                                            isRightEdge = isRightEdge,
                                             isFavorite = item != null && isItemFavorite(item),
                                             onActivate =
                                                     if (item != null) {
@@ -6960,9 +7084,10 @@ fun FavoritesScreen(
                                                         }
                                                     } else {
                                                         null
-                                                    },
+                                            },
                                             onFocused = onItemFocused,
                                             onMoveLeft = onMoveLeft,
+                                            onMoveRight = { backFocusRequester.requestFocus() },
                                             onMoveUp =
                                                     if (isTopRow) {
                                                         { backFocusRequester.requestFocus() }
@@ -7010,6 +7135,8 @@ fun FavoritesScreen(
                         ) {
                             items(sortedCategories.size) { index ->
                                 val category = sortedCategories[index]
+                                val backDownTargetIndex =
+                                        (categoryColumns - 1).coerceAtMost(sortedCategories.lastIndex)
                                 val isReturnTargetById =
                                         pendingCategoryReturnFocus &&
                                                 lastSelectedFavoriteCategoryId != null &&
@@ -7022,11 +7149,15 @@ fun FavoritesScreen(
                                         when {
                                             isReturnTargetById || isReturnTargetByIndex ->
                                                     contentItemFocusRequester
+                                            index == backDownTargetIndex -> backDownFocusRequester
                                             !pendingCategoryReturnFocus && index == 0 ->
                                                     contentItemFocusRequester
                                             else -> null
                                         }
                                 val isLeftEdge = index % categoryColumns == 0
+                                val isRightEdge =
+                                        ((index + 1) % categoryColumns == 0) ||
+                                                index == sortedCategories.lastIndex
                                 val isTopRow = index < categoryColumns
                                 val categoryThumbnailUrl by
                                         produceState<String?>(
@@ -7046,6 +7177,7 @@ fun FavoritesScreen(
                                         label = category.name,
                                         focusRequester = requester,
                                         isLeftEdge = isLeftEdge,
+                                        isRightEdge = isRightEdge,
                                         isFavorite = isCategoryFavorite(category),
                                         thumbnail = categoryThumbnail(category.type),
                                         imageUrl = categoryThumbnailUrl,
@@ -7058,6 +7190,7 @@ fun FavoritesScreen(
                                             pendingCategoryReturnFocus = false
                                         },
                                         onMoveLeft = onMoveLeft,
+                                        onMoveRight = { backFocusRequester.requestFocus() },
                                         onMoveUp =
                                                 if (isTopRow) {
                                                     { backFocusRequester.requestFocus() }
@@ -7167,6 +7300,7 @@ fun CategorySectionScreen(
 ) {
     val shape = RoundedCornerShape(18.dp)
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var activeType by remember { mutableStateOf(ContentType.LIVE) }
     var selectedCategory by remember { mutableStateOf<CategoryItem?>(null) }
     var selectedSeries by remember { mutableStateOf<ContentItem?>(null) }
@@ -7182,6 +7316,8 @@ fun CategorySectionScreen(
     var categories by remember { mutableStateOf<List<CategoryItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var filteredCategoryCount by remember { mutableIntStateOf(0) }
+    var selectedCategoryContentCount by remember { mutableIntStateOf(0) }
     val searchState = rememberDebouncedSearchState(key = activeType)
     // Live uses landscape cards (3 cols at 100%), Movies/Series use poster cards (4 cols at 100%)
     val basePosterColumns = remember(settings.uiScale, activeType) {
@@ -7438,24 +7574,68 @@ fun CategorySectionScreen(
                                     if (selectedSeries != null) {
                                         pendingEpisodeFocus = true
                                     } else if (selectedCategory != null) {
+                                        val targetIndex =
+                                                (posterColumns - 1)
+                                                        .coerceAtMost(selectedCategoryContentCount - 1)
                                         val focused =
-                                                runCatching {
-                                                    searchDownContentFocusRequester.requestFocus()
-                                                }.getOrDefault(false)
+                                                if (targetIndex >= 0) {
+                                                    runCatching {
+                                                        searchDownContentFocusRequester.requestFocus()
+                                                    }.getOrDefault(false)
+                                                } else {
+                                                    false
+                                                }
                                         if (!focused) {
-                                            runCatching { contentItemFocusRequester.requestFocus() }
+                                            if (targetIndex >= 0) {
+                                                coroutineScope.launch {
+                                                    runCatching { contentGridState.scrollToItem(targetIndex) }
+                                                    withFrameNanos {}
+                                                    val focusedAfterScroll =
+                                                            runCatching {
+                                                                searchDownContentFocusRequester
+                                                                        .requestFocus()
+                                                            }.getOrDefault(false)
+                                                    if (!focusedAfterScroll) {
+                                                        runCatching {
+                                                            contentItemFocusRequester.requestFocus()
+                                                        }
+                                                    }
+                                                }
+                                            } else {
+                                                runCatching { contentItemFocusRequester.requestFocus() }
+                                            }
                                         }
                                     } else {
+                                        val targetIndex =
+                                                (categoryColumns - 1)
+                                                        .coerceAtMost(filteredCategoryCount - 1)
                                         val focused =
-                                            if (activeType != ContentType.SERIES) {
-                                                runCatching {
-                                                    searchDownCategoryFocusRequester.requestFocus()
-                                                }.getOrDefault(false)
-                                            } else {
-                                                false
-                                            }
+                                                if (targetIndex >= 0) {
+                                                    runCatching {
+                                                        searchDownCategoryFocusRequester.requestFocus()
+                                                    }.getOrDefault(false)
+                                                } else {
+                                                    false
+                                                }
                                         if (!focused) {
-                                            runCatching { contentItemFocusRequester.requestFocus() }
+                                            if (targetIndex >= 0) {
+                                                coroutineScope.launch {
+                                                    runCatching { categoryGridState.scrollToItem(targetIndex) }
+                                                    withFrameNanos {}
+                                                    val focusedAfterScroll =
+                                                            runCatching {
+                                                                searchDownCategoryFocusRequester
+                                                                        .requestFocus()
+                                                            }.getOrDefault(false)
+                                                    if (!focusedAfterScroll) {
+                                                        runCatching {
+                                                            contentItemFocusRequester.requestFocus()
+                                                        }
+                                                    }
+                                                }
+                                            } else {
+                                                runCatching { contentItemFocusRequester.requestFocus() }
+                                            }
                                         }
                                     }
                                 },
@@ -7492,6 +7672,9 @@ fun CategorySectionScreen(
                             }
                         }
                 val lazyItems = pagerFlow.collectAsLazyPagingItems()
+                LaunchedEffect(lazyItems.itemCount) {
+                    selectedCategoryContentCount = lazyItems.itemCount
+                }
 
                 LaunchedEffect(
                         pendingCategoryEnterFocus,
@@ -7651,10 +7834,14 @@ fun CategorySectionScreen(
                                 ) { index ->
                                     val item = lazyItems[index]
                                     val isLeftEdge = index % posterColumns == 0
-                            val isTopRow = index < posterColumns
+                                    val isRightEdge =
+                                            ((index + 1) % posterColumns == 0) ||
+                                                    index == lazyItems.itemCount - 1
+                                    val isTopRow = index < posterColumns
                                     val searchDownIndex =
                                             if (lazyItems.itemCount > 0) {
-                                                (posterColumns - 1).coerceAtMost(lazyItems.itemCount - 1)
+                                                (posterColumns - 1)
+                                                        .coerceAtMost(lazyItems.itemCount - 1)
                                             } else {
                                                 -1
                                             }
@@ -7686,6 +7873,7 @@ fun CategorySectionScreen(
                                             showComingSoonBadge = seriesCardMeta.isComingSoon,
                                             focusRequester = requester,
                                             isLeftEdge = isLeftEdge,
+                                            isRightEdge = isRightEdge,
                                             isFavorite = item != null && isItemFavorite(item),
                                             onActivate =
                                                     if (item != null && selectedSeries == null) {
@@ -7724,6 +7912,12 @@ fun CategorySectionScreen(
                                                     },
                                             onMoveLeft =
                                                     { if (selectedSeries == null) onMoveLeft() },
+                                            onMoveRight =
+                                                    {
+                                                        if (selectedSeries == null) {
+                                                            backTabFocusRequester.requestFocus()
+                                                        }
+                                                    },
                                             onMoveUp =
                                                     if (isTopRow && selectedSeries == null) {
                                                         { searchFocusRequester.requestFocus() }
@@ -7843,6 +8037,7 @@ fun CategorySectionScreen(
                                     }
                                 }
                             }
+                    filteredCategoryCount = filteredCategoriesState.value.size
                 }
                 val filteredCategories = filteredCategoriesState.value
                 // Focus is managed by user navigation - no auto-focus on content load
@@ -7858,7 +8053,7 @@ fun CategorySectionScreen(
                     )
                 } else {
                     val searchDownIndex =
-                            if (activeType != ContentType.SERIES && filteredCategories.size > 1) {
+                            if (filteredCategories.isNotEmpty()) {
                                 (categoryColumns - 1).coerceAtMost(filteredCategories.lastIndex)
                             } else {
                                 -1
@@ -7896,6 +8091,9 @@ fun CategorySectionScreen(
                                         else -> null
                                     }
                             val isLeftEdge = index % categoryColumns == 0
+                            val isRightEdge =
+                                    ((index + 1) % categoryColumns == 0) ||
+                                            index == filteredCategories.lastIndex
                             val isTopRow = index < categoryColumns
                             val categoryThumbnailUrl by
                                     produceState<String?>(
@@ -7915,6 +8113,7 @@ fun CategorySectionScreen(
                                     label = category.name,
                                     focusRequester = requester,
                                     isLeftEdge = isLeftEdge,
+                                    isRightEdge = isRightEdge,
                                     isFavorite = isCategoryFavorite(category),
                                     thumbnail = categoryThumbnail(category.type),
                                     imageUrl = categoryThumbnailUrl,
@@ -7929,6 +8128,7 @@ fun CategorySectionScreen(
                                         lastCategoryContentId = null
                                     },
                                     onMoveLeft = onMoveLeft,
+                                    onMoveRight = { searchFocusRequester.requestFocus() },
                                     onMoveUp =
                                             if (isTopRow) {
                                                 { searchFocusRequester.requestFocus() }
@@ -8046,6 +8246,9 @@ fun ContinueWatchingScreen(
     var showFirstSeriesLaunchLoading by remember { mutableStateOf(false) }
     var firstSeriesLaunchLoadingShown by remember { mutableStateOf(false) }
     val episodesFocusRequester = remember { FocusRequester() }
+    val clearAllFocusRequester = remember { FocusRequester() }
+    val clearAllDownFocusRequester = remember { FocusRequester() }
+    val gridState = rememberLazyGridState()
     val movieQueueItems =
             remember(displayEntries) {
                 displayEntries.mapNotNull { entry ->
@@ -8244,6 +8447,8 @@ fun ContinueWatchingScreen(
                             modifier = Modifier.weight(1f)
                     )
                     if (hasItems) {
+                        val clearAllDownTargetIndex =
+                                (columns - 1).coerceAtMost(displayEntries.lastIndex)
                         FocusableButton(
                                 onClick = { showClearDialog = true },
                                 colors =
@@ -8251,7 +8456,46 @@ fun ContinueWatchingScreen(
                                                 containerColor = AppTheme.colors.surfaceAlt,
                                                 contentColor = AppTheme.colors.textPrimary
                                         ),
-                                modifier = Modifier.height(36.dp)
+                                modifier =
+                                        Modifier.focusRequester(clearAllFocusRequester)
+                                                .onPreviewKeyEvent {
+                                                    if (it.type != KeyEventType.KeyDown ||
+                                                            it.key != Key.DirectionDown
+                                                    ) {
+                                                        false
+                                                    } else if (clearAllDownTargetIndex < 0) {
+                                                        false
+                                                    } else {
+                                                        val focused =
+                                                                runCatching {
+                                                                    clearAllDownFocusRequester
+                                                                            .requestFocus()
+                                                                }.getOrDefault(false)
+                                                        if (!focused) {
+                                                            coroutineScope.launch {
+                                                                runCatching {
+                                                                    gridState.scrollToItem(
+                                                                            clearAllDownTargetIndex
+                                                                    )
+                                                                }
+                                                                withFrameNanos {}
+                                                                val focusedAfterScroll =
+                                                                        runCatching {
+                                                                            clearAllDownFocusRequester
+                                                                                    .requestFocus()
+                                                                        }.getOrDefault(false)
+                                                                if (!focusedAfterScroll) {
+                                                                    runCatching {
+                                                                        contentItemFocusRequester
+                                                                                .requestFocus()
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        true
+                                                    }
+                                                }
+                                                .height(36.dp)
                         ) {
                             Text(
                                     text = "Clear all",
@@ -8310,11 +8554,14 @@ fun ContinueWatchingScreen(
                             modifier = Modifier.focusRequester(contentItemFocusRequester).focusable()
                     )
                 } else {
+                    val clearAllDownTargetIndex =
+                            (columns - 1).coerceAtMost(displayEntries.lastIndex)
                     LazyVerticalGrid(
                             columns = GridCells.Fixed(columns),
                             verticalArrangement = Arrangement.spacedBy(16.dp),
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
-                            modifier = Modifier.fillMaxWidth().weight(1f)
+                            modifier = Modifier.fillMaxWidth().weight(1f),
+                            state = gridState
                     ) {
                         items(
                                 count = displayEntries.size,
@@ -8326,11 +8573,15 @@ fun ContinueWatchingScreen(
                             val item = displayItem
                             val requester =
                                     when {
+                                        index == clearAllDownTargetIndex -> clearAllDownFocusRequester
                                         item.id == resumeFocusId -> resumeFocusRequester
                                         index == 0 -> contentItemFocusRequester
                                         else -> null
                                     }
                             val isLeftEdge = index % columns == 0
+                            val isRightEdge =
+                                    ((index + 1) % columns == 0) ||
+                                            index == displayEntries.lastIndex
 
                             val progressPercent =
                                     if (entry.durationMs > 0) {
@@ -8343,6 +8594,7 @@ fun ContinueWatchingScreen(
                                     entry = entry,
                                     focusRequester = requester,
                                     isLeftEdge = isLeftEdge,
+                                    isRightEdge = isRightEdge,
                                     isFavorite = isItemFavorite(item),
                                     progressPercent = progressPercent,
                                     fontScaleFactor = posterFontScale,
@@ -8390,6 +8642,7 @@ fun ContinueWatchingScreen(
                                     },
                                     onFocused = { onItemFocused(item) },
                                     onMoveLeft = onMoveLeft,
+                                    onMoveRight = { clearAllFocusRequester.requestFocus() },
                                     onLongClick = { onToggleFavorite(item) },
                                     onRemove = { entry.sourceItems.forEach(onRemoveEntry) }
                             )
