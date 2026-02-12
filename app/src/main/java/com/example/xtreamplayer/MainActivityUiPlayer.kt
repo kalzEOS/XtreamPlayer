@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.graphics.Color as AndroidColor
+import android.hardware.display.DisplayManager
 import android.net.Uri
 import android.view.KeyEvent
 import android.view.View
@@ -47,11 +48,14 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.MimeTypes
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
@@ -84,6 +88,8 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 private const val LIVE_EPG_REFRESH_INTERVAL_MS = 60_000L
 private const val LIVE_EPG_CHANNEL_CHANGE_DEBOUNCE_MS = 250L
@@ -91,6 +97,7 @@ private const val LIVE_GUIDE_ROW_LOGO_SIZE_DP = 34
 private const val LIVE_GUIDE_CATEGORY_BADGE_SIZE_DP = 42
 private const val LIVE_GUIDE_MIN_ROWS_VISIBLE = 6
 private const val LIVE_GUIDE_MAX_ROWS_VISIBLE = 10
+private const val NERD_STATS_REFRESH_INTERVAL_MS = 500L
 private val LANGUAGE_PREFIX_REGEX = Regex("^\\s*[A-Z]{2,3}\\s*-\\s*")
 private val BRACKET_TEXT_REGEX = Regex("\\[[^\\]]*\\]")
 private val PAREN_TEXT_REGEX = Regex("\\([^\\)]*\\)")
@@ -175,6 +182,27 @@ private data class ActiveSubtitle(
     }
     override fun hashCode(): Int = uri.hashCode()
 }
+
+private data class PlayerNerdStats(
+    val matchFrameRateEnabled: Boolean,
+    val sourceFrameRate: Float?,
+    val displayRefreshRate: Float?,
+    val frameRateMatched: Boolean?,
+    val videoCodec: String?,
+    val videoMimeType: String?,
+    val videoBitrateKbps: Float?,
+    val sourceResolution: String?,
+    val outputResolution: String?,
+    val audioCodec: String?,
+    val audioMimeType: String?,
+    val audioBitrateKbps: Float?,
+    val audioLanguage: String?,
+    val audioChannels: Int?,
+    val audioSampleRateHz: Int?,
+    val droppedFrames: Int,
+    val bufferedPercent: Int,
+    val playbackSpeed: Float
+)
 
 private fun sanitizeSubtitleQuery(rawTitle: String): String {
     if (rawTitle.isBlank()) return rawTitle
@@ -494,6 +522,9 @@ internal fun PlayerOverlay(
     var showPlaybackSettingsDialog by remember { mutableStateOf(false) }
     var showPlaybackSpeedDialog by remember { mutableStateOf(false) }
     var showResolutionDialog by remember { mutableStateOf(false) }
+    var showNerdStats by remember { mutableStateOf(false) }
+    var nerdStats by remember { mutableStateOf<PlayerNerdStats?>(null) }
+    var droppedVideoFrames by remember { mutableIntStateOf(0) }
     var subtitleDialogState by remember {
         mutableStateOf<SubtitleDialogState>(SubtitleDialogState.Idle)
     }
@@ -1113,6 +1144,40 @@ internal fun PlayerOverlay(
         }
     }
 
+    DisposableEffect(player, showNerdStats) {
+        val exoPlayer = player as? ExoPlayer
+        if (!showNerdStats || exoPlayer == null) {
+            onDispose {}
+        } else {
+            droppedVideoFrames = 0
+            val listener =
+                object : AnalyticsListener {
+                    override fun onDroppedVideoFrames(
+                        eventTime: AnalyticsListener.EventTime,
+                        droppedFrameCount: Int,
+                        elapsedMs: Long
+                    ) {
+                        droppedVideoFrames += droppedFrameCount
+                    }
+                }
+            exoPlayer.addAnalyticsListener(listener)
+            onDispose {
+                exoPlayer.removeAnalyticsListener(listener)
+            }
+        }
+    }
+
+    LaunchedEffect(showNerdStats, matchFrameRateEnabled, droppedVideoFrames, player, context) {
+        if (!showNerdStats) {
+            nerdStats = null
+            return@LaunchedEffect
+        }
+        while (showNerdStats) {
+            nerdStats = collectPlayerNerdStats(context, player, matchFrameRateEnabled, droppedVideoFrames)
+            delay(NERD_STATS_REFRESH_INTERVAL_MS)
+        }
+    }
+
     BackHandler(enabled = true) {
         when {
             showLiveGuide -> closeLiveGuide()
@@ -1350,6 +1415,15 @@ internal fun PlayerOverlay(
             )
         }
 
+        if (showNerdStats) {
+            PlayerNerdStatsPanel(
+                stats = nerdStats,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 12.dp, top = 64.dp)
+            )
+        }
+
         // Subtitle offset adjustment overlay with modal backdrop
         if (showSubtitleTimingDialog && activeSubtitle != null && isOffsetSupported(activeSubtitle?.fileName)) {
             SubtitleOffsetDialog(
@@ -1565,12 +1639,14 @@ internal fun PlayerOverlay(
         val resolutionLabel = "$resolutionMode \u2022 $selectedResolution"
         val showSpeedOption = currentContentType != ContentType.LIVE
         val matchFrameRateLabel = if (matchFrameRateEnabled) "On" else "Off"
+        val nerdStatsLabel = if (showNerdStats) "On" else "Off"
 
         PlaybackSettingsDialog(
                 audioLabel = selectedAudio,
                 speedLabel = speedLabel,
                 resolutionLabel = resolutionLabel,
                 matchFrameRateLabel = matchFrameRateLabel,
+                nerdStatsLabel = nerdStatsLabel,
                 showSpeedOption = showSpeedOption,
                 onAudio = {
                     showPlaybackSettingsDialog = false
@@ -1585,6 +1661,7 @@ internal fun PlayerOverlay(
                     showResolutionDialog = true
                 },
                 onToggleMatchFrameRate = { onMatchFrameRateChange(!matchFrameRateEnabled) },
+                onToggleNerdStats = { showNerdStats = !showNerdStats },
                 onDismiss = { showPlaybackSettingsDialog = false }
         )
     }
@@ -2175,6 +2252,208 @@ private fun formatProgramTimeRange(startMs: Long?, endMs: Long?): String? {
     val start = formatter.format(Date(startMs))
     val end = formatter.format(Date(endMs))
     return "$start-$end"
+}
+
+@Composable
+private fun PlayerNerdStatsPanel(
+    stats: PlayerNerdStats?,
+    modifier: Modifier = Modifier
+) {
+    val lines =
+        if (stats == null) {
+            listOf("Collecting player stats..." to Color.White)
+        } else {
+            val fpsText =
+                stats.sourceFrameRate?.let { String.format(Locale.US, "%.2f fps", it) } ?: "Unknown"
+            val hzText =
+                stats.displayRefreshRate?.let { String.format(Locale.US, "%.2f Hz", it) } ?: "Unknown"
+            val (compatibilityLabel, compatibilityReason) =
+                formatRefreshCompatibility(
+                    sourceFrameRate = stats.sourceFrameRate,
+                    displayRefreshRate = stats.displayRefreshRate,
+                    matchFrameRateEnabled = stats.matchFrameRateEnabled,
+                    frameRateMatched = stats.frameRateMatched
+                )
+            val compatibilityColor =
+                when (compatibilityLabel) {
+                    "Good" -> Color(0xFF22C55E)
+                    "Poor" -> Color(0xFFEF4444)
+                    "Disabled" -> Color(0xFF9CA3AF)
+                    else -> Color(0xFFF59E0B)
+                }
+            val videoCodecText = listOfNotNull(stats.videoCodec, stats.videoMimeType).joinToString(" / ")
+                .ifBlank { "Unknown" }
+            val audioCodecText = listOfNotNull(stats.audioCodec, stats.audioMimeType).joinToString(" / ")
+                .ifBlank { "Unknown" }
+            val sourceResolutionText = stats.sourceResolution ?: "Unknown"
+            val outputResolutionText = stats.outputResolution ?: "Unknown"
+            val videoBitrateText = stats.videoBitrateKbps?.let { String.format(Locale.US, "%.1f kbps", it) } ?: "Unknown"
+            val audioBitrateText = stats.audioBitrateKbps?.let { String.format(Locale.US, "%.1f kbps", it) } ?: "Unknown"
+            val audioDetails = buildString {
+                append(stats.audioLanguage ?: "Unknown")
+                stats.audioChannels?.let { append(" / ").append(it).append("ch") }
+                stats.audioSampleRateHz?.let { append(" / ").append(it).append("Hz") }
+            }
+            listOf(
+                "Match Frame Rate Request: ${if (stats.matchFrameRateEnabled) "On" else "Off"}" to Color.White,
+                "Source FPS: $fpsText" to Color.White,
+                "Display Refresh: $hzText" to Color.White,
+                "Refresh Compatibility: $compatibilityLabel" to compatibilityColor,
+                "Compatibility Detail: $compatibilityReason" to Color.White,
+                "Source Resolution: $sourceResolutionText" to Color.White,
+                "Output Resolution: $outputResolutionText" to Color.White,
+                "Video Codec: $videoCodecText" to Color.White,
+                "Video Bitrate: $videoBitrateText" to Color.White,
+                "Audio Codec: $audioCodecText" to Color.White,
+                "Audio Bitrate: $audioBitrateText" to Color.White,
+                "Audio: $audioDetails" to Color.White,
+                "Dropped Frames: ${stats.droppedFrames}" to Color.White,
+                "Buffered: ${stats.bufferedPercent}%" to Color.White,
+                "Speed: ${String.format(Locale.US, "%.2fx", stats.playbackSpeed)}" to Color.White
+            )
+        }
+
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(AppTheme.colors.overlayStrong.copy(alpha = 0.88f))
+            .border(1.dp, AppTheme.colors.borderStrong, RoundedCornerShape(8.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .width(360.dp)
+    ) {
+        Text(
+            text = "Stats for nerds",
+            color = Color.White,
+            fontSize = 14.sp,
+            fontFamily = AppTheme.fontFamily,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 4.dp)
+        )
+        lines.forEach { (line, lineColor) ->
+            Text(
+                text = line,
+                color = lineColor,
+                fontSize = 12.sp,
+                fontFamily = AppTheme.fontFamily
+            )
+        }
+    }
+}
+
+private fun collectPlayerNerdStats(
+    context: Context,
+    player: Player,
+    matchFrameRateEnabled: Boolean,
+    droppedFrames: Int
+): PlayerNerdStats {
+    val videoFormat = selectedTrackFormat(player, C.TRACK_TYPE_VIDEO)
+    val audioFormat = selectedTrackFormat(player, C.TRACK_TYPE_AUDIO)
+    val sourceFrameRate = videoFormat?.frameRate?.takeIf { it.isFinite() && it > 0f }
+    val displayRefreshRate = currentDisplayRefreshRateHz(context)
+    val frameRateMatched = computeFrameRateMatch(sourceFrameRate, displayRefreshRate, matchFrameRateEnabled)
+    val sourceResolution = formatResolution(videoFormat?.width ?: 0, videoFormat?.height ?: 0)
+    val outputResolution = formatResolution(player.videoSize.width, player.videoSize.height)
+
+    return PlayerNerdStats(
+        matchFrameRateEnabled = matchFrameRateEnabled,
+        sourceFrameRate = sourceFrameRate,
+        displayRefreshRate = displayRefreshRate,
+        frameRateMatched = frameRateMatched,
+        videoCodec = videoFormat?.codecs,
+        videoMimeType = videoFormat?.sampleMimeType,
+        videoBitrateKbps = videoFormat?.bitrate?.takeIf { it > 0 }?.div(1000f),
+        sourceResolution = sourceResolution,
+        outputResolution = outputResolution,
+        audioCodec = audioFormat?.codecs,
+        audioMimeType = audioFormat?.sampleMimeType,
+        audioBitrateKbps = audioFormat?.bitrate?.takeIf { it > 0 }?.div(1000f),
+        audioLanguage = audioFormat?.language,
+        audioChannels = audioFormat?.channelCount?.takeIf { it > 0 },
+        audioSampleRateHz = audioFormat?.sampleRate?.takeIf { it > 0 },
+        droppedFrames = droppedFrames,
+        bufferedPercent = player.bufferedPercentage.coerceAtLeast(0),
+        playbackSpeed = player.playbackParameters.speed
+    )
+}
+
+private fun selectedTrackFormat(player: Player, trackType: Int): Format? {
+    val tracks = player.currentTracks.groups
+    tracks.forEach { group ->
+        if (group.type != trackType) return@forEach
+        for (trackIndex in 0 until group.length) {
+            if (group.isTrackSelected(trackIndex)) {
+                return group.getTrackFormat(trackIndex)
+            }
+        }
+    }
+    tracks.forEach { group ->
+        if (group.type != trackType) return@forEach
+        for (trackIndex in 0 until group.length) {
+            if (group.isTrackSupported(trackIndex)) {
+                return group.getTrackFormat(trackIndex)
+            }
+        }
+    }
+    return null
+}
+
+private fun currentDisplayRefreshRateHz(context: Context): Float? {
+    val activityDisplayRate = context.findActivity()?.display?.refreshRate
+    if (activityDisplayRate != null && activityDisplayRate > 0f) {
+        return activityDisplayRate
+    }
+    val manager = context.getSystemService(DisplayManager::class.java) ?: return null
+    val display = manager.getDisplay(android.view.Display.DEFAULT_DISPLAY) ?: return null
+    return display.refreshRate.takeIf { it > 0f }
+}
+
+private fun computeFrameRateMatch(
+    sourceFrameRate: Float?,
+    displayRefreshRate: Float?,
+    matchFrameRateEnabled: Boolean
+): Boolean? {
+    if (sourceFrameRate == null || displayRefreshRate == null) return null
+    if (!matchFrameRateEnabled) return false
+    val toleranceHz = 0.5f
+    if (abs(displayRefreshRate - sourceFrameRate) <= toleranceHz) return true
+    val multiple = (displayRefreshRate / sourceFrameRate).roundToInt().coerceAtLeast(1)
+    return abs(displayRefreshRate - (sourceFrameRate * multiple)) <= toleranceHz
+}
+
+private fun formatRefreshCompatibility(
+    sourceFrameRate: Float?,
+    displayRefreshRate: Float?,
+    matchFrameRateEnabled: Boolean,
+    frameRateMatched: Boolean?
+): Pair<String, String> {
+    if (!matchFrameRateEnabled) {
+        return "Disabled" to "Match frame rate is off."
+    }
+    if (sourceFrameRate == null || displayRefreshRate == null) {
+        return "Unknown" to "Missing source FPS or display refresh data."
+    }
+
+    val ratio = displayRefreshRate / sourceFrameRate
+    val sourceText = String.format(Locale.US, "%.2f", sourceFrameRate)
+    val displayText = String.format(Locale.US, "%.2f", displayRefreshRate)
+    val ratioText = String.format(Locale.US, "%.2f", ratio)
+    if (frameRateMatched == true) {
+        return "Good" to "$sourceText fps on $displayText Hz (${ratioText}x) is a clean cadence."
+    }
+
+    val ratioTimesTwo = ratio * 2f
+    val nearHalfStep = abs(ratioTimesTwo - ratioTimesTwo.roundToInt()) <= 0.03f
+    val oddHalfStep = ratioTimesTwo.roundToInt() % 2 != 0
+    if (nearHalfStep && oddHalfStep) {
+        return "Poor" to "$sourceText fps on $displayText Hz (${ratioText}x) likely uses uneven cadence (e.g. 3:2)."
+    }
+
+    return "Poor" to "$sourceText fps on $displayText Hz (${ratioText}x) is not a clean multiple; judder is possible."
+}
+
+private fun formatResolution(width: Int, height: Int): String? {
+    if (width <= 0 || height <= 0) return null
+    return "${width}x${height}"
 }
 
 private fun isTextTrackEnabled(parameters: TrackSelectionParameters): Boolean {

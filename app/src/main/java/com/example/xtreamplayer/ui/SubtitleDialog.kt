@@ -1475,17 +1475,20 @@ fun PlaybackSettingsDialog(
     speedLabel: String,
     resolutionLabel: String,
     matchFrameRateLabel: String,
+    nerdStatsLabel: String,
     showSpeedOption: Boolean,
     onAudio: () -> Unit,
     onSpeed: () -> Unit,
     onResolution: () -> Unit,
     onToggleMatchFrameRate: () -> Unit,
+    onToggleNerdStats: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val audioFocusRequester = remember { FocusRequester() }
     val speedFocusRequester = remember { FocusRequester() }
     val resolutionFocusRequester = remember { FocusRequester() }
     val matchFrameRateFocusRequester = remember { FocusRequester() }
+    val nerdStatsFocusRequester = remember { FocusRequester() }
     val closeFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
@@ -1546,6 +1549,12 @@ fun PlaybackSettingsDialog(
                     value = matchFrameRateLabel,
                     focusRequester = matchFrameRateFocusRequester,
                     onClick = onToggleMatchFrameRate
+                )
+                SettingsOptionRow(
+                    label = "Stats for nerds",
+                    value = nerdStatsLabel,
+                    focusRequester = nerdStatsFocusRequester,
+                    onClick = onToggleNerdStats
                 )
 
                 Spacer(modifier = Modifier.height(4.dp))
