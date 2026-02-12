@@ -87,6 +87,13 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
         lastSettings = settings
         // Auto-play is handled manually in UI for series episodes only
         player.repeatMode = Player.REPEAT_MODE_OFF
+        player.setVideoChangeFrameRateStrategy(
+            if (settings.matchFrameRateEnabled) {
+                C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS
+            } else {
+                C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
+            }
+        )
 
         val builder = player.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !settings.subtitlesEnabled)

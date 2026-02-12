@@ -468,11 +468,13 @@ internal fun PlayerOverlay(
         onRequestOpenSubtitlesApiKey: () -> Unit,
         onExit: () -> Unit,
         autoPlayNextEnabled: Boolean,
+        matchFrameRateEnabled: Boolean,
         nextEpisodeThresholdSeconds: Int,
         currentContentType: ContentType?,
         nextEpisodeTitle: String?,
         hasNextEpisode: Boolean,
         onPlayNextEpisode: () -> Unit,
+        onMatchFrameRateChange: (Boolean) -> Unit,
         onLiveChannelSwitch: (Int) -> Boolean,
         onLiveGuideChannelSelect: (ContentItem, List<ContentItem>) -> Unit,
         loadLiveNowNext: suspend (ContentItem) -> Result<LiveNowNextEpg?>,
@@ -1562,11 +1564,13 @@ internal fun PlayerOverlay(
                 }
         val resolutionLabel = "$resolutionMode \u2022 $selectedResolution"
         val showSpeedOption = currentContentType != ContentType.LIVE
+        val matchFrameRateLabel = if (matchFrameRateEnabled) "On" else "Off"
 
         PlaybackSettingsDialog(
                 audioLabel = selectedAudio,
                 speedLabel = speedLabel,
                 resolutionLabel = resolutionLabel,
+                matchFrameRateLabel = matchFrameRateLabel,
                 showSpeedOption = showSpeedOption,
                 onAudio = {
                     showPlaybackSettingsDialog = false
@@ -1580,6 +1584,7 @@ internal fun PlayerOverlay(
                     showPlaybackSettingsDialog = false
                     showResolutionDialog = true
                 },
+                onToggleMatchFrameRate = { onMatchFrameRateChange(!matchFrameRateEnabled) },
                 onDismiss = { showPlaybackSettingsDialog = false }
         )
     }

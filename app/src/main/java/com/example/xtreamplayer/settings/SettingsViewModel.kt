@@ -44,6 +44,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setMatchFrameRateEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.setMatchFrameRateEnabled(enabled)
+        }
+    }
+
     fun toggleCheckUpdatesOnStartup() {
         viewModelScope.launch {
             repository.setCheckUpdatesOnStartup(!settings.value.checkUpdatesOnStartup)

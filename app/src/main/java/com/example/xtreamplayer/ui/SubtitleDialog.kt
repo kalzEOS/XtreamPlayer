@@ -1474,15 +1474,18 @@ fun PlaybackSettingsDialog(
     audioLabel: String,
     speedLabel: String,
     resolutionLabel: String,
+    matchFrameRateLabel: String,
     showSpeedOption: Boolean,
     onAudio: () -> Unit,
     onSpeed: () -> Unit,
     onResolution: () -> Unit,
+    onToggleMatchFrameRate: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val audioFocusRequester = remember { FocusRequester() }
     val speedFocusRequester = remember { FocusRequester() }
     val resolutionFocusRequester = remember { FocusRequester() }
+    val matchFrameRateFocusRequester = remember { FocusRequester() }
     val closeFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
@@ -1537,6 +1540,12 @@ fun PlaybackSettingsDialog(
                     value = resolutionLabel,
                     focusRequester = resolutionFocusRequester,
                     onClick = onResolution
+                )
+                SettingsOptionRow(
+                    label = "Match frame rate",
+                    value = matchFrameRateLabel,
+                    focusRequester = matchFrameRateFocusRequester,
+                    onClick = onToggleMatchFrameRate
                 )
 
                 Spacer(modifier = Modifier.height(4.dp))

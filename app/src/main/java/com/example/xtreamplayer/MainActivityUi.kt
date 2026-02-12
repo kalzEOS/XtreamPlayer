@@ -1950,6 +1950,9 @@ fun RootScreen(
                     resumePositionMs = null
                 },
                 onPlayNextEpisode = { playbackEngine.player.seekToNextMediaItem() },
+                onMatchFrameRateChange = { enabled ->
+                    settingsViewModel.setMatchFrameRateEnabled(enabled)
+                },
                 onLiveChannelSwitch = switchLiveChannel,
                 onLiveGuideChannelSelect = { item, channels ->
                     handlePlayItem(item, channels)
