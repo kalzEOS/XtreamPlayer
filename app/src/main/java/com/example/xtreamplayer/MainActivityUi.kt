@@ -1,3 +1,5 @@
+@file:OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package com.example.xtreamplayer
 
 import android.Manifest
@@ -1950,6 +1952,10 @@ fun RootScreen(
                     resumePositionMs = null
                 },
                 onPlayNextEpisode = { playbackEngine.player.seekToNextMediaItem() },
+                onMatchFrameRateChange = { enabled ->
+                    playbackEngine.applySettings(settings.copy(matchFrameRateEnabled = enabled))
+                    settingsViewModel.setMatchFrameRateEnabled(enabled)
+                },
                 onLiveChannelSwitch = switchLiveChannel,
                 onLiveGuideChannelSelect = { item, channels ->
                     handlePlayItem(item, channels)

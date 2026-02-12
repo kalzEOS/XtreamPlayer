@@ -21,6 +21,7 @@ class SettingsRepository(private val context: Context) {
         val autoPlay = prefs[Keys.AUTO_PLAY_NEXT] ?: true
         val nextEpisodeThreshold = prefs[Keys.NEXT_EPISODE_THRESHOLD] ?: 45
         val subtitles = prefs[Keys.SUBTITLES_ENABLED] ?: true
+        val matchFrameRate = prefs[Keys.MATCH_FRAME_RATE_ENABLED] ?: true
         val checkUpdatesOnStartup = prefs[Keys.CHECK_UPDATES_ON_STARTUP] ?: true
         val rememberLogin = prefs[Keys.REMEMBER_LOGIN] ?: true
         val autoSignIn = prefs[Keys.AUTO_SIGN_IN] ?: true
@@ -38,6 +39,7 @@ class SettingsRepository(private val context: Context) {
             autoPlayNext = autoPlay,
             nextEpisodeThresholdSeconds = nextEpisodeThreshold,
             subtitlesEnabled = subtitles,
+            matchFrameRateEnabled = matchFrameRate,
             checkUpdatesOnStartup = checkUpdatesOnStartup,
             rememberLogin = rememberLogin,
             autoSignIn = autoSignIn,
@@ -117,6 +119,12 @@ class SettingsRepository(private val context: Context) {
     suspend fun setSubtitlesEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[Keys.SUBTITLES_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setMatchFrameRateEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.MATCH_FRAME_RATE_ENABLED] = enabled
         }
     }
 
@@ -233,6 +241,7 @@ class SettingsRepository(private val context: Context) {
         val AUTO_PLAY_NEXT = booleanPreferencesKey("auto_play_next")
         val NEXT_EPISODE_THRESHOLD = intPreferencesKey("next_episode_threshold")
         val SUBTITLES_ENABLED = booleanPreferencesKey("subtitles_enabled")
+        val MATCH_FRAME_RATE_ENABLED = booleanPreferencesKey("match_frame_rate_enabled")
         val CHECK_UPDATES_ON_STARTUP = booleanPreferencesKey("check_updates_on_startup")
         val REMEMBER_LOGIN = booleanPreferencesKey("remember_login")
         val AUTO_SIGN_IN = booleanPreferencesKey("auto_sign_in")

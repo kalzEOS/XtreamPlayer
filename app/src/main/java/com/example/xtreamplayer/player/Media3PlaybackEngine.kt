@@ -45,6 +45,8 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
     private var loudnessSessionId: Int = C.AUDIO_SESSION_ID_UNSET
     private var boostDb: Float = 0f
     private var lastSettings: SettingsState = SettingsState()
+    private var hasAppliedSettings = false
+    private var appliedFrameRateStrategy: Int = C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
     private var subtitleTrackSelectionListener: Player.Listener? = null
 
     init {
@@ -84,21 +86,33 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
 
     @OptIn(UnstableApi::class)
     override fun applySettings(settings: SettingsState) {
+        val previousSettings = lastSettings
+        val isFirstApply = !hasAppliedSettings
         lastSettings = settings
+        hasAppliedSettings = true
+
         // Auto-play is handled manually in UI for series episodes only
-        player.repeatMode = Player.REPEAT_MODE_OFF
+        if (isFirstApply || player.repeatMode != Player.REPEAT_MODE_OFF) {
+            player.repeatMode = Player.REPEAT_MODE_OFF
+        }
 
-        val builder = player.trackSelectionParameters.buildUpon()
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !settings.subtitlesEnabled)
-            .setAudioOffloadPreferences(
-                TrackSelectionParameters.AudioOffloadPreferences.Builder()
-                    .setAudioOffloadMode(
-                        TrackSelectionParameters.AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_DISABLED
-                    )
-                    .build()
-            )
+        if (isFirstApply || previousSettings.matchFrameRateEnabled != settings.matchFrameRateEnabled) {
+            val targetStrategy = desiredFrameRateStrategy(settings.matchFrameRateEnabled)
+            applyFrameRateStrategyIfNeeded(targetStrategy)
+        }
 
-        player.trackSelectionParameters = builder.build()
+        if (isFirstApply || previousSettings.subtitlesEnabled != settings.subtitlesEnabled) {
+            val builder = player.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !settings.subtitlesEnabled)
+                .setAudioOffloadPreferences(
+                    TrackSelectionParameters.AudioOffloadPreferences.Builder()
+                        .setAudioOffloadMode(
+                            TrackSelectionParameters.AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_DISABLED
+                        )
+                        .build()
+                )
+            player.trackSelectionParameters = builder.build()
+        }
     }
 
     fun release() {
@@ -648,6 +662,20 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
         player.playWhenReady = wasPlaying
     }
 
+    private fun desiredFrameRateStrategy(matchFrameRateEnabled: Boolean): Int {
+        return if (matchFrameRateEnabled) {
+            C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS
+        } else {
+            C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
+        }
+    }
+
+    private fun applyFrameRateStrategyIfNeeded(strategy: Int) {
+        if (appliedFrameRateStrategy == strategy) return
+        player.setVideoChangeFrameRateStrategy(strategy)
+        appliedFrameRateStrategy = strategy
+    }
+
     private fun getLanguageName(languageCode: String): String {
         return when (languageCode.lowercase()) {
             "en", "eng" -> "English"
@@ -838,6 +866,7 @@ enum class BufferProfile(
 private const val SEEK_BACK_INCREMENT_MS = 15_000L
 private const val SEEK_FORWARD_INCREMENT_MS = 30_000L
 
+@OptIn(UnstableApi::class)
 private fun buildLoadControl(profile: BufferProfile): DefaultLoadControl {
     return DefaultLoadControl.Builder()
         .setBufferDurationsMs(
