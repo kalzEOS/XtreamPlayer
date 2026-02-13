@@ -19,6 +19,11 @@ data class CachedSubtitle(
     val fileName: String
 )
 
+private data class CachedSubtitleDescriptor(
+    val mediaKey: String,
+    val language: String
+)
+
 class SubtitleRepository(
     private val context: Context,
     private val api: OpenSubtitlesApi
@@ -183,12 +188,14 @@ class SubtitleRepository(
     }
 
     fun getCachedSubtitle(mediaId: String, language: String = "en"): CachedSubtitle? {
-        val fileName = "${mediaId}_${language}.srt"
+        val safeMediaId = mediaCacheKey(mediaId)
+        val safeLanguage = sanitizeFileComponent(language.lowercase(), fallback = "en")
+        val fileName = "${safeMediaId}_${safeLanguage}.srt"
         val file = File(subtitleDir, fileName)
         return if (file.exists()) {
             CachedSubtitle(
                 uri = Uri.fromFile(file),
-                language = language,
+                language = safeLanguage,
                 fileName = fileName
             )
         } else {
@@ -197,14 +204,15 @@ class SubtitleRepository(
     }
 
     fun getCachedSubtitlesForMedia(mediaId: String): List<CachedSubtitle> {
+        val targetMediaKey = mediaCacheKey(mediaId)
         return listSubtitleFiles()
             .asSequence()
-            .filter { it.name.startsWith("${mediaId}_") }
-            .map { file ->
-                val language = file.nameWithoutExtension.substringAfterLast("_")
+            .mapNotNull { file ->
+                val descriptor = parseCachedSubtitleDescriptor(file) ?: return@mapNotNull null
+                if (descriptor.mediaKey != targetMediaKey) return@mapNotNull null
                 CachedSubtitle(
                     uri = Uri.fromFile(file),
-                    language = language,
+                    language = descriptor.language,
                     fileName = file.name
                 )
             }
@@ -262,9 +270,24 @@ class SubtitleRepository(
         invalidateSubtitleFileSnapshot()
     }
 
+    fun clearCacheAndCount(): Int {
+        val files = listSubtitleFiles()
+        var removed = 0
+        files.forEach { file ->
+            if (file.delete()) {
+                removed += 1
+            }
+        }
+        invalidateSubtitleFileSnapshot()
+        return removed
+    }
+
     fun clearCacheForMedia(mediaId: String) {
+        val targetMediaKey = mediaCacheKey(mediaId)
         listSubtitleFiles()
-            .filter { it.name.startsWith("${mediaId}_") }
+            .filter { file ->
+                parseCachedSubtitleDescriptor(file)?.mediaKey == targetMediaKey
+            }
             .forEach { it.delete() }
         invalidateSubtitleFileSnapshot()
     }
@@ -290,6 +313,20 @@ class SubtitleRepository(
             .replace(Regex("""[^A-Za-z0-9._-]"""), "_")
             .trim('_', '.', ' ')
         return normalized.takeIf { it.isNotBlank() } ?: fallback
+    }
+
+    private fun mediaCacheKey(mediaId: String): String {
+        return sanitizeFileComponent(mediaId, fallback = "media")
+    }
+
+    private fun parseCachedSubtitleDescriptor(file: File): CachedSubtitleDescriptor? {
+        val base = file.nameWithoutExtension
+        val separator = base.lastIndexOf('_')
+        if (separator <= 0 || separator >= base.lastIndex) return null
+        val mediaKey = base.substring(0, separator)
+        val language = base.substring(separator + 1)
+        if (mediaKey.isBlank() || language.isBlank()) return null
+        return CachedSubtitleDescriptor(mediaKey = mediaKey, language = language)
     }
 
     private fun sanitizeSubtitleExtension(rawExt: String): String {

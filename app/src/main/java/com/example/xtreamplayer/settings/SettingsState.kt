@@ -22,10 +22,30 @@ enum class ClockFormatOption(val label: String) {
     HOUR_24("24-hour")
 }
 
+enum class SubtitleCacheAutoClearOption(
+    val intervalMs: Long,
+    val label: String
+) {
+    OFF(0L, "Off"),
+    ONE_DAY(24L * 60L * 60L * 1000L, "1 day"),
+    THREE_DAYS(3L * 24L * 60L * 60L * 1000L, "3 days"),
+    ONE_WEEK(7L * 24L * 60L * 60L * 1000L, "1 week"),
+    TWO_WEEKS(14L * 24L * 60L * 60L * 1000L, "2 weeks"),
+    THIRTY_DAYS(30L * 24L * 60L * 60L * 1000L, "30 days")
+}
+
+fun subtitleAutoClearLabel(intervalMs: Long): String {
+    return SubtitleCacheAutoClearOption.entries
+        .firstOrNull { it.intervalMs == intervalMs }
+        ?.label
+        ?: "Custom"
+}
+
 data class SettingsState(
     val autoPlayNext: Boolean = true,
     val nextEpisodeThresholdSeconds: Int = 45,
     val subtitlesEnabled: Boolean = true,
+    val subtitleCacheAutoClearIntervalMs: Long = SubtitleCacheAutoClearOption.THIRTY_DAYS.intervalMs,
     val matchFrameRateEnabled: Boolean = true,
     val checkUpdatesOnStartup: Boolean = true,
     val rememberLogin: Boolean = true,

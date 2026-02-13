@@ -163,6 +163,7 @@ import com.example.xtreamplayer.ui.NextEpisodeOverlay
 import com.example.xtreamplayer.ui.NextEpisodeThresholdDialog
 import com.example.xtreamplayer.ui.PlaybackSettingsDialog
 import com.example.xtreamplayer.ui.PlaybackSpeedDialog
+import com.example.xtreamplayer.ui.SubtitleCacheAutoClearDialog
 import com.example.xtreamplayer.ui.SubtitleDialogState
 import com.example.xtreamplayer.ui.SubtitleOptionsDialog
 import com.example.xtreamplayer.ui.SubtitleSearchDialog
@@ -236,6 +237,7 @@ private data class LibrarySyncRequest(
 private const val LOCAL_MEDIA_ID_PREFIX = "local:"
 private const val RESUME_MIN_WATCH_MS = 30_000L
 private const val LOCAL_RESUME_MAX_PROGRESS_PERCENT = 95L
+private const val SUBTITLE_AUTO_CLEAR_CHECK_INTERVAL_MS = 60L * 60L * 1000L
 
 @Composable
 fun RootScreen(
@@ -324,6 +326,8 @@ fun RootScreen(
     var showFontScaleDialog by showFontScaleDialogState
     val showNextEpisodeThresholdDialogState = remember { mutableStateOf(false) }
     var showNextEpisodeThresholdDialog by showNextEpisodeThresholdDialogState
+    val showSubtitleCacheAutoClearDialogState = remember { mutableStateOf(false) }
+    var showSubtitleCacheAutoClearDialog by showSubtitleCacheAutoClearDialogState
     var showLocalFilesGuest by remember { mutableStateOf(false) }
     val cacheClearNonceState = remember { mutableStateOf(0) }
     var cacheClearNonce by cacheClearNonceState
@@ -365,6 +369,33 @@ fun RootScreen(
 
     // Progressive sync coordinator
     val settingsRepository = remember { com.example.xtreamplayer.settings.SettingsRepository(context) }
+    LaunchedEffect(settings.subtitleCacheAutoClearIntervalMs) {
+        val intervalMs = settings.subtitleCacheAutoClearIntervalMs
+        if (intervalMs <= 0L) {
+            return@LaunchedEffect
+        }
+
+        while (true) {
+            if (activePlaybackQueue != null) {
+                delay(SUBTITLE_AUTO_CLEAR_CHECK_INTERVAL_MS)
+                continue
+            }
+            val nowMs = System.currentTimeMillis()
+            val lastRunMs = settingsRepository.subtitleCacheAutoClearLastRunMs()
+            if (lastRunMs <= 0L) {
+                settingsRepository.setSubtitleCacheAutoClearLastRunMs(nowMs)
+            } else if (nowMs - lastRunMs >= intervalMs) {
+                val removed = withContext(Dispatchers.IO) {
+                    subtitleRepository.clearCacheAndCount()
+                }
+                settingsRepository.setSubtitleCacheAutoClearLastRunMs(nowMs)
+                if (removed > 0) {
+                    Timber.d("Auto-cleared subtitle cache files: $removed")
+                }
+            }
+            delay(SUBTITLE_AUTO_CLEAR_CHECK_INTERVAL_MS)
+        }
+    }
     var progressiveSyncCoordinator by
             remember { mutableStateOf<com.example.xtreamplayer.content.ProgressiveSyncCoordinator?>(null) }
     val emptySyncStateFlow =
@@ -1193,7 +1224,6 @@ fun RootScreen(
                     }
                 }
             }
-
     fun savePlaybackProgress() {
         val player: ExoPlayer? = playbackEngine.player
         val safePlayer = player ?: return
@@ -1713,6 +1743,7 @@ fun RootScreen(
                         showUiScaleDialogState = showUiScaleDialogState,
                         showFontScaleDialogState = showFontScaleDialogState,
                         showNextEpisodeThresholdDialogState = showNextEpisodeThresholdDialogState,
+                        showSubtitleCacheAutoClearDialogState = showSubtitleCacheAutoClearDialogState,
                         showApiKeyDialogState = showApiKeyDialogState,
                         cacheClearNonceState = cacheClearNonceState,
                         contentRepository = contentRepository,
@@ -1816,6 +1847,13 @@ fun RootScreen(
                         currentSeconds = settings.nextEpisodeThresholdSeconds,
                         onSecondsChange = { settingsViewModel.setNextEpisodeThreshold(it) },
                         onDismiss = { showNextEpisodeThresholdDialog = false }
+                    )
+                }
+                if (showSubtitleCacheAutoClearDialog) {
+                    SubtitleCacheAutoClearDialog(
+                        currentIntervalMs = settings.subtitleCacheAutoClearIntervalMs,
+                        onIntervalChange = { settingsViewModel.setSubtitleCacheAutoClearInterval(it) },
+                        onDismiss = { showSubtitleCacheAutoClearDialog = false }
                     )
                 }
 
