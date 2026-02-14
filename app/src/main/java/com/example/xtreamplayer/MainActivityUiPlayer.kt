@@ -526,6 +526,9 @@ internal fun PlayerOverlay(
     var showPlaybackSpeedDialog by remember { mutableStateOf(false) }
     var showResolutionDialog by remember { mutableStateOf(false) }
     var showNerdStats by remember { mutableStateOf(false) }
+    var accessibilityAudioEnabled by remember {
+        mutableStateOf(playbackEngine.isAccessibilityAudioEnabled())
+    }
     var nerdStats by remember { mutableStateOf<PlayerNerdStats?>(null) }
     var droppedVideoFrames by remember { mutableIntStateOf(0) }
     var subtitleDialogState by remember {
@@ -934,6 +937,9 @@ internal fun PlayerOverlay(
 
                     override fun onTracksChanged(tracks: Tracks) {
                         hasEmbeddedSubtitles = hasEmbeddedTextTracks(player)
+                        if (playbackEngine.isAccessibilityAudioEnabled()) {
+                            playbackEngine.applyAccessibilityAudioPreference()
+                        }
                     }
 
                     override fun onPlaybackStateChanged(playbackState: Int) {
@@ -1678,11 +1684,7 @@ internal fun PlayerOverlay(
     }
 
     if (showPlaybackSettingsDialog) {
-        val audioTracks = playbackEngine.getAvailableAudioTracks()
         val videoTracks = playbackEngine.getAvailableVideoTracks()
-        val selectedAudio =
-                audioTracks.firstOrNull { it.isSelected }?.label
-                        ?: if (audioTracks.isEmpty()) "None" else "Auto"
         val selectedResolution =
                 videoTracks.firstOrNull { it.isSelected }?.label
                         ?: if (videoTracks.isEmpty()) "Unknown" else videoTracks.first().label
@@ -1696,19 +1698,16 @@ internal fun PlayerOverlay(
         val resolutionLabel = "$resolutionMode \u2022 $selectedResolution"
         val showSpeedOption = currentContentType != ContentType.LIVE
         val matchFrameRateLabel = if (matchFrameRateEnabled) "On" else "Off"
+        val accessibilityAudioLabel = if (accessibilityAudioEnabled) "On" else "Off"
         val nerdStatsLabel = if (showNerdStats) "On" else "Off"
 
         PlaybackSettingsDialog(
-                audioLabel = selectedAudio,
                 speedLabel = speedLabel,
                 resolutionLabel = resolutionLabel,
                 matchFrameRateLabel = matchFrameRateLabel,
+                accessibilityAudioLabel = accessibilityAudioLabel,
                 nerdStatsLabel = nerdStatsLabel,
                 showSpeedOption = showSpeedOption,
-                onAudio = {
-                    showPlaybackSettingsDialog = false
-                    showAudioTrackDialog = true
-                },
                 onSpeed = {
                     showPlaybackSettingsDialog = false
                     showPlaybackSpeedDialog = true
@@ -1718,6 +1717,11 @@ internal fun PlayerOverlay(
                     showResolutionDialog = true
                 },
                 onToggleMatchFrameRate = { onMatchFrameRateChange(!matchFrameRateEnabled) },
+                onToggleAccessibilityAudio = {
+                    val enabled = !accessibilityAudioEnabled
+                    accessibilityAudioEnabled = enabled
+                    playbackEngine.setAccessibilityAudioEnabled(enabled)
+                },
                 onToggleNerdStats = { showNerdStats = !showNerdStats },
                 onDismiss = { showPlaybackSettingsDialog = false }
         )
