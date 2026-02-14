@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Media3 control theming relies on intentional overrides of Exo private resources. -->
+    <issue id="PrivateResource">
+        <ignore path="app/src/main/res/values/dimens.xml" />
+        <ignore path="app/src/main/res/values/exo_overrides.xml" />
+        <ignore regexp="app/src/main/res/layout/exo_.*\.xml" />
+    </issue>
+
+    <!-- Dependency/new-version checks create churn and are reviewed separately from app lint. -->
+    <issue id="AndroidGradlePluginVersion" severity="ignore" />
+    <issue id="GradleDependency" severity="ignore" />
+    <issue id="NewerVersionAvailable" severity="ignore" />
+</lint>

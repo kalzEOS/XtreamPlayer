@@ -13,6 +13,7 @@ keystore.properties
 
 # Kotlin / Java
 *.class
+.kotlin/
 
 # Logs
 *.log
