@@ -1473,28 +1473,32 @@ fun AudioBoostDialog(
 
 @Composable
 fun PlaybackSettingsDialog(
-    audioLabel: String,
     speedLabel: String,
     resolutionLabel: String,
     matchFrameRateLabel: String,
+    accessibilityAudioLabel: String,
     nerdStatsLabel: String,
     showSpeedOption: Boolean,
-    onAudio: () -> Unit,
     onSpeed: () -> Unit,
     onResolution: () -> Unit,
     onToggleMatchFrameRate: () -> Unit,
+    onToggleAccessibilityAudio: () -> Unit,
     onToggleNerdStats: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val audioFocusRequester = remember { FocusRequester() }
     val speedFocusRequester = remember { FocusRequester() }
     val resolutionFocusRequester = remember { FocusRequester() }
     val matchFrameRateFocusRequester = remember { FocusRequester() }
+    val accessibilityAudioFocusRequester = remember { FocusRequester() }
     val nerdStatsFocusRequester = remember { FocusRequester() }
     val closeFocusRequester = remember { FocusRequester() }
 
-    LaunchedEffect(Unit) {
-        audioFocusRequester.requestFocus()
+    LaunchedEffect(showSpeedOption) {
+        if (showSpeedOption) {
+            speedFocusRequester.requestFocus()
+        } else {
+            resolutionFocusRequester.requestFocus()
+        }
     }
 
     AppDialog(
@@ -1526,12 +1530,6 @@ fun PlaybackSettingsDialog(
                     fontWeight = FontWeight.Bold
                 )
 
-                SettingsOptionRow(
-                    label = "Audio",
-                    value = audioLabel,
-                    focusRequester = audioFocusRequester,
-                    onClick = onAudio
-                )
                 if (showSpeedOption) {
                     SettingsOptionRow(
                         label = "Speed",
@@ -1551,6 +1549,12 @@ fun PlaybackSettingsDialog(
                     value = matchFrameRateLabel,
                     focusRequester = matchFrameRateFocusRequester,
                     onClick = onToggleMatchFrameRate
+                )
+                SettingsOptionRow(
+                    label = "Accessibility audio",
+                    value = accessibilityAudioLabel,
+                    focusRequester = accessibilityAudioFocusRequester,
+                    onClick = onToggleAccessibilityAudio
                 )
                 SettingsOptionRow(
                     label = "Stats for nerds",
