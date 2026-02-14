@@ -40,8 +40,9 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
@@ -87,9 +88,10 @@ fun LoginScreen(
     val colors = AppTheme.colors
     val borderColor = if (isFocused) colors.focus else colors.border
     val scrollState = rememberScrollState()
-    val configuration = LocalConfiguration.current
-    val baseScreenHeight = remember(configuration.orientation) { configuration.screenHeightDp }
-    val isCompactHeight = baseScreenHeight < 520
+    val density = LocalDensity.current
+    val windowInfo = LocalWindowInfo.current
+    val screenHeightDp = with(density) { windowInfo.containerSize.height.toDp() }
+    val isCompactHeight = screenHeightDp < 520.dp
     val verticalSpacing = if (isCompactHeight) 10.dp else 14.dp
     val panelPadding = if (isCompactHeight) 18.dp else 28.dp
     val titleSize = if (isCompactHeight) 20.sp else 24.sp

@@ -31,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -1367,7 +1368,7 @@ fun AudioBoostDialog(
     onDismiss: () -> Unit
 ) {
     val maxBoostDb = 12f
-    var localBoost by remember { mutableStateOf(boostDb.coerceIn(0f, maxBoostDb)) }
+    var localBoost by remember { mutableFloatStateOf(boostDb.coerceIn(0f, maxBoostDb)) }
     val closeFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(boostDb) {
@@ -2071,9 +2072,9 @@ private fun SubtitleOffsetControls(
 private fun OffsetButton(
     text: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
     small: Boolean = false,
-    focusRequester: FocusRequester? = null,
-    modifier: Modifier = Modifier
+    focusRequester: FocusRequester? = null
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
