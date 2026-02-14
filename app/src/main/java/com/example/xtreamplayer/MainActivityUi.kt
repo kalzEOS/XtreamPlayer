@@ -163,6 +163,7 @@ import com.example.xtreamplayer.ui.NextEpisodeOverlay
 import com.example.xtreamplayer.ui.NextEpisodeThresholdDialog
 import com.example.xtreamplayer.ui.PlaybackSettingsDialog
 import com.example.xtreamplayer.ui.PlaybackSpeedDialog
+import com.example.xtreamplayer.ui.SubtitleCacheAutoClearDialog
 import com.example.xtreamplayer.ui.SubtitleDialogState
 import com.example.xtreamplayer.ui.SubtitleOptionsDialog
 import com.example.xtreamplayer.ui.SubtitleSearchDialog
@@ -236,6 +237,7 @@ private data class LibrarySyncRequest(
 private const val LOCAL_MEDIA_ID_PREFIX = "local:"
 private const val RESUME_MIN_WATCH_MS = 30_000L
 private const val LOCAL_RESUME_MAX_PROGRESS_PERCENT = 95L
+private const val SUBTITLE_AUTO_CLEAR_CHECK_INTERVAL_MS = 60L * 60L * 1000L
 
 @Composable
 fun RootScreen(
@@ -324,6 +326,8 @@ fun RootScreen(
     var showFontScaleDialog by showFontScaleDialogState
     val showNextEpisodeThresholdDialogState = remember { mutableStateOf(false) }
     var showNextEpisodeThresholdDialog by showNextEpisodeThresholdDialogState
+    val showSubtitleCacheAutoClearDialogState = remember { mutableStateOf(false) }
+    var showSubtitleCacheAutoClearDialog by showSubtitleCacheAutoClearDialogState
     var showLocalFilesGuest by remember { mutableStateOf(false) }
     val cacheClearNonceState = remember { mutableStateOf(0) }
     var cacheClearNonce by cacheClearNonceState
@@ -345,6 +349,7 @@ fun RootScreen(
     var syncPausedForPlayback by remember { mutableStateOf(false) }
     var resumePositionMs by playerViewModel.resumePositionMs
     var resumeFocusId by playerViewModel.resumeFocusId
+    var activePlaybackSubtitleState by remember { mutableStateOf<PlaybackSubtitleState?>(null) }
     val resumeFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(navExpanded) {
@@ -365,6 +370,33 @@ fun RootScreen(
 
     // Progressive sync coordinator
     val settingsRepository = remember { com.example.xtreamplayer.settings.SettingsRepository(context) }
+    LaunchedEffect(settings.subtitleCacheAutoClearIntervalMs) {
+        val intervalMs = settings.subtitleCacheAutoClearIntervalMs
+        if (intervalMs <= 0L) {
+            return@LaunchedEffect
+        }
+
+        while (true) {
+            if (activePlaybackQueue != null) {
+                delay(SUBTITLE_AUTO_CLEAR_CHECK_INTERVAL_MS)
+                continue
+            }
+            val nowMs = System.currentTimeMillis()
+            val lastRunMs = settingsRepository.subtitleCacheAutoClearLastRunMs()
+            if (lastRunMs <= 0L) {
+                settingsRepository.setSubtitleCacheAutoClearLastRunMs(nowMs)
+            } else if (nowMs - lastRunMs >= intervalMs) {
+                val removed = withContext(Dispatchers.IO) {
+                    subtitleRepository.clearCacheAndCount()
+                }
+                settingsRepository.setSubtitleCacheAutoClearLastRunMs(nowMs)
+                if (removed > 0) {
+                    Timber.d("Auto-cleared subtitle cache files: $removed")
+                }
+            }
+            delay(SUBTITLE_AUTO_CLEAR_CHECK_INTERVAL_MS)
+        }
+    }
     var progressiveSyncCoordinator by
             remember { mutableStateOf<com.example.xtreamplayer.content.ProgressiveSyncCoordinator?>(null) }
     val emptySyncStateFlow =
@@ -1193,6 +1225,28 @@ fun RootScreen(
                     }
                 }
             }
+    val activeContinueWatchingEntry =
+        remember(activePlaybackItem, filteredContinueWatchingItems) {
+            val playbackItem = activePlaybackItem
+            if (playbackItem == null) {
+                null
+            } else {
+                filteredContinueWatchingItems.firstOrNull {
+                    it.item.id == playbackItem.id &&
+                        it.item.contentType == playbackItem.contentType
+                }
+            }
+        }
+    LaunchedEffect(
+        activePlaybackItem?.id,
+        activePlaybackItem?.contentType,
+        activeContinueWatchingEntry?.subtitleFileName,
+        activeContinueWatchingEntry?.subtitleLanguage,
+        activeContinueWatchingEntry?.subtitleLabel,
+        activeContinueWatchingEntry?.subtitleOffsetMs
+    ) {
+        activePlaybackSubtitleState = activeContinueWatchingEntry?.toPlaybackSubtitleStateOrNull()
+    }
 
     fun savePlaybackProgress() {
         val player: ExoPlayer? = playbackEngine.player
@@ -1214,6 +1268,7 @@ fun RootScreen(
                 }
             if (position >= minWatchMs) {
                 val progressPercent = if (duration > 0) (position * 100) / duration else 0
+                val subtitleState = activePlaybackSubtitleState
                 coroutineScope.launch {
                     if (duration > 0 && progressPercent >= 90) {
                         continueWatchingRepository.removeEntry(config, item)
@@ -1229,7 +1284,11 @@ fun RootScreen(
                                 item,
                                 position,
                                 duration,
-                                parentItem = parentItem
+                                parentItem = parentItem,
+                                subtitleFileName = subtitleState?.fileName,
+                                subtitleLanguage = subtitleState?.language,
+                                subtitleLabel = subtitleState?.label,
+                                subtitleOffsetMs = subtitleState?.offsetMs ?: 0L
                         )
                     }
                 }
@@ -1377,6 +1436,17 @@ fun RootScreen(
                         val title = mediaItem?.mediaMetadata?.title?.toString()
                         if (!title.isNullOrBlank()) {
                             activePlaybackTitle = title
+                        }
+                        val transitionedMediaId =
+                            mediaItem?.mediaId?.takeUnless { it.isBlank() }
+                                ?: playbackEngine.player.currentMediaItem?.mediaId?.takeUnless { it.isBlank() }
+                        if (!transitionedMediaId.isNullOrBlank()) {
+                            activePlaybackItems.firstOrNull { item ->
+                                queueMediaIdFor(item) == transitionedMediaId
+                            }?.let { matchedItem ->
+                                activePlaybackItem = matchedItem
+                                return
+                            }
                         }
                         val currentIndex = playbackEngine.player.currentMediaItemIndex
                         if (currentIndex < 0 || activePlaybackItems.isEmpty()) return
@@ -1713,6 +1783,7 @@ fun RootScreen(
                         showUiScaleDialogState = showUiScaleDialogState,
                         showFontScaleDialogState = showFontScaleDialogState,
                         showNextEpisodeThresholdDialogState = showNextEpisodeThresholdDialogState,
+                        showSubtitleCacheAutoClearDialogState = showSubtitleCacheAutoClearDialogState,
                         showApiKeyDialogState = showApiKeyDialogState,
                         cacheClearNonceState = cacheClearNonceState,
                         contentRepository = contentRepository,
@@ -1816,6 +1887,13 @@ fun RootScreen(
                         currentSeconds = settings.nextEpisodeThresholdSeconds,
                         onSecondsChange = { settingsViewModel.setNextEpisodeThreshold(it) },
                         onDismiss = { showNextEpisodeThresholdDialog = false }
+                    )
+                }
+                if (showSubtitleCacheAutoClearDialog) {
+                    SubtitleCacheAutoClearDialog(
+                        currentIntervalMs = settings.subtitleCacheAutoClearIntervalMs,
+                        onIntervalChange = { settingsViewModel.setSubtitleCacheAutoClearInterval(it) },
+                        onDismiss = { showSubtitleCacheAutoClearDialog = false }
                     )
                 }
 
@@ -1949,6 +2027,7 @@ fun RootScreen(
                     activePlaybackTitle = null
                     activePlaybackItem = null
                     activePlaybackSeriesParent = null
+                    activePlaybackSubtitleState = null
                     resumePositionMs = null
                 },
                 onPlayNextEpisode = { playbackEngine.player.seekToNextMediaItem() },
@@ -1959,6 +2038,10 @@ fun RootScreen(
                 onLiveChannelSwitch = switchLiveChannel,
                 onLiveGuideChannelSelect = { item, channels ->
                     handlePlayItem(item, channels)
+                },
+                continueWatchingSubtitleState = activePlaybackSubtitleState,
+                onSubtitleStateChanged = { state ->
+                    activePlaybackSubtitleState = state
                 },
                 loadLiveNowNext = loadLiveNowNext@{ item ->
                     val config = authState.activeConfig ?: return@loadLiveNowNext Result.success(null)
@@ -2180,6 +2263,10 @@ private fun isPlayableContent(item: ContentItem): Boolean {
     return item.contentType != ContentType.SERIES || !item.containerExtension.isNullOrBlank()
 }
 
+private fun queueMediaIdFor(item: ContentItem): String {
+    return "${item.contentType.name}:${item.id}"
+}
+
 private fun buildPlaybackQueue(
         items: List<ContentItem>,
         current: ContentItem,
@@ -2205,7 +2292,7 @@ private fun buildPlaybackQueue(
                         )
                 val uris = candidates.map(Uri::parse)
                 PlaybackQueueItem(
-                        mediaId = "${item.contentType.name}:${item.id}",
+                        mediaId = queueMediaIdFor(item),
                         title = item.title,
                         type = item.contentType,
                         uri = uris.first()

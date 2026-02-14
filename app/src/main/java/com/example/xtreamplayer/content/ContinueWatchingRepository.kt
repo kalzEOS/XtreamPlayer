@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.xtreamplayer.Section
 import com.example.xtreamplayer.auth.AuthConfig
+import com.example.xtreamplayer.resolveSubtitlePersistence
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOn
@@ -30,7 +31,11 @@ class ContinueWatchingRepository(private val context: Context) {
         item: ContentItem,
         positionMs: Long,
         durationMs: Long,
-        parentItem: ContentItem? = null
+        parentItem: ContentItem? = null,
+        subtitleFileName: String? = null,
+        subtitleLanguage: String? = null,
+        subtitleLabel: String? = null,
+        subtitleOffsetMs: Long = 0L
     ) {
         val key = contentKey(config, item)
         val timestampMs = System.currentTimeMillis()
@@ -38,9 +43,19 @@ class ContinueWatchingRepository(private val context: Context) {
         context.continueWatchingDataStore.edit { prefs ->
             val raw = prefs[Keys.CONTINUE_WATCHING_ENTRIES] ?: "[]"
             val entries = parseAllEntries(raw).toMutableList()
+            val existingEntry = entries.firstOrNull { it.key == key }
 
             // Remove existing entry with same key
             entries.removeAll { it.key == key }
+
+            val resolvedSubtitlePersistence =
+                resolveSubtitlePersistence(
+                    existingEntry = existingEntry,
+                    subtitleFileName = subtitleFileName,
+                    subtitleLanguage = subtitleLanguage,
+                    subtitleLabel = subtitleLabel,
+                    subtitleOffsetMs = subtitleOffsetMs
+                )
 
             // Add new entry at the front
             entries.add(
@@ -51,7 +66,11 @@ class ContinueWatchingRepository(private val context: Context) {
                     positionMs = positionMs,
                     durationMs = durationMs,
                     timestampMs = timestampMs,
-                    parentItem = parentItem
+                    parentItem = parentItem,
+                    subtitleFileName = resolvedSubtitlePersistence.subtitleFileName,
+                    subtitleLanguage = resolvedSubtitlePersistence.subtitleLanguage,
+                    subtitleLabel = resolvedSubtitlePersistence.subtitleLabel,
+                    subtitleOffsetMs = resolvedSubtitlePersistence.subtitleOffsetMs
                 )
             )
 
@@ -119,6 +138,12 @@ class ContinueWatchingRepository(private val context: Context) {
                 obj.put("parentStreamId", parent.streamId)
                 obj.put("parentContainerExtension", parent.containerExtension)
             }
+            entry.subtitleFileName?.let { obj.put("subtitleFileName", it) }
+            entry.subtitleLanguage?.let { obj.put("subtitleLanguage", it) }
+            entry.subtitleLabel?.let { obj.put("subtitleLabel", it) }
+            if (entry.subtitleOffsetMs != 0L) {
+                obj.put("subtitleOffsetMs", entry.subtitleOffsetMs)
+            }
             array.put(obj)
         }
         return array.toString()
@@ -150,6 +175,13 @@ class ContinueWatchingRepository(private val context: Context) {
                 val streamId = obj.optString("streamId")
                     .takeUnless { it.isBlank() || it == "null" }
                     ?: obj.optString("id")
+                val subtitleFileName = obj.optString("subtitleFileName")
+                    .takeUnless { it.isBlank() || it == "null" }
+                val subtitleLanguage = obj.optString("subtitleLanguage")
+                    .takeUnless { it.isBlank() || it == "null" }
+                val subtitleLabel = obj.optString("subtitleLabel")
+                    .takeUnless { it.isBlank() || it == "null" }
+                val subtitleOffsetMs = obj.optLong("subtitleOffsetMs", 0L)
 
                 val parentItem =
                     obj.optString("parentId").takeIf { it.isNotBlank() }?.let {
@@ -197,7 +229,11 @@ class ContinueWatchingRepository(private val context: Context) {
                         positionMs = positionMs,
                         durationMs = durationMs,
                         timestampMs = timestampMs,
-                        parentItem = parentItem
+                        parentItem = parentItem,
+                        subtitleFileName = subtitleFileName,
+                        subtitleLanguage = subtitleLanguage,
+                        subtitleLabel = subtitleLabel,
+                        subtitleOffsetMs = subtitleOffsetMs
                     )
                 )
             }

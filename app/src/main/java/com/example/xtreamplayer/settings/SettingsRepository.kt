@@ -21,6 +21,9 @@ class SettingsRepository(private val context: Context) {
         val autoPlay = prefs[Keys.AUTO_PLAY_NEXT] ?: true
         val nextEpisodeThreshold = prefs[Keys.NEXT_EPISODE_THRESHOLD] ?: 45
         val subtitles = prefs[Keys.SUBTITLES_ENABLED] ?: true
+        val subtitleCacheAutoClearIntervalMs =
+            prefs[Keys.SUBTITLE_CACHE_AUTO_CLEAR_INTERVAL_MS]
+                ?: SubtitleCacheAutoClearOption.THIRTY_DAYS.intervalMs
         val matchFrameRate = prefs[Keys.MATCH_FRAME_RATE_ENABLED] ?: true
         val checkUpdatesOnStartup = prefs[Keys.CHECK_UPDATES_ON_STARTUP] ?: true
         val rememberLogin = prefs[Keys.REMEMBER_LOGIN] ?: true
@@ -39,6 +42,7 @@ class SettingsRepository(private val context: Context) {
             autoPlayNext = autoPlay,
             nextEpisodeThresholdSeconds = nextEpisodeThreshold,
             subtitlesEnabled = subtitles,
+            subtitleCacheAutoClearIntervalMs = subtitleCacheAutoClearIntervalMs,
             matchFrameRateEnabled = matchFrameRate,
             checkUpdatesOnStartup = checkUpdatesOnStartup,
             rememberLogin = rememberLogin,
@@ -119,6 +123,25 @@ class SettingsRepository(private val context: Context) {
     suspend fun setSubtitlesEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[Keys.SUBTITLES_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setSubtitleCacheAutoClearInterval(intervalMs: Long) {
+        val normalized = intervalMs.coerceAtLeast(0L)
+        context.dataStore.edit { prefs ->
+            prefs[Keys.SUBTITLE_CACHE_AUTO_CLEAR_INTERVAL_MS] = normalized
+            prefs[Keys.SUBTITLE_CACHE_AUTO_CLEAR_LAST_RUN_MS] =
+                if (normalized > 0L) System.currentTimeMillis() else 0L
+        }
+    }
+
+    suspend fun subtitleCacheAutoClearLastRunMs(): Long {
+        return context.dataStore.data.firstOrNull()?.get(Keys.SUBTITLE_CACHE_AUTO_CLEAR_LAST_RUN_MS) ?: 0L
+    }
+
+    suspend fun setSubtitleCacheAutoClearLastRunMs(timestampMs: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.SUBTITLE_CACHE_AUTO_CLEAR_LAST_RUN_MS] = timestampMs.coerceAtLeast(0L)
         }
     }
 
@@ -241,6 +264,8 @@ class SettingsRepository(private val context: Context) {
         val AUTO_PLAY_NEXT = booleanPreferencesKey("auto_play_next")
         val NEXT_EPISODE_THRESHOLD = intPreferencesKey("next_episode_threshold")
         val SUBTITLES_ENABLED = booleanPreferencesKey("subtitles_enabled")
+        val SUBTITLE_CACHE_AUTO_CLEAR_INTERVAL_MS = longPreferencesKey("subtitle_cache_auto_clear_interval_ms")
+        val SUBTITLE_CACHE_AUTO_CLEAR_LAST_RUN_MS = longPreferencesKey("subtitle_cache_auto_clear_last_run_ms")
         val MATCH_FRAME_RATE_ENABLED = booleanPreferencesKey("match_frame_rate_enabled")
         val CHECK_UPDATES_ON_STARTUP = booleanPreferencesKey("check_updates_on_startup")
         val REMEMBER_LOGIN = booleanPreferencesKey("remember_login")

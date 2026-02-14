@@ -137,6 +137,7 @@ class XtreamPlayerView @JvmOverloads constructor(
     private var suppressSeekKeyUp = false
     private var suppressHideControllerBackKeyUp = false
     private var suppressHiddenSeekKeyUp = false
+    private var suppressHiddenSelectKeyUp = false
     private var isHiddenSeek = false
     private var suppressLiveGuideRightKeyUp = false
     private var seekHudLayout: LinearLayout? = null
@@ -391,11 +392,28 @@ class XtreamPlayerView @JvmOverloads constructor(
                     event.keyCode == KeyEvent.KEYCODE_ENTER ||
                     event.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
 
-            if (!controlsShowing) {
-                if (isSelect) {
-                    showController()
-                    return true
+            if (isSelect && event.repeatCount > 0) {
+                // Prevent hold-repeat from toggling play/pause continuously.
+                return true
+            }
+
+            if (isSelect && !controlsFullyVisible) {
+                if (!isLiveContent) {
+                    player?.let { currentPlayer ->
+                        if (currentPlayer.isPlaying) {
+                            currentPlayer.pause()
+                        } else {
+                            currentPlayer.play()
+                        }
+                        suppressHiddenSelectKeyUp = true
+                        return true
+                    }
                 }
+                showController()
+                return true
+            }
+
+            if (!controlsShowing) {
                 when (event.keyCode) {
                     KeyEvent.KEYCODE_DPAD_UP -> {
                         if (isLiveContent) {
@@ -458,6 +476,14 @@ class XtreamPlayerView @JvmOverloads constructor(
                 suppressHideControllerBackKeyUp = false
                 return true
             }
+            if (suppressHiddenSelectKeyUp &&
+                (event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                    event.keyCode == KeyEvent.KEYCODE_ENTER ||
+                    event.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER)
+            ) {
+                suppressHiddenSelectKeyUp = false
+                return true
+            }
             // Media3 PlayerView.dispatchKeyEvent does not check event action;
             // a D-pad ACTION_UP reaching super will show the controller.
             if (isLiveContent && !isControllerVisibleForNavigation() &&
@@ -486,6 +512,7 @@ class XtreamPlayerView @JvmOverloads constructor(
             }
             suppressLiveGuideRightKeyUp = false
             suppressHideControllerBackKeyUp = false
+            suppressHiddenSelectKeyUp = false
         }
         return super.dispatchKeyEvent(event)
     }
@@ -520,6 +547,14 @@ class XtreamPlayerView @JvmOverloads constructor(
                 keyCode == KeyEvent.KEYCODE_ESCAPE)
         ) {
             suppressHideControllerBackKeyUp = false
+            return true
+        }
+        if (suppressHiddenSelectKeyUp &&
+            (keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                keyCode == KeyEvent.KEYCODE_ENTER ||
+                keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER)
+        ) {
+            suppressHiddenSelectKeyUp = false
             return true
         }
         if (handleSeekKeyUp(keyCode)) {
@@ -799,14 +834,12 @@ class XtreamPlayerView @JvmOverloads constructor(
             isClickable = false
             progressTintList = ColorStateList.valueOf(Color.WHITE)
             progressBackgroundTintList = ColorStateList.valueOf(Color.argb(80, 255, 255, 255))
-            minimumHeight = (3 * dp).toInt()
-            maxHeight = (3 * dp).toInt()
         }
         layout.addView(
             progress,
             LinearLayout.LayoutParams(
                 (200 * dp).toInt(),
-                LinearLayout.LayoutParams.WRAP_CONTENT
+                (3 * dp).toInt()
             ).apply {
                 topMargin = (6 * dp).toInt()
             }

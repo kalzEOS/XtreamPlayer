@@ -6,5 +6,9 @@ data class ContinueWatchingEntry(
     val positionMs: Long,
     val durationMs: Long,
     val timestampMs: Long,
-    val parentItem: ContentItem? = null
+    val parentItem: ContentItem? = null,
+    val subtitleFileName: String? = null,
+    val subtitleLanguage: String? = null,
+    val subtitleLabel: String? = null,
+    val subtitleOffsetMs: Long = 0L
 )

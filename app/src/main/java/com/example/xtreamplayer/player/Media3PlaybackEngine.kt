@@ -656,10 +656,10 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
 
     private fun replaceMediaItemPreservingState(item: MediaItem) {
         val currentPosition = player.currentPosition
-        val wasPlaying = player.isPlaying
+        val wasPlayWhenReady = player.playWhenReady
         player.setMediaItem(item, currentPosition.coerceAtLeast(0L))
         player.prepare()
-        player.playWhenReady = wasPlaying
+        player.playWhenReady = wasPlayWhenReady
     }
 
     private fun desiredFrameRateStrategy(matchFrameRateEnabled: Boolean): Int {

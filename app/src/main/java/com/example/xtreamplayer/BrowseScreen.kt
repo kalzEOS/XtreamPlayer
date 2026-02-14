@@ -90,6 +90,7 @@ internal fun BrowseScreen(
     showUiScaleDialogState: MutableState<Boolean>,
     showFontScaleDialogState: MutableState<Boolean>,
     showNextEpisodeThresholdDialogState: MutableState<Boolean>,
+    showSubtitleCacheAutoClearDialogState: MutableState<Boolean>,
     showApiKeyDialogState: MutableState<Boolean>,
     cacheClearNonceState: MutableState<Int>,
     contentRepository: ContentRepository,
@@ -155,6 +156,7 @@ internal fun BrowseScreen(
     var showUiScaleDialog by showUiScaleDialogState
     var showFontScaleDialog by showFontScaleDialogState
     var showNextEpisodeThresholdDialog by showNextEpisodeThresholdDialogState
+    var showSubtitleCacheAutoClearDialog by showSubtitleCacheAutoClearDialogState
     var showApiKeyDialog by showApiKeyDialogState
     var cacheClearNonce by cacheClearNonceState
     val focusManager = LocalFocusManager.current
@@ -312,6 +314,7 @@ Row(modifier = Modifier.fillMaxSize()) {
                         onMoveLeft = handleMoveLeft,
                         onToggleAutoPlay = settingsViewModel::toggleAutoPlayNext,
                         onOpenNextEpisodeThreshold = { showNextEpisodeThresholdDialog = true },
+                        onOpenSubtitleCacheAutoClear = { showSubtitleCacheAutoClearDialog = true },
                         onToggleSubtitles = settingsViewModel::toggleSubtitles,
                         onOpenAppearance = { showAppearance = true },
                         onToggleRememberLogin =

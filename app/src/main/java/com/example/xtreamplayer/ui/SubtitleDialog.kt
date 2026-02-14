@@ -2054,11 +2054,12 @@ private fun SubtitleOffsetControls(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OffsetButton(
-                    text = "Done",
-                    onClick = onDismiss,
-                    small = true,
-                    focusRequester = doneRequester
+                DialogCloseButton(
+                    focusRequester = doneRequester,
+                    onDismiss = onDismiss,
+                    onNavigateUp = { plusSmallRequester.requestFocus() },
+                    label = "Done",
+                    modifier = Modifier.fillMaxWidth(0.5f)
                 )
             }
         }

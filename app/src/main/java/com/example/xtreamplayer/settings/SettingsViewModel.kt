@@ -44,6 +44,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setSubtitleCacheAutoClearInterval(intervalMs: Long) {
+        viewModelScope.launch {
+            repository.setSubtitleCacheAutoClearInterval(intervalMs)
+        }
+    }
+
     fun setMatchFrameRateEnabled(enabled: Boolean) {
         viewModelScope.launch {
             repository.setMatchFrameRateEnabled(enabled)
