@@ -6,6 +6,7 @@ import android.content.ContextWrapper
 import android.graphics.Color as AndroidColor
 import android.hardware.display.DisplayManager
 import android.net.Uri
+import android.os.Build
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
@@ -807,8 +808,9 @@ internal fun PlayerOverlay(
     }
 
     fun retryLiveGuideLoad() {
-        if (liveGuideLevel == LiveGuideLevel.CHANNELS && liveGuideSelectedCategory != null) {
-            openCategoryChannels(liveGuideSelectedCategory!!)
+        val selectedCategory = liveGuideSelectedCategory
+        if (liveGuideLevel == LiveGuideLevel.CHANNELS && selectedCategory != null) {
+            openCategoryChannels(selectedCategory)
         } else {
             refreshLiveCategories()
         }
@@ -2395,6 +2397,7 @@ private fun PlayerNerdStatsPanel(
     }
 }
 
+@OptIn(UnstableApi::class)
 private fun collectPlayerNerdStats(
     context: Context,
     player: Player,
@@ -2431,6 +2434,7 @@ private fun collectPlayerNerdStats(
     )
 }
 
+@OptIn(UnstableApi::class)
 private fun selectedTrackFormat(player: Player, trackType: Int): Format? {
     val tracks = player.currentTracks.groups
     tracks.forEach { group ->
@@ -2453,7 +2457,12 @@ private fun selectedTrackFormat(player: Player, trackType: Int): Format? {
 }
 
 private fun currentDisplayRefreshRateHz(context: Context): Float? {
-    val activityDisplayRate = context.findActivity()?.display?.refreshRate
+    val activityDisplayRate =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            context.findActivity()?.display?.refreshRate
+        } else {
+            null
+        }
     if (activityDisplayRate != null && activityDisplayRate > 0f) {
         return activityDisplayRate
     }

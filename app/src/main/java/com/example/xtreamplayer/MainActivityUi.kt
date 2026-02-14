@@ -1232,8 +1232,7 @@ fun RootScreen(
                 null
             } else {
                 filteredContinueWatchingItems.firstOrNull {
-                    it.item.id == playbackItem.id &&
-                        it.item.contentType == playbackItem.contentType
+                    isSameContentIdentity(it.item, playbackItem)
                 }
             }
         }
@@ -2263,6 +2262,17 @@ private fun isPlayableContent(item: ContentItem): Boolean {
     return item.contentType != ContentType.SERIES || !item.containerExtension.isNullOrBlank()
 }
 
+private fun isSameContentIdentity(first: ContentItem, second: ContentItem): Boolean {
+    if (first.contentType != second.contentType) return false
+    val firstStreamId = first.streamId?.takeUnless { it.isBlank() }
+    val secondStreamId = second.streamId?.takeUnless { it.isBlank() }
+    return if (firstStreamId != null && secondStreamId != null) {
+        firstStreamId == secondStreamId
+    } else {
+        first.id == second.id
+    }
+}
+
 private fun queueMediaIdFor(item: ContentItem): String {
     return "${item.contentType.name}:${item.id}"
 }
@@ -2351,19 +2361,17 @@ private fun resolveLocalFileName(context: Context, uri: Uri): String {
 }
 
 private fun getVolumeDisplayName(context: Context, volumeName: String): String {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-        val storageManager =
-                context.getSystemService(Context.STORAGE_SERVICE) as?
-                        android.os.storage.StorageManager
-        storageManager?.storageVolumes?.forEach { volume ->
-            val uuid = volume.uuid
-            // Match by UUID or check if it's primary
-            if (volumeName == "external_primary" && volume.isPrimary) {
-                return volume.getDescription(context) ?: "Internal Storage"
-            }
-            if (uuid != null && volumeName.contains(uuid, ignoreCase = true)) {
-                return volume.getDescription(context) ?: "External Storage"
-            }
+    val storageManager =
+            context.getSystemService(Context.STORAGE_SERVICE) as?
+                    android.os.storage.StorageManager
+    storageManager?.storageVolumes?.forEach { volume ->
+        val uuid = volume.uuid
+        // Match by UUID or check if it's primary
+        if (volumeName == "external_primary" && volume.isPrimary) {
+            return volume.getDescription(context) ?: "Internal Storage"
+        }
+        if (uuid != null && volumeName.contains(uuid, ignoreCase = true)) {
+            return volume.getDescription(context) ?: "External Storage"
         }
     }
     // Fallback display names
@@ -2430,6 +2438,8 @@ private fun scanMediaStoreMedia(context: Context): List<LocalFileItem> {
                             )
                         }
                     }
+        }.onFailure { error ->
+            Timber.w(error, "Failed to query local video media for volume: $volumeName")
         }
 
         // Scan audio
@@ -2472,6 +2482,8 @@ private fun scanMediaStoreMedia(context: Context): List<LocalFileItem> {
                             )
                         }
                     }
+        }.onFailure { error ->
+            Timber.w(error, "Failed to query local audio media for volume: $volumeName")
         }
     }
 
@@ -2480,11 +2492,27 @@ private fun scanMediaStoreMedia(context: Context): List<LocalFileItem> {
 }
 
 private fun hasStoragePermission(context: Context): Boolean {
-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VIDEO) ==
-                PackageManager.PERMISSION_GRANTED &&
-                ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) ==
-                        PackageManager.PERMISSION_GRANTED
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        val hasVideo =
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VIDEO) ==
+                PackageManager.PERMISSION_GRANTED
+        val hasAudio =
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+        val hasSelectedMedia =
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+            ) == PackageManager.PERMISSION_GRANTED
+        hasVideo || hasAudio || hasSelectedMedia
+    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val hasVideo =
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VIDEO) ==
+                PackageManager.PERMISSION_GRANTED
+        val hasAudio =
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+        hasVideo || hasAudio
     } else {
         ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) ==
                 PackageManager.PERMISSION_GRANTED
@@ -2492,7 +2520,13 @@ private fun hasStoragePermission(context: Context): Boolean {
 }
 
 private fun getRequiredMediaPermissions(): Array<String> {
-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        arrayOf(
+            Manifest.permission.READ_MEDIA_VIDEO,
+            Manifest.permission.READ_MEDIA_AUDIO,
+            Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+        )
+    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         arrayOf(Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_AUDIO)
     } else {
         arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
@@ -2669,7 +2703,7 @@ private fun LibrarySyncBanner(progress: Float, itemsIndexed: Int, section: Secti
         )
         Spacer(modifier = Modifier.height(8.dp))
         LinearProgressIndicator(
-                progress = progress.coerceIn(0.03f, 1f),
+                progress = { progress.coerceIn(0.03f, 1f) },
                 color = AppTheme.colors.accentAlt,
                 trackColor = AppTheme.colors.surfaceAlt,
                 modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50))
@@ -2683,9 +2717,9 @@ private fun formatPlaybackTime(timeMs: Long): String {
     val minutes = (totalSeconds % 3600) / 60
     val seconds = totalSeconds % 60
     return if (hours > 0) {
-        String.format("%d:%02d:%02d", hours, minutes, seconds)
+        String.format(Locale.getDefault(), "%d:%02d:%02d", hours, minutes, seconds)
     } else {
-        String.format("%d:%02d", minutes, seconds)
+        String.format(Locale.getDefault(), "%d:%02d", minutes, seconds)
     }
 }
 
@@ -8322,15 +8356,23 @@ fun ContinueWatchingScreen(
     val posterFontScale = remember(columns) { 4f / columns.toFloat() }
     val displayEntries =
             remember(continueWatchingItems) {
+                fun displayGroupingKey(entry: ContinueWatchingEntry): String {
+                    return if (entry.parentItem != null &&
+                            entry.item.contentType == ContentType.SERIES
+                    ) {
+                        val parentIdentity =
+                            entry.parentItem.streamId?.takeUnless { it.isBlank() }
+                                ?: entry.parentItem.id
+                        "series:$parentIdentity"
+                    } else {
+                        val itemIdentity =
+                            entry.item.streamId?.takeUnless { it.isBlank() } ?: entry.item.id
+                        "item:${entry.item.contentType.name}:$itemIdentity"
+                    }
+                }
                 val grouped =
                         continueWatchingItems.groupBy { entry ->
-                            if (entry.parentItem != null &&
-                                            entry.item.contentType == ContentType.SERIES
-                            ) {
-                                "series:${entry.parentItem.id}"
-                            } else {
-                                "item:${entry.item.id}"
-                            }
+                            displayGroupingKey(entry)
                         }
                 grouped.values.mapNotNull { group ->
                     val latest = group.maxByOrNull { it.timestampMs } ?: return@mapNotNull null
@@ -8352,7 +8394,11 @@ fun ContinueWatchingScreen(
                             displayItem = displayItemWithSubtitle,
                             resumeItem = latest.item,
                             parentItem = latest.parentItem,
-                            sourceItems = group.map { it.item }.distinctBy { it.id },
+                            sourceItems =
+                                    group.map { it.item }.distinctBy {
+                                        val identity = it.streamId?.takeUnless { id -> id.isBlank() } ?: it.id
+                                        "${it.contentType.name}:$identity"
+                                    },
                             positionMs = latest.positionMs,
                             durationMs = latest.durationMs,
                             timestampMs = latest.timestampMs

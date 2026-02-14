@@ -545,7 +545,7 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
                     if (fallback == null) {
                         fallback = candidate
                     }
-                    if (best == null || candidate.score > best!!.score) {
+                    if (best == null || candidate.score > (best?.score ?: Int.MIN_VALUE)) {
                         best = candidate
                     }
                 }
