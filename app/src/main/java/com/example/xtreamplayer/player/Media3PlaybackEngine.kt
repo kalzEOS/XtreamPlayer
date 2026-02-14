@@ -48,7 +48,6 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
     private var hasAppliedSettings = false
     private var appliedFrameRateStrategy: Int = C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
     private var subtitleTrackSelectionListener: Player.Listener? = null
-    private var accessibilityAudioEnabled: Boolean = false
 
     init {
         updateLoudnessEnhancer(player.audioSessionId)
@@ -383,39 +382,11 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
         }
     }
 
-    fun isAccessibilityAudioEnabled(): Boolean = accessibilityAudioEnabled
-
-    @OptIn(UnstableApi::class)
-    fun setAccessibilityAudioEnabled(enabled: Boolean) {
-        accessibilityAudioEnabled = enabled
-        val builder = player.trackSelectionParameters.buildUpon()
-            .setPreferredAudioRoleFlags(
-                if (enabled) C.ROLE_FLAG_DESCRIBES_VIDEO else 0
-            )
-        player.trackSelectionParameters = builder.build()
-        applyAccessibilityAudioPreference()
-    }
-
     @OptIn(UnstableApi::class)
     fun applyAccessibilityAudioPreference() {
         val currentTracks = player.currentTracks
         if (currentTracks.groups.isEmpty()) return
         val selected = findSelectedAudioTrack(currentTracks)
-
-        if (accessibilityAudioEnabled) {
-            if (selected != null && selected.isAccessibilityAudio) return
-            val preferredLanguage = selected?.format?.language
-            val candidate =
-                findAudioTrackCandidate(
-                    tracks = currentTracks,
-                    requireAccessibilityAudio = true,
-                    preferredLanguage = preferredLanguage
-                )
-            if (candidate != null) {
-                selectAudioTrack(candidate.groupIndex, candidate.trackIndex)
-            }
-            return
-        }
 
         if (selected != null && !selected.isAccessibilityAudio) return
         val preferredLanguage = selected?.format?.language
