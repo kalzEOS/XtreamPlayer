@@ -13,7 +13,9 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -84,6 +86,7 @@ import com.example.xtreamplayer.ui.theme.AppTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -94,6 +97,8 @@ import kotlin.math.roundToInt
 
 private const val LIVE_EPG_REFRESH_INTERVAL_MS = 60_000L
 private const val LIVE_EPG_CHANNEL_CHANGE_DEBOUNCE_MS = 250L
+private const val LIVE_GUIDE_NOW_NEXT_CACHE_TTL_MS = 60_000L
+private const val LIVE_GUIDE_NOW_NEXT_ERROR_RETRY_MS = 5_000L
 private const val LIVE_GUIDE_ROW_LOGO_SIZE_DP = 34
 private const val LIVE_GUIDE_CATEGORY_BADGE_SIZE_DP = 42
 private const val LIVE_GUIDE_MIN_ROWS_VISIBLE = 6
@@ -128,6 +133,10 @@ private data class LiveGuideCategoryVisual(
 
 private fun liveGuideCategoryUiKey(category: CategoryItem): String {
     return "${category.id}::${category.name.trim().uppercase(Locale.ROOT)}"
+}
+
+private fun liveGuideChannelCacheKey(channel: ContentItem): String {
+    return channel.streamId.takeIf { it.isNotBlank() } ?: channel.id
 }
 
 private fun parseLiveGuideCategoryVisual(categoryName: String): LiveGuideCategoryVisual {
@@ -569,6 +578,9 @@ internal fun PlayerOverlay(
     var liveGuideParentCategoryId by remember { mutableStateOf<String?>(null) }
     val liveGuideCategoryThumbnails = remember { mutableStateMapOf<String, String?>() }
     val liveGuideCategoryThumbnailRequested = remember { mutableStateMapOf<String, Boolean>() }
+    val liveGuideNowNextByChannelKey = remember { mutableStateMapOf<String, LiveNowNextEpg?>() }
+    val liveGuideNowNextFetchedAtMsByKey = remember { mutableStateMapOf<String, Long>() }
+    val liveGuideNowNextLoadingByKey = remember { mutableStateMapOf<String, Boolean>() }
 
     // Next episode overlay state
     var showNextEpisodeOverlay by remember { mutableStateOf(false) }
@@ -588,6 +600,21 @@ internal fun PlayerOverlay(
     val liveQueueItems = remember(activePlaybackItems) {
         activePlaybackItems.filter { it.contentType == ContentType.LIVE }
     }
+    val selectedLiveGuideChannel =
+        remember(liveGuideLevel, liveGuideChannelIndex, liveGuideChannels) {
+            if (liveGuideLevel == LiveGuideLevel.CHANNELS) {
+                liveGuideChannels.getOrNull(liveGuideChannelIndex)
+            } else {
+                null
+            }
+        }
+    val selectedLiveGuideChannelKey =
+        selectedLiveGuideChannel?.let(::liveGuideChannelCacheKey)
+    val selectedLiveGuideNowNext =
+        selectedLiveGuideChannelKey?.let { liveGuideNowNextByChannelKey[it] }
+    val selectedLiveGuideTickerText = buildLiveGuideTickerLabel(selectedLiveGuideNowNext)
+    val selectedLiveGuideTickerLoading =
+        selectedLiveGuideChannelKey?.let { liveGuideNowNextLoadingByKey[it] == true } == true
     fun toPlaybackSubtitleState(subtitle: ActiveSubtitle?, offsetMs: Long): PlaybackSubtitleState? {
         val safeSubtitle = subtitle ?: return null
         val fileName = safeSubtitle.fileName?.takeUnless { it.isBlank() } ?: return null
@@ -842,6 +869,65 @@ internal fun PlayerOverlay(
         }
     }
 
+    LaunchedEffect(currentContentType, liveGuideChannels, activePlaybackItem?.id, activePlaybackItem?.streamId) {
+        if (currentContentType != ContentType.LIVE) {
+            liveGuideNowNextByChannelKey.clear()
+            liveGuideNowNextFetchedAtMsByKey.clear()
+            liveGuideNowNextLoadingByKey.clear()
+            return@LaunchedEffect
+        }
+        val activeKey = activePlaybackItem?.let(::liveGuideChannelCacheKey)
+        val keysToKeep = buildSet {
+            activeKey?.let(::add)
+            liveGuideChannels.forEach { channel -> add(liveGuideChannelCacheKey(channel)) }
+        }
+        liveGuideNowNextByChannelKey.keys.retainAll(keysToKeep)
+        liveGuideNowNextFetchedAtMsByKey.keys.retainAll(keysToKeep)
+        liveGuideNowNextLoadingByKey.keys.retainAll(keysToKeep)
+    }
+
+    LaunchedEffect(showLiveGuide, liveGuideLevel, selectedLiveGuideChannelKey) {
+        if (!showLiveGuide || liveGuideLevel != LiveGuideLevel.CHANNELS) return@LaunchedEffect
+        while (isActive) {
+            val channel = selectedLiveGuideChannel ?: return@LaunchedEffect
+            val cacheKey = selectedLiveGuideChannelKey ?: return@LaunchedEffect
+            val nowMs = System.currentTimeMillis()
+            val lastFetchedAtMs = liveGuideNowNextFetchedAtMsByKey[cacheKey]
+            val cacheAgeMs = if (lastFetchedAtMs == null) Long.MAX_VALUE else nowMs - lastFetchedAtMs
+            val cacheIsFresh = cacheAgeMs < LIVE_GUIDE_NOW_NEXT_CACHE_TTL_MS
+
+            if (!cacheIsFresh && liveGuideNowNextLoadingByKey[cacheKey] != true) {
+                liveGuideNowNextLoadingByKey[cacheKey] = true
+                val result = runCatching { loadLiveNowNext(channel) }.getOrElse { Result.failure(it) }
+                result
+                    .onSuccess { epg ->
+                        val hasProgram =
+                            epg?.now?.title?.isNotBlank() == true || epg?.next?.title?.isNotBlank() == true
+                        liveGuideNowNextByChannelKey[cacheKey] = if (hasProgram) epg else null
+                        liveGuideNowNextFetchedAtMsByKey[cacheKey] = System.currentTimeMillis()
+                    }
+                    .onFailure {
+                        val hasCachedValue = liveGuideNowNextByChannelKey.containsKey(cacheKey)
+                        val retryDelayMs =
+                            if (hasCachedValue) LIVE_GUIDE_NOW_NEXT_CACHE_TTL_MS else LIVE_GUIDE_NOW_NEXT_ERROR_RETRY_MS
+                        liveGuideNowNextFetchedAtMsByKey[cacheKey] =
+                            System.currentTimeMillis() - (LIVE_GUIDE_NOW_NEXT_CACHE_TTL_MS - retryDelayMs)
+                    }
+                liveGuideNowNextLoadingByKey.remove(cacheKey)
+            }
+
+            val refreshedAtMs = liveGuideNowNextFetchedAtMsByKey[cacheKey]
+            val elapsedSinceRefreshMs =
+                if (refreshedAtMs == null) LIVE_GUIDE_NOW_NEXT_CACHE_TTL_MS else {
+                    (System.currentTimeMillis() - refreshedAtMs).coerceAtLeast(0L)
+                }
+            val waitMs =
+                (LIVE_GUIDE_NOW_NEXT_CACHE_TTL_MS - elapsedSinceRefreshMs)
+                    .coerceIn(1_000L, LIVE_GUIDE_NOW_NEXT_CACHE_TTL_MS)
+            delay(waitMs)
+        }
+    }
+
     LaunchedEffect(currentContentType, activePlaybackItem?.streamId) {
         val generation = liveEpgGeneration + 1
         liveEpgGeneration = generation
@@ -870,12 +956,17 @@ internal fun PlayerOverlay(
                 .onSuccess { epg ->
                     val hasProgram =
                         epg?.now?.title?.isNotBlank() == true || epg?.next?.title?.isNotBlank() == true
+                    val activeChannelCacheKey = liveGuideChannelCacheKey(liveItem)
                     if (hasProgram) {
                         liveNowNextEpg = epg
                         epg?.let { lastGoodLiveEpgByStream[streamId] = it }
+                        liveGuideNowNextByChannelKey[activeChannelCacheKey] = epg
                     } else {
                         liveNowNextEpg = null
+                        liveGuideNowNextByChannelKey[activeChannelCacheKey] = null
                     }
+                    liveGuideNowNextFetchedAtMsByKey[activeChannelCacheKey] = System.currentTimeMillis()
+                    liveGuideNowNextLoadingByKey.remove(activeChannelCacheKey)
                 }
                 .onFailure {
                     liveNowNextEpg = lastGoodLiveEpgByStream[streamId]
@@ -1509,6 +1600,8 @@ internal fun PlayerOverlay(
                     isLoading = liveGuideLoading,
                     errorMessage = liveGuideErrorMessage,
                     selectedCategoryName = liveGuideSelectedCategory?.name,
+                    selectedChannelTickerText = selectedLiveGuideTickerText,
+                    selectedChannelTickerLoading = selectedLiveGuideTickerLoading,
                     alignCategorySelectionToTop = liveGuideReturnCategoryAtTop,
                     onCategorySelectionAligned = { liveGuideReturnCategoryAtTop = false },
                     categoryThumbnailProvider = { category ->
@@ -1753,6 +1846,8 @@ private fun LiveGuidePanel(
         isLoading: Boolean,
         errorMessage: String?,
         selectedCategoryName: String?,
+        selectedChannelTickerText: String?,
+        selectedChannelTickerLoading: Boolean,
         alignCategorySelectionToTop: Boolean,
         onCategorySelectionAligned: () -> Unit,
         categoryThumbnailProvider: (CategoryItem) -> String?,
@@ -1951,10 +2046,13 @@ private fun LiveGuidePanel(
                                     items = channels,
                                     key = { _, channel -> channel.id }
                             ) { index, channel ->
+                                val isSelectedRow = index == selectedDisplayIndex
                                 LiveGuideChannelRow(
                                         channel = channel,
-                                        selected = index == selectedDisplayIndex,
-                                        active = channel.id == activeChannelId
+                                        selected = isSelectedRow,
+                                        active = channel.id == activeChannelId,
+                                        tickerText = if (isSelectedRow) selectedChannelTickerText else null,
+                                        tickerLoading = isSelectedRow && selectedChannelTickerLoading
                                 )
                             }
                         }
@@ -2117,7 +2215,9 @@ private fun LiveGuideMetaChip(
 private fun LiveGuideChannelRow(
         channel: ContentItem,
         selected: Boolean,
-        active: Boolean
+        active: Boolean,
+        tickerText: String?,
+        tickerLoading: Boolean
 ) {
     val localContext = LocalContext.current
     val shape = RoundedCornerShape(9.dp)
@@ -2177,17 +2277,18 @@ private fun LiveGuideChannelRow(
         }
         Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(1.dp)
+                verticalArrangement =
+                        if (selected) Arrangement.spacedBy(1.dp) else Arrangement.Center
         ) {
-            val channelLabel = channel.streamId.ifBlank { channel.id }
-            Text(
-                    text = channelLabel,
-                    color = AppTheme.colors.textSecondary,
-                    fontSize = 10.sp,
-                    fontFamily = AppTheme.fontFamily,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-            )
+            if (selected) {
+                val tickerLabel =
+                        when {
+                            tickerLoading -> "Loading program info..."
+                            !tickerText.isNullOrBlank() -> tickerText
+                            else -> "Program info unavailable"
+                        }
+                LiveGuideTickerText(tickerLabel)
+            }
             Text(
                     text = channel.title,
                     color = AppTheme.colors.textPrimary,
@@ -2215,6 +2316,33 @@ private fun LiveGuideChannelRow(
             }
         }
     }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun LiveGuideTickerText(text: String) {
+    Text(
+            text = text,
+            color = AppTheme.colors.textPrimary.copy(alpha = 0.95f),
+            fontSize = 11.sp,
+            fontFamily = AppTheme.fontFamily,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Clip,
+            modifier =
+                    Modifier.fillMaxWidth()
+                            .basicMarquee(iterations = Int.MAX_VALUE)
+    )
+}
+
+private fun buildLiveGuideTickerLabel(liveNowNextEpg: LiveNowNextEpg?): String? {
+    val now = liveNowNextEpg?.now?.takeIf { it.title.isNotBlank() }
+    val next = liveNowNextEpg?.next?.takeIf { it.title.isNotBlank() }
+    if (now == null && next == null) return null
+    val parts = mutableListOf<String>()
+    now?.let { parts += "Now: ${formatProgramLabel(it)}" }
+    next?.let { parts += "Next: ${formatProgramLabel(it)}" }
+    return parts.joinToString(" • ").takeIf { it.isNotBlank() }
 }
 
 private fun buildNowPlayingInfoText(
