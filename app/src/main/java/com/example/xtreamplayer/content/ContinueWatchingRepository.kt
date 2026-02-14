@@ -38,15 +38,16 @@ class ContinueWatchingRepository(private val context: Context) {
         subtitleOffsetMs: Long = 0L
     ) {
         val key = contentKey(config, item)
+        val keysToReplace = contentKeysForUpdate(config, item)
         val timestampMs = System.currentTimeMillis()
 
         context.continueWatchingDataStore.edit { prefs ->
             val raw = prefs[Keys.CONTINUE_WATCHING_ENTRIES] ?: "[]"
             val entries = parseAllEntries(raw).toMutableList()
-            val existingEntry = entries.firstOrNull { it.key == key }
+            val existingEntry = entries.firstOrNull { it.key in keysToReplace }
 
             // Remove existing entry with same key
-            entries.removeAll { it.key == key }
+            entries.removeAll { it.key in keysToReplace }
 
             val resolvedSubtitlePersistence =
                 resolveSubtitlePersistence(
@@ -81,11 +82,11 @@ class ContinueWatchingRepository(private val context: Context) {
     }
 
     suspend fun removeEntry(config: AuthConfig, item: ContentItem) {
-        val key = contentKey(config, item)
+        val keysToRemove = contentKeysForUpdate(config, item)
         context.continueWatchingDataStore.edit { prefs ->
             val raw = prefs[Keys.CONTINUE_WATCHING_ENTRIES] ?: "[]"
             val entries = parseAllEntries(raw).toMutableList()
-            entries.removeAll { it.key == key }
+            entries.removeAll { it.key in keysToRemove }
             prefs[Keys.CONTINUE_WATCHING_ENTRIES] = encodeEntries(entries)
         }
     }
@@ -104,7 +105,25 @@ class ContinueWatchingRepository(private val context: Context) {
     }
 
     private fun contentKey(config: AuthConfig, item: ContentItem): String {
+        return "${accountKey(config)}|${item.contentType.name}|${contentIdentity(item)}"
+    }
+
+    private fun contentKeysForUpdate(config: AuthConfig, item: ContentItem): Set<String> {
+        val primary = contentKey(config, item)
+        val legacy = legacyContentKey(config, item)
+        return if (primary == legacy) {
+            setOf(primary)
+        } else {
+            setOf(primary, legacy)
+        }
+    }
+
+    private fun legacyContentKey(config: AuthConfig, item: ContentItem): String {
         return "${accountKey(config)}|${item.contentType.name}|${item.id}"
+    }
+
+    private fun contentIdentity(item: ContentItem): String {
+        return item.streamId?.takeUnless { it.isBlank() } ?: item.id
     }
 
     private fun accountKey(config: AuthConfig): String {

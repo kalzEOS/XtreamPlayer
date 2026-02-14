@@ -64,6 +64,7 @@ import com.example.xtreamplayer.player.SubtitleTrackInfo
 import com.example.xtreamplayer.player.VideoTrackInfo
 import com.example.xtreamplayer.ui.theme.AppTheme
 import kotlinx.coroutines.delay
+import java.util.Locale
 import kotlin.math.abs
 
 private val DialogBackground: Color
@@ -1968,8 +1969,8 @@ private fun SubtitleOffsetControls(
     val offsetSeconds = offsetMs / 1000f
     val offsetText = when {
         offsetMs == 0L -> "0.0s"
-        offsetMs > 0 -> "+${String.format("%.1f", offsetSeconds)}s"
-        else -> "${String.format("%.1f", offsetSeconds)}s"
+        offsetMs > 0 -> "+${String.format(Locale.US, "%.1f", offsetSeconds)}s"
+        else -> "${String.format(Locale.US, "%.1f", offsetSeconds)}s"
     }
 
     Box(
