@@ -1476,20 +1476,17 @@ fun PlaybackSettingsDialog(
     speedLabel: String,
     resolutionLabel: String,
     matchFrameRateLabel: String,
-    accessibilityAudioLabel: String,
     nerdStatsLabel: String,
     showSpeedOption: Boolean,
     onSpeed: () -> Unit,
     onResolution: () -> Unit,
     onToggleMatchFrameRate: () -> Unit,
-    onToggleAccessibilityAudio: () -> Unit,
     onToggleNerdStats: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val speedFocusRequester = remember { FocusRequester() }
     val resolutionFocusRequester = remember { FocusRequester() }
     val matchFrameRateFocusRequester = remember { FocusRequester() }
-    val accessibilityAudioFocusRequester = remember { FocusRequester() }
     val nerdStatsFocusRequester = remember { FocusRequester() }
     val closeFocusRequester = remember { FocusRequester() }
 
@@ -1549,12 +1546,6 @@ fun PlaybackSettingsDialog(
                     value = matchFrameRateLabel,
                     focusRequester = matchFrameRateFocusRequester,
                     onClick = onToggleMatchFrameRate
-                )
-                SettingsOptionRow(
-                    label = "Accessibility audio",
-                    value = accessibilityAudioLabel,
-                    focusRequester = accessibilityAudioFocusRequester,
-                    onClick = onToggleAccessibilityAudio
                 )
                 SettingsOptionRow(
                     label = "Stats for nerds",
