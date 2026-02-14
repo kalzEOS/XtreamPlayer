@@ -3,6 +3,9 @@ import java.util.Properties
 import org.gradle.api.provider.Property
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
+val appVersionCode = 118
+val appVersionName = "3.2.2"
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -25,8 +28,8 @@ android {
         applicationId = "com.example.xtreamplayer"
         minSdk = 24
         targetSdk = 36
-        versionCode = 117
-        versionName = "3.2.1"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -90,7 +93,7 @@ androidComponents {
             val outputVersionName = runCatching {
                 @Suppress("UNCHECKED_CAST")
                 output::class.java.getMethod("getVersionName").invoke(output) as Property<String>
-            }.getOrNull()?.orNull ?: "3.2.1"
+            }.getOrNull()?.orNull ?: appVersionName
             outputFileName?.set("XtreamPlayerv${outputVersionName}.apk")
         }
     }
