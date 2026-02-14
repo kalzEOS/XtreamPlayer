@@ -531,7 +531,7 @@ internal fun PlayerOverlay(
     var subtitleDialogState by remember {
         mutableStateOf<SubtitleDialogState>(SubtitleDialogState.Idle)
     }
-    var audioBoostDb by remember { mutableStateOf(playbackEngine.getAudioBoostDb()) }
+    var audioBoostDb by remember { mutableFloatStateOf(playbackEngine.getAudioBoostDb()) }
     val subtitleCoroutineScope = rememberCoroutineScope()
     var subtitlesEnabled by remember {
         mutableStateOf(isTextTrackEnabled(player.trackSelectionParameters))
@@ -539,10 +539,10 @@ internal fun PlayerOverlay(
     var hasEmbeddedSubtitles by remember { mutableStateOf(false) }
     var activeSubtitle by remember { mutableStateOf<ActiveSubtitle?>(null, policy = neverEqualPolicy()) }
     var hasCachedSubtitle by remember { mutableStateOf(false) }
-    var lastAppliedOffsetMs by remember { mutableStateOf(0L) }
+    var lastAppliedOffsetMs by remember { mutableLongStateOf(0L) }
 
     // Subtitle timing adjustment state
-    var subtitleOffsetMs by remember { mutableStateOf(0L) }
+    var subtitleOffsetMs by remember { mutableLongStateOf(0L) }
     var showSubtitleTimingDialog by remember { mutableStateOf(false) }
     var offsetApplyJob by remember { mutableStateOf<Job?>(null) }
     val hasModalOpen =
@@ -1771,17 +1771,26 @@ private fun LiveGuidePanel(
     val hasRows = if (level == LiveGuideLevel.CATEGORIES) categories.isNotEmpty() else channels.isNotEmpty()
     val selectedIndex = if (level == LiveGuideLevel.CATEGORIES) selectedCategoryIndex else selectedChannelIndex
     val selectedBoundedIndex = if (hasRows) selectedIndex.coerceAtLeast(0) else 0
-    val visibleItems = listState.layoutInfo.visibleItemsInfo
-    val viewportStart = listState.layoutInfo.viewportStartOffset
-    val viewportEnd = listState.layoutInfo.viewportEndOffset
-    val fullyVisibleItems =
-            visibleItems.filter { visible ->
-                visible.offset >= viewportStart && visible.offset + visible.size <= viewportEnd
-            }
-    val effectiveVisibleItems = if (fullyVisibleItems.isNotEmpty()) fullyVisibleItems else visibleItems
-    val firstVisibleIndex = effectiveVisibleItems.firstOrNull()?.index ?: selectedBoundedIndex
-    val lastVisibleIndex = effectiveVisibleItems.lastOrNull()?.index ?: selectedBoundedIndex
-    val selectedDisplayIndex = selectedBoundedIndex.coerceIn(firstVisibleIndex, lastVisibleIndex)
+    val visibleWindow by remember(listState, selectedBoundedIndex) {
+        derivedStateOf {
+            val visibleItems = listState.layoutInfo.visibleItemsInfo
+            val viewportStart = listState.layoutInfo.viewportStartOffset
+            val viewportEnd = listState.layoutInfo.viewportEndOffset
+            val fullyVisibleItems =
+                    visibleItems.filter { visible ->
+                        visible.offset >= viewportStart && visible.offset + visible.size <= viewportEnd
+                    }
+            val effectiveVisibleItems =
+                    if (fullyVisibleItems.isNotEmpty()) fullyVisibleItems else visibleItems
+            val firstVisibleIndex = effectiveVisibleItems.firstOrNull()?.index ?: selectedBoundedIndex
+            val lastVisibleIndex = effectiveVisibleItems.lastOrNull()?.index ?: selectedBoundedIndex
+            val selectedDisplayIndex = selectedBoundedIndex.coerceIn(firstVisibleIndex, lastVisibleIndex)
+            Triple(firstVisibleIndex, lastVisibleIndex, selectedDisplayIndex)
+        }
+    }
+    val firstVisibleIndex = visibleWindow.first
+    val lastVisibleIndex = visibleWindow.second
+    val selectedDisplayIndex = visibleWindow.third
     val rowHeight = 62.dp
     val rowSpacing = 4.dp
     val headerHeight = 26.dp

@@ -91,6 +91,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.res.painterResource
@@ -106,6 +107,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -329,7 +331,7 @@ fun RootScreen(
     val showSubtitleCacheAutoClearDialogState = remember { mutableStateOf(false) }
     var showSubtitleCacheAutoClearDialog by showSubtitleCacheAutoClearDialogState
     var showLocalFilesGuest by remember { mutableStateOf(false) }
-    val cacheClearNonceState = remember { mutableStateOf(0) }
+    val cacheClearNonceState = remember { mutableIntStateOf(0) }
     var cacheClearNonce by cacheClearNonceState
     var activePlaybackQueue by playerViewModel.activePlaybackQueue
     var activePlaybackTitle by playerViewModel.activePlaybackTitle
@@ -481,7 +483,7 @@ fun RootScreen(
         }
     }
 
-    val focusToContentTriggerState = remember { mutableStateOf(0) }
+    val focusToContentTriggerState = remember { mutableIntStateOf(0) }
     var focusToContentTrigger by focusToContentTriggerState
     val moveFocusToNavState = remember { mutableStateOf(false) }
     var moveFocusToNav by moveFocusToNavState
@@ -661,14 +663,14 @@ fun RootScreen(
     var lastRefreshedAccountKey by remember { mutableStateOf<String?>(null) }
     var isRefreshing by remember { mutableStateOf(false) }
     var refreshJob by remember { mutableStateOf<Job?>(null) }
-    var refreshToken by remember { mutableStateOf(0) }
+    var refreshToken by remember { mutableIntStateOf(0) }
     var hasCacheForAccount by remember { mutableStateOf<Boolean?>(null) }
     var hasSearchIndex by remember { mutableStateOf<Boolean?>(null) }
     val sectionSyncStates = remember {
         mutableStateMapOf<Section, SectionSyncState>()
     }
     var librarySyncJob by remember { mutableStateOf<Job?>(null) }
-    var librarySyncToken by remember { mutableStateOf(0) }
+    var librarySyncToken by remember { mutableIntStateOf(0) }
     var pendingLibrarySync by remember { mutableStateOf<LibrarySyncRequest?>(null) }
     var lastLibrarySyncRequest by remember { mutableStateOf<LibrarySyncRequest?>(null) }
 
@@ -792,7 +794,7 @@ fun RootScreen(
         if (context.packageManager.canRequestPackageInstalls()) return true
         val intent = Intent(
             Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-            Uri.parse("package:${context.packageName}")
+            "package:${context.packageName}".toUri()
         ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
         Toast.makeText(
@@ -2636,13 +2638,12 @@ private fun rememberReflowColumns(
         spacing: Dp = 16.dp,
         horizontalPadding: Dp = CONTENT_HORIZONTAL_PADDING
 ): Int {
-    val configuration = LocalConfiguration.current
     if (baseColumns <= 1) return baseColumns
     val density = LocalDensity.current
     val spacingPx = with(density) { spacing.toPx() }
     val paddingPx = with(density) { horizontalPadding.toPx() }
     val fullWidthPx =
-            with(density) { configuration.screenWidthDp.dp.toPx() }.minus(paddingPx).coerceAtLeast(1f)
+            LocalWindowInfo.current.containerSize.width.toFloat().minus(paddingPx).coerceAtLeast(1f)
     val navWidthPx = with(density) { NAV_WIDTH.toPx() }
     val baseWidthPx = (fullWidthPx - navWidthPx).coerceAtLeast(1f)
     val contentWidthPx = if (navLayoutExpanded) baseWidthPx else fullWidthPx
@@ -8947,7 +8948,7 @@ fun SeriesSeasonsScreen(
     BackHandler(enabled = true) { onBack() }
     val colors = AppTheme.colors
     var seasonGroups by remember { mutableStateOf<List<SeasonGroup>>(emptyList()) }
-    var selectedSeasonIndex by remember { mutableStateOf(0) }
+    var selectedSeasonIndex by remember { mutableIntStateOf(0) }
     var isSeasonLoading by remember { mutableStateOf(true) }
     var seasonError by remember { mutableStateOf<String?>(null) }
     var seriesInfo by remember(seriesItem.streamId, prefetchedInfo) {
@@ -9193,10 +9194,11 @@ fun SeriesSeasonsScreen(
     var showPlotDialog by remember { mutableStateOf(false) }
     val showReadMore = description != "No description available." && plotOverflow
 
-    val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+    val runtimeDensity = LocalDensity.current
+    val screenHeight = with(runtimeDensity) { LocalWindowInfo.current.containerSize.height.toDp() }
     val availableHeight = (screenHeight - topInsetDp).coerceAtLeast(320.dp)
     val appScale = LocalAppScale.current
-    val baseDensity = LocalAppBaseDensity.current ?: LocalDensity.current
+    val baseDensity = LocalAppBaseDensity.current ?: runtimeDensity
     val uiScaleDelta = (1f - appScale.uiScale).coerceAtLeast(0f)
     val episodesViewportHeight = (120.dp + (uiScaleDelta * 150f).dp).coerceIn(120.dp, 180.dp)
     val reservedBelowHeader = episodesViewportHeight + 76.dp

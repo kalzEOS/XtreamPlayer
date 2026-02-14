@@ -7,6 +7,25 @@
         <ignore regexp="app/src/main/res/layout/exo_.*\.xml" />
     </issue>
 
+    <!-- Media3 loads these override resources by convention at runtime; static lint cannot trace them. -->
+    <issue id="UnusedResources">
+        <ignore path="app/src/main/res/values/dimens.xml" />
+        <ignore path="app/src/main/res/values/exo_overrides.xml" />
+        <ignore path="app/src/main/res/values/strings_exo_controls.xml" />
+        <ignore regexp="app/src/main/res/layout/exo_.*\.xml" />
+        <ignore path="app/src/main/res/drawable/exo_controls_button_background.xml" />
+        <ignore path="app/src/main/res/drawable/ic_audio_track.xml" />
+        <ignore path="app/src/main/res/drawable/ic_back.xml" />
+        <ignore path="app/src/main/res/drawable/ic_subtitle_download.xml" />
+        <ignore path="app/src/main/res/drawable/ic_subtitle_timing.xml" />
+        <ignore path="app/src/main/res/drawable/ic_volume_boost.xml" />
+    </issue>
+
+    <!-- Keep branded launcher artwork unchanged. -->
+    <issue id="IconLauncherShape">
+        <ignore path="app/src/main/res/mipmap-xxxhdpi/ic_launcher_playstore.png" />
+    </issue>
+
     <!-- Dependency/new-version checks create churn and are reviewed separately from app lint. -->
     <issue id="AndroidGradlePluginVersion" severity="ignore" />
     <issue id="GradleDependency" severity="ignore" />

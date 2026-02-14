@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -160,7 +161,7 @@ internal fun BrowseScreen(
     var showApiKeyDialog by showApiKeyDialogState
     var cacheClearNonce by cacheClearNonceState
     val focusManager = LocalFocusManager.current
-    var navMoveToContentTrigger by remember { mutableStateOf(0) }
+    var navMoveToContentTrigger by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(navMoveToContentTrigger) {
         if (navMoveToContentTrigger <= 0) return@LaunchedEffect

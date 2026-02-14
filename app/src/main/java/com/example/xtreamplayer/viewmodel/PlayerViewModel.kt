@@ -1,5 +1,6 @@
 package com.example.xtreamplayer.viewmodel
 
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import com.example.xtreamplayer.PendingResume
@@ -12,7 +13,7 @@ import kotlinx.coroutines.Job
 @HiltViewModel
 class PlayerViewModel @Inject constructor() : ViewModel() {
     val pendingPlayerReset = mutableStateOf(false)
-    val playerResetNonce = mutableStateOf(0)
+    val playerResetNonce = mutableIntStateOf(0)
 
     val activePlaybackQueue = mutableStateOf<PlaybackQueue?>(null)
     val activePlaybackTitle = mutableStateOf<String?>(null)
@@ -21,7 +22,7 @@ class PlayerViewModel @Inject constructor() : ViewModel() {
     val activePlaybackSeriesParent = mutableStateOf<ContentItem?>(null)
 
     val playbackFallbackAttempts = mutableStateOf<Map<String, Int>>(emptyMap())
-    val liveReconnectAttempts = mutableStateOf(0)
+    val liveReconnectAttempts = mutableIntStateOf(0)
     val liveReconnectJob = mutableStateOf<Job?>(null)
 
     val pendingResume = mutableStateOf<PendingResume?>(null)

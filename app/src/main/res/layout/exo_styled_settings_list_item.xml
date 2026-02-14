@@ -28,18 +28,19 @@
         android:id="@+id/exo_icon"
         android:layout_width="@dimen/exo_settings_icon_size"
         android:layout_height="@dimen/exo_settings_icon_size"
-        android:layout_marginLeft="8dp"
-        android:layout_marginRight="8dp"
-        android:layout_marginTop="12dp" />
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="8dp"
+        android:layout_marginTop="12dp"
+        android:contentDescription="@null" />
 
     <LinearLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:minHeight="@dimen/exo_settings_height"
-        android:layout_marginLeft="2dp"
-        android:layout_marginRight="2dp"
+        android:layout_marginStart="2dp"
+        android:layout_marginEnd="2dp"
+        android:paddingStart="4dp"
         android:paddingEnd="4dp"
-        android:paddingRight="4dp"
         android:gravity="center|start"
         android:layoutDirection="locale"
         android:orientation="vertical">

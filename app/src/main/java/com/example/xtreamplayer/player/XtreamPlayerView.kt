@@ -19,6 +19,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.ViewTreeObserver
+import androidx.core.view.isVisible
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerControlView
@@ -669,7 +670,7 @@ class XtreamPlayerView @JvmOverloads constructor(
 
     private fun updateRowFocusOrder(ids: List<Int>) {
         val views = ids.mapNotNull { findViewById<View>(it) }
-            .filter { it.visibility == View.VISIBLE && it.isFocusable }
+            .filter { it.isVisible && it.isFocusable }
         if (views.isEmpty()) return
         views.forEachIndexed { index, view ->
             val left = views.getOrNull(index - 1)
