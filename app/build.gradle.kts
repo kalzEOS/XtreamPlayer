@@ -25,8 +25,8 @@ android {
         applicationId = "com.example.xtreamplayer"
         minSdk = 24
         targetSdk = 36
-        versionCode = 116
-        versionName = "3.2.0"
+        versionCode = 117
+        versionName = "3.2.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -90,7 +90,7 @@ androidComponents {
             val outputVersionName = runCatching {
                 @Suppress("UNCHECKED_CAST")
                 output::class.java.getMethod("getVersionName").invoke(output) as Property<String>
-            }.getOrNull()?.orNull ?: "3.2.0"
+            }.getOrNull()?.orNull ?: "3.2.1"
             outputFileName?.set("XtreamPlayerv${outputVersionName}.apk")
         }
     }

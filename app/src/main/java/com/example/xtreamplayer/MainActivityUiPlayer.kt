@@ -487,6 +487,7 @@ internal fun PlayerOverlay(
         title: String,
         activePlaybackItem: ContentItem?,
         activePlaybackItems: List<ContentItem>,
+        persistedSubtitleState: PlaybackSubtitleState?,
         player: Player,
         playbackEngine: Media3PlaybackEngine,
         subtitleRepository: SubtitleRepository,
@@ -505,6 +506,7 @@ internal fun PlayerOverlay(
         onMatchFrameRateChange: (Boolean) -> Unit,
         onLiveChannelSwitch: (Int) -> Boolean,
         onLiveGuideChannelSelect: (ContentItem, List<ContentItem>) -> Unit,
+        onSubtitleStateChanged: (PlaybackSubtitleState?) -> Unit,
         loadLiveNowNext: suspend (ContentItem) -> Result<LiveNowNextEpg?>,
         loadLiveCategories: suspend () -> Result<List<CategoryItem>>,
         loadLiveCategoryChannels: suspend (CategoryItem) -> Result<List<ContentItem>>,
@@ -584,6 +586,19 @@ internal fun PlayerOverlay(
     }
     val liveQueueItems = remember(activePlaybackItems) {
         activePlaybackItems.filter { it.contentType == ContentType.LIVE }
+    }
+    fun toPlaybackSubtitleState(subtitle: ActiveSubtitle?, offsetMs: Long): PlaybackSubtitleState? {
+        val safeSubtitle = subtitle ?: return null
+        val fileName = safeSubtitle.fileName?.takeUnless { it.isBlank() } ?: return null
+        return PlaybackSubtitleState(
+            fileName = fileName,
+            language = safeSubtitle.language.takeUnless { it.isBlank() },
+            label = safeSubtitle.label.takeUnless { it.isBlank() },
+            offsetMs = offsetMs
+        )
+    }
+    fun publishSubtitleState(subtitle: ActiveSubtitle?, offsetMs: Long) {
+        onSubtitleStateChanged(toPlaybackSubtitleState(subtitle, offsetMs))
     }
 
     val closeLiveGuide: () -> Unit = {
@@ -956,6 +971,7 @@ internal fun PlayerOverlay(
         val deltaMs = offsetMs - lastAppliedOffsetMs
         if (deltaMs == 0L) {
             lastAppliedOffsetMs = offsetMs
+            publishSubtitleState(subtitle, offsetMs)
             return
         }
         val adjustedContent = applySubtitleOffset(original, deltaMs, format)
@@ -975,6 +991,7 @@ internal fun PlayerOverlay(
             )
         activeSubtitle = updatedSubtitle
         lastAppliedOffsetMs = offsetMs
+        publishSubtitleState(updatedSubtitle, offsetMs)
     }
 
     fun scheduleOffsetApply(newOffset: Long) {
@@ -997,12 +1014,13 @@ internal fun PlayerOverlay(
         }
     }
 
-    LaunchedEffect(mediaId) {
+    LaunchedEffect(mediaId, persistedSubtitleState?.fileName) {
         if (mediaId.isBlank()) {
             activeSubtitle = null
             subtitleOffsetMs = 0L
             lastAppliedOffsetMs = 0L
             hasCachedSubtitle = false
+            onSubtitleStateChanged(null)
             return@LaunchedEffect
         }
 
@@ -1010,19 +1028,50 @@ internal fun PlayerOverlay(
             subtitleRepository.getCachedSubtitlesForMedia(mediaId)
         }
         hasCachedSubtitle = cachedSubtitles.isNotEmpty()
+        val preferredSubtitle =
+            persistedSubtitleState?.fileName?.let { preferredFileName ->
+                cachedSubtitles.firstOrNull { it.fileName == preferredFileName }
+            }
+        val selectedSubtitle = preferredSubtitle ?: cachedSubtitles.firstOrNull()
+        val restoredOffsetMs = if (preferredSubtitle != null) {
+            persistedSubtitleState?.offsetMs ?: 0L
+        } else {
+            0L
+        }
 
-        activeSubtitle = cachedSubtitles.firstOrNull()?.let { cached ->
+        activeSubtitle = selectedSubtitle?.let { cached ->
             val originalContent = loadSubtitleContent(cached.uri)
             ActiveSubtitle(
                 uri = cached.uri,
-                language = cached.language,
-                label = "Cached ${cached.language.uppercase()}",
+                language = if (preferredSubtitle != null) {
+                    persistedSubtitleState?.language?.takeUnless { it.isBlank() } ?: cached.language
+                } else {
+                    cached.language
+                },
+                label = if (preferredSubtitle != null) {
+                    persistedSubtitleState?.label?.takeUnless { it.isBlank() }
+                        ?: "Cached ${cached.language.uppercase()}"
+                } else {
+                    "Cached ${cached.language.uppercase()}"
+                },
                 fileName = cached.fileName,
                 originalContent = originalContent
             )
         }
-        subtitleOffsetMs = 0L
-        lastAppliedOffsetMs = 0L
+        subtitleOffsetMs = restoredOffsetMs
+        lastAppliedOffsetMs = restoredOffsetMs
+
+        val subtitleToRestore = activeSubtitle
+        if (preferredSubtitle != null && subtitleToRestore != null) {
+            playbackEngine.addSubtitle(
+                subtitleUri = subtitleToRestore.uri,
+                language = subtitleToRestore.language,
+                label = subtitleToRestore.label,
+                mimeType = subtitleMimeType(subtitleToRestore.fileName)
+            )
+            playbackEngine.setSubtitlesEnabled(true)
+            publishSubtitleState(subtitleToRestore, restoredOffsetMs)
+        }
     }
 
     LaunchedEffect(showSubtitleOptionsDialog, mediaId) {
@@ -1112,6 +1161,7 @@ internal fun PlayerOverlay(
                         label = subtitleToApply.label,
                         mimeType = subtitleMimeType(subtitleToApply.fileName)
                 )
+                publishSubtitleState(subtitleToApply, subtitleOffsetMs)
             }
         }
     }
@@ -1547,6 +1597,7 @@ internal fun PlayerOverlay(
                                     label = subtitle.release,
                                     mimeType = mimeType
                             )
+                            publishSubtitleState(activeSubtitle, 0L)
                             subtitlesEnabled = true
                             showSubtitleDialog = false
                             subtitleDialogState = SubtitleDialogState.Idle

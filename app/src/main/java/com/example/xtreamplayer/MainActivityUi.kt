@@ -349,6 +349,7 @@ fun RootScreen(
     var syncPausedForPlayback by remember { mutableStateOf(false) }
     var resumePositionMs by playerViewModel.resumePositionMs
     var resumeFocusId by playerViewModel.resumeFocusId
+    var activePlaybackSubtitleState by remember { mutableStateOf<PlaybackSubtitleState?>(null) }
     val resumeFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(navExpanded) {
@@ -1224,6 +1225,29 @@ fun RootScreen(
                     }
                 }
             }
+    val activeContinueWatchingEntry =
+        remember(activePlaybackItem, filteredContinueWatchingItems) {
+            val playbackItem = activePlaybackItem
+            if (playbackItem == null) {
+                null
+            } else {
+                filteredContinueWatchingItems.firstOrNull {
+                    it.item.id == playbackItem.id &&
+                        it.item.contentType == playbackItem.contentType
+                }
+            }
+        }
+    LaunchedEffect(
+        activePlaybackItem?.id,
+        activePlaybackItem?.contentType,
+        activeContinueWatchingEntry?.subtitleFileName,
+        activeContinueWatchingEntry?.subtitleLanguage,
+        activeContinueWatchingEntry?.subtitleLabel,
+        activeContinueWatchingEntry?.subtitleOffsetMs
+    ) {
+        activePlaybackSubtitleState = activeContinueWatchingEntry?.toPlaybackSubtitleStateOrNull()
+    }
+
     fun savePlaybackProgress() {
         val player: ExoPlayer? = playbackEngine.player
         val safePlayer = player ?: return
@@ -1244,6 +1268,7 @@ fun RootScreen(
                 }
             if (position >= minWatchMs) {
                 val progressPercent = if (duration > 0) (position * 100) / duration else 0
+                val subtitleState = activePlaybackSubtitleState
                 coroutineScope.launch {
                     if (duration > 0 && progressPercent >= 90) {
                         continueWatchingRepository.removeEntry(config, item)
@@ -1259,7 +1284,11 @@ fun RootScreen(
                                 item,
                                 position,
                                 duration,
-                                parentItem = parentItem
+                                parentItem = parentItem,
+                                subtitleFileName = subtitleState?.fileName,
+                                subtitleLanguage = subtitleState?.language,
+                                subtitleLabel = subtitleState?.label,
+                                subtitleOffsetMs = subtitleState?.offsetMs ?: 0L
                         )
                     }
                 }
@@ -1407,6 +1436,17 @@ fun RootScreen(
                         val title = mediaItem?.mediaMetadata?.title?.toString()
                         if (!title.isNullOrBlank()) {
                             activePlaybackTitle = title
+                        }
+                        val transitionedMediaId =
+                            mediaItem?.mediaId?.takeUnless { it.isBlank() }
+                                ?: playbackEngine.player.currentMediaItem?.mediaId?.takeUnless { it.isBlank() }
+                        if (!transitionedMediaId.isNullOrBlank()) {
+                            activePlaybackItems.firstOrNull { item ->
+                                queueMediaIdFor(item) == transitionedMediaId
+                            }?.let { matchedItem ->
+                                activePlaybackItem = matchedItem
+                                return
+                            }
                         }
                         val currentIndex = playbackEngine.player.currentMediaItemIndex
                         if (currentIndex < 0 || activePlaybackItems.isEmpty()) return
@@ -1987,6 +2027,7 @@ fun RootScreen(
                     activePlaybackTitle = null
                     activePlaybackItem = null
                     activePlaybackSeriesParent = null
+                    activePlaybackSubtitleState = null
                     resumePositionMs = null
                 },
                 onPlayNextEpisode = { playbackEngine.player.seekToNextMediaItem() },
@@ -1997,6 +2038,10 @@ fun RootScreen(
                 onLiveChannelSwitch = switchLiveChannel,
                 onLiveGuideChannelSelect = { item, channels ->
                     handlePlayItem(item, channels)
+                },
+                continueWatchingSubtitleState = activePlaybackSubtitleState,
+                onSubtitleStateChanged = { state ->
+                    activePlaybackSubtitleState = state
                 },
                 loadLiveNowNext = loadLiveNowNext@{ item ->
                     val config = authState.activeConfig ?: return@loadLiveNowNext Result.success(null)
@@ -2218,6 +2263,10 @@ private fun isPlayableContent(item: ContentItem): Boolean {
     return item.contentType != ContentType.SERIES || !item.containerExtension.isNullOrBlank()
 }
 
+private fun queueMediaIdFor(item: ContentItem): String {
+    return "${item.contentType.name}:${item.id}"
+}
+
 private fun buildPlaybackQueue(
         items: List<ContentItem>,
         current: ContentItem,
@@ -2243,7 +2292,7 @@ private fun buildPlaybackQueue(
                         )
                 val uris = candidates.map(Uri::parse)
                 PlaybackQueueItem(
-                        mediaId = "${item.contentType.name}:${item.id}",
+                        mediaId = queueMediaIdFor(item),
                         title = item.title,
                         type = item.contentType,
                         uri = uris.first()
