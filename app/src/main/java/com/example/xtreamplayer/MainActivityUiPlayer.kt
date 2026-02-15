@@ -10,6 +10,7 @@ import android.os.Build
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
@@ -17,6 +18,9 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -39,11 +43,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -68,6 +83,7 @@ import com.example.xtreamplayer.content.ContentItem
 import com.example.xtreamplayer.content.ContentType
 import com.example.xtreamplayer.content.LiveNowNextEpg
 import com.example.xtreamplayer.content.LiveProgramInfo
+import com.example.xtreamplayer.content.SearchNormalizer
 import com.example.xtreamplayer.content.SubtitleRepository
 import com.example.xtreamplayer.player.Media3PlaybackEngine
 import com.example.xtreamplayer.player.XtreamPlayerView
@@ -131,12 +147,48 @@ private data class LiveGuideCategoryVisual(
         val detailCode: String?
 )
 
+private sealed interface LiveGuideSearchRow {
+    val stableKey: String
+
+    data class CategoryRow(val category: CategoryItem) : LiveGuideSearchRow {
+        override val stableKey: String = "category:${liveGuideCategoryUiKey(category)}"
+    }
+
+    data class ChannelRow(val channel: ContentItem) : LiveGuideSearchRow {
+        override val stableKey: String = "channel:${liveGuideChannelCacheKey(channel)}"
+    }
+}
+
 private fun liveGuideCategoryUiKey(category: CategoryItem): String {
     return "${category.id}::${category.name.trim().uppercase(Locale.ROOT)}"
 }
 
 private fun liveGuideChannelCacheKey(channel: ContentItem): String {
     return channel.streamId.takeIf { it.isNotBlank() } ?: channel.id
+}
+
+private fun buildLiveGuideSearchRows(
+    normalizedQuery: String,
+    categories: List<CategoryItem>,
+    channelsByCategoryId: Map<String, List<ContentItem>>
+): List<LiveGuideSearchRow> {
+    if (normalizedQuery.isBlank()) return emptyList()
+    val categoryRows =
+        categories.asSequence()
+            .filter { category -> SearchNormalizer.matchesTitle(category.name, normalizedQuery) }
+            .map { category -> LiveGuideSearchRow.CategoryRow(category) }
+            .toList()
+    val channelRows =
+        channelsByCategoryId.values
+            .asSequence()
+            .flatten()
+            .filter { channel -> channel.contentType == ContentType.LIVE }
+            .distinctBy(::liveGuideChannelCacheKey)
+            .filter { channel -> SearchNormalizer.matchesTitle(channel.title, normalizedQuery) }
+            .sortedBy { channel -> SearchNormalizer.normalizeTitle(channel.title) }
+            .map { channel -> LiveGuideSearchRow.ChannelRow(channel) }
+            .toList()
+    return categoryRows + channelRows
 }
 
 private fun parseLiveGuideCategoryVisual(categoryName: String): LiveGuideCategoryVisual {
@@ -581,6 +633,15 @@ internal fun PlayerOverlay(
     val liveGuideNowNextByChannelKey = remember { mutableStateMapOf<String, LiveNowNextEpg?>() }
     val liveGuideNowNextFetchedAtMsByKey = remember { mutableStateMapOf<String, Long>() }
     val liveGuideNowNextLoadingByKey = remember { mutableStateMapOf<String, Boolean>() }
+    val liveGuideSearchChannelsByCategoryId = remember { mutableStateMapOf<String, List<ContentItem>>() }
+    val liveGuideSearchChannelsRequested = remember { mutableStateMapOf<String, Boolean>() }
+    var liveGuideSearchChannelsLoading by remember { mutableStateOf(false) }
+    var liveGuideSearchQuery by remember { mutableStateOf("") }
+    var liveGuideSearchFocused by remember { mutableStateOf(false) }
+    var liveGuideSearchEditing by remember { mutableStateOf(false) }
+    var liveGuideSearchEditRequestNonce by remember { mutableIntStateOf(0) }
+    var liveGuideSearchResultIndex by remember { mutableIntStateOf(0) }
+    var liveGuideSearchReturnIndex by remember { mutableIntStateOf(0) }
 
     // Next episode overlay state
     var showNextEpisodeOverlay by remember { mutableStateOf(false) }
@@ -615,6 +676,23 @@ internal fun PlayerOverlay(
     val selectedLiveGuideTickerText = buildLiveGuideTickerLabel(selectedLiveGuideNowNext)
     val selectedLiveGuideTickerLoading =
         selectedLiveGuideChannelKey?.let { liveGuideNowNextLoadingByKey[it] == true } == true
+    val normalizedLiveGuideSearchQuery =
+        remember(liveGuideSearchQuery) { SearchNormalizer.normalizeQuery(liveGuideSearchQuery) }
+    val liveGuideSearchRows =
+        remember(
+            normalizedLiveGuideSearchQuery,
+            liveGuideCategories,
+            liveGuideSearchChannelsByCategoryId
+        ) {
+            buildLiveGuideSearchRows(
+                normalizedQuery = normalizedLiveGuideSearchQuery,
+                categories = liveGuideCategories,
+                channelsByCategoryId = liveGuideSearchChannelsByCategoryId
+            )
+        }
+    val liveGuideSearchActive =
+        liveGuideLevel == LiveGuideLevel.CATEGORIES && normalizedLiveGuideSearchQuery.isNotBlank()
+    val liveGuideCategoryRowCount = if (liveGuideSearchActive) liveGuideSearchRows.size else liveGuideCategories.size
     fun toPlaybackSubtitleState(subtitle: ActiveSubtitle?, offsetMs: Long): PlaybackSubtitleState? {
         val safeSubtitle = subtitle ?: return null
         val fileName = safeSubtitle.fileName?.takeUnless { it.isBlank() } ?: return null
@@ -628,10 +706,31 @@ internal fun PlayerOverlay(
     fun publishSubtitleState(subtitle: ActiveSubtitle?, offsetMs: Long) {
         onSubtitleStateChanged(toPlaybackSubtitleState(subtitle, offsetMs))
     }
+    val inputMethodManager =
+            remember(context) {
+                context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            }
+    fun showLiveGuideSearchKeyboard() {
+        // toggleSoftInput is more reliable on Android TV.
+        @Suppress("DEPRECATION")
+        inputMethodManager.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0)
+    }
+    fun hideLiveGuideSearchKeyboard() {
+        playerView?.windowToken?.let { token ->
+            inputMethodManager.hideSoftInputFromWindow(token, 0)
+        }
+    }
 
     val closeLiveGuide: () -> Unit = {
         showLiveGuide = false
         liveGuideErrorMessage = null
+        liveGuideSearchFocused = false
+        liveGuideSearchEditing = false
+        liveGuideSearchQuery = ""
+        liveGuideSearchEditRequestNonce = 0
+        liveGuideSearchResultIndex = 0
+        liveGuideSearchReturnIndex = 0
+        hideLiveGuideSearchKeyboard()
         playerView?.let { view ->
             view.post {
                 view.useController = true
@@ -680,8 +779,12 @@ internal fun PlayerOverlay(
                     .onSuccess { categories ->
                         liveGuideCategories = categories
                         val validKeys = categories.map(::liveGuideCategoryUiKey).toSet()
+                        val validCategoryIds =
+                                categories.mapNotNull { normalizeCategoryId(it.id) }.toSet()
                         liveGuideCategoryThumbnails.keys.retainAll(validKeys)
                         liveGuideCategoryThumbnailRequested.keys.retainAll(validKeys)
+                        liveGuideSearchChannelsByCategoryId.keys.retainAll(validCategoryIds)
+                        liveGuideSearchChannelsRequested.keys.retainAll(validCategoryIds)
                         categories.take(12).forEach(::ensureLiveGuideCategoryThumbnail)
                         val preferredCategoryId =
                                 normalizeCategoryId(liveGuidePreferredCategoryId)
@@ -702,6 +805,12 @@ internal fun PlayerOverlay(
                             liveGuideCategoryIndex =
                                     resolveCategoryIndexById(categories, liveGuideSelectedCategory?.id)
                                             ?: wrapIndex(liveGuideCategoryIndex, categories.size)
+                        }
+                        if (liveGuideSearchRows.isNotEmpty()) {
+                            liveGuideSearchResultIndex =
+                                    liveGuideSearchResultIndex.coerceIn(0, liveGuideSearchRows.lastIndex)
+                        } else {
+                            liveGuideSearchResultIndex = 0
                         }
                     }
                     .onFailure { error ->
@@ -736,10 +845,21 @@ internal fun PlayerOverlay(
                         liveGuideCategoryIndex =
                                 resolveCategoryIndexById(liveGuideCategories, normalizedCategoryId)
                                         ?: liveGuideCategoryIndex
+                        normalizedCategoryId?.let { categoryId ->
+                            liveGuideSearchChannelsByCategoryId[categoryId] = resolvedChannels
+                            liveGuideSearchChannelsRequested[categoryId] = true
+                        }
                         liveGuideChannels = resolvedChannels
                         // Always start at the top of a category channel list.
                         liveGuideChannelIndex = 0
                         liveGuideLevel = LiveGuideLevel.CHANNELS
+                        liveGuideSearchFocused = false
+                        liveGuideSearchEditing = false
+                        liveGuideSearchQuery = ""
+                        liveGuideSearchEditRequestNonce = 0
+                        liveGuideSearchResultIndex = 0
+                        liveGuideSearchReturnIndex = 0
+                        hideLiveGuideSearchKeyboard()
                     }
                     .onFailure { error ->
                         liveGuideErrorMessage = error.message ?: "Failed to load channels"
@@ -752,6 +872,13 @@ internal fun PlayerOverlay(
         if (currentContentType != ContentType.LIVE || isPlayerModalOpen) {
             return
         }
+        liveGuideSearchFocused = false
+        liveGuideSearchEditing = false
+        liveGuideSearchQuery = ""
+        liveGuideSearchEditRequestNonce = 0
+        liveGuideSearchResultIndex = 0
+        liveGuideSearchReturnIndex = 0
+        hideLiveGuideSearchKeyboard()
         val queueCategoryId =
                 normalizeCategoryId(activePlaybackItem?.categoryId)
                         ?: liveQueueItems
@@ -802,6 +929,12 @@ internal fun PlayerOverlay(
             playerView?.hideController()
             liveGuideLevel = LiveGuideLevel.CATEGORIES
             liveGuideReturnCategoryAtTop = true
+            liveGuideSearchFocused = false
+            liveGuideSearchEditing = false
+            liveGuideSearchEditRequestNonce = 0
+            liveGuideSearchResultIndex = 0
+            liveGuideSearchReturnIndex = 0
+            hideLiveGuideSearchKeyboard()
             val preferredCategoryId =
                     normalizeCategoryId(liveGuideParentCategoryId)
                             ?: normalizeCategoryId(liveGuideSelectedCategory?.id)
@@ -822,16 +955,116 @@ internal fun PlayerOverlay(
         }
     }
 
+    fun currentCategorySelectionIndex(): Int {
+        return if (liveGuideSearchActive) {
+            liveGuideSearchResultIndex
+        } else {
+            liveGuideCategoryIndex
+        }
+    }
+
+    fun updateCategorySelectionIndex(index: Int) {
+        if (liveGuideSearchActive) {
+            liveGuideSearchResultIndex = index
+        } else {
+            liveGuideCategoryIndex = index
+        }
+    }
+
+    fun updateLiveGuideSearchQuery(query: String) {
+        liveGuideSearchQuery = query
+        liveGuideSearchResultIndex = 0
+        liveGuideSearchReturnIndex = 0
+    }
+
+    fun focusLiveGuideSearchBar() {
+        if (liveGuideLevel != LiveGuideLevel.CATEGORIES) return
+        liveGuideSearchEditing = false
+        hideLiveGuideSearchKeyboard()
+        liveGuideSearchReturnIndex =
+                currentCategorySelectionIndex()
+                        .coerceIn(
+                                0,
+                                (liveGuideCategoryRowCount - 1).coerceAtLeast(0)
+                        )
+        liveGuideSearchFocused = true
+    }
+
     fun moveLiveGuideSelection(delta: Int) {
         if (liveGuideLoading || !liveGuideErrorMessage.isNullOrBlank()) return
+        if (delta == 0) return
         playerView?.hideController()
         if (liveGuideLevel == LiveGuideLevel.CATEGORIES) {
-            if (liveGuideCategories.isEmpty()) return
-            liveGuideCategoryIndex = wrapIndex(liveGuideCategoryIndex + delta, liveGuideCategories.size)
-        } else {
-            if (liveGuideChannels.isEmpty()) return
-            liveGuideChannelIndex = wrapIndex(liveGuideChannelIndex + delta, liveGuideChannels.size)
+            val rowCount = liveGuideCategoryRowCount
+            if (rowCount <= 0) {
+                liveGuideSearchFocused = true
+                return
+            }
+            if (liveGuideSearchFocused) {
+                if (delta < 0) {
+                    val bottomIndex = rowCount - 1
+                    updateCategorySelectionIndex(bottomIndex)
+                    liveGuideSearchReturnIndex = bottomIndex
+                    liveGuideSearchFocused = false
+                    liveGuideSearchEditing = false
+                    hideLiveGuideSearchKeyboard()
+                } else {
+                    updateCategorySelectionIndex(liveGuideSearchReturnIndex.coerceIn(0, rowCount - 1))
+                    liveGuideSearchFocused = false
+                    liveGuideSearchEditing = false
+                    hideLiveGuideSearchKeyboard()
+                }
+                return
+            }
+            val currentIndex = currentCategorySelectionIndex().coerceIn(0, rowCount - 1)
+            val movingUpFromTop = delta < 0 && currentIndex == 0
+            val movingDownFromBottom = delta > 0 && currentIndex == rowCount - 1
+            if (movingUpFromTop || movingDownFromBottom) {
+                liveGuideSearchReturnIndex = currentIndex
+                liveGuideSearchFocused = true
+                return
+            }
+            val nextIndex = (currentIndex + delta).coerceIn(0, rowCount - 1)
+            updateCategorySelectionIndex(nextIndex)
+            return
         }
+        liveGuideSearchFocused = false
+        liveGuideSearchEditing = false
+        hideLiveGuideSearchKeyboard()
+        if (liveGuideChannels.isEmpty()) return
+        liveGuideChannelIndex = wrapIndex(liveGuideChannelIndex + delta, liveGuideChannels.size)
+    }
+
+    fun handleLiveGuideLeft(): Boolean {
+        if (liveGuideLevel == LiveGuideLevel.CATEGORIES) {
+            focusLiveGuideSearchBar()
+            return true
+        }
+        navigateLiveGuideBackOneLevel()
+        return true
+    }
+
+    fun handleLiveGuideSearchKey(event: KeyEvent): Boolean {
+        if (liveGuideLevel != LiveGuideLevel.CATEGORIES || !liveGuideSearchFocused) return false
+        if (!liveGuideSearchEditing) return false
+        if (event.action != KeyEvent.ACTION_DOWN) return false
+        when (event.keyCode) {
+            KeyEvent.KEYCODE_DEL, KeyEvent.KEYCODE_FORWARD_DEL -> {
+                if (liveGuideSearchQuery.isNotEmpty()) {
+                    updateLiveGuideSearchQuery(liveGuideSearchQuery.dropLast(1))
+                }
+                return true
+            }
+
+            KeyEvent.KEYCODE_SPACE -> {
+                updateLiveGuideSearchQuery("${liveGuideSearchQuery} ")
+                return true
+            }
+        }
+        val typedChar = event.unicodeChar.takeIf { it > 0 }?.toChar() ?: return false
+        if (typedChar.isISOControl()) return false
+        updateLiveGuideSearchQuery("$liveGuideSearchQuery$typedChar")
+        return true
     }
 
     fun retryLiveGuideLoad() {
@@ -851,6 +1084,32 @@ internal fun PlayerOverlay(
             return
         }
         if (liveGuideLevel == LiveGuideLevel.CATEGORIES) {
+            if (liveGuideSearchFocused) {
+                if (!liveGuideSearchEditing) {
+                    liveGuideSearchEditing = true
+                    liveGuideSearchEditRequestNonce++
+                    showLiveGuideSearchKeyboard()
+                }
+                return
+            }
+            if (liveGuideSearchActive) {
+                val row = liveGuideSearchRows.getOrNull(liveGuideSearchResultIndex) ?: return
+                when (row) {
+                    is LiveGuideSearchRow.CategoryRow -> {
+                        openCategoryChannels(row.category)
+                    }
+
+                    is LiveGuideSearchRow.ChannelRow -> {
+                        val categoryId = normalizeCategoryId(row.channel.categoryId)
+                        val siblingChannels =
+                                categoryId?.let { liveGuideSearchChannelsByCategoryId[it] }
+                                        ?.takeIf { it.isNotEmpty() }
+                                        ?: liveGuideChannels.ifEmpty { listOf(row.channel) }
+                        onLiveGuideChannelSelect(row.channel, siblingChannels)
+                    }
+                }
+                return
+            }
             val category = liveGuideCategories.getOrNull(liveGuideCategoryIndex) ?: return
             openCategoryChannels(category)
             return
@@ -874,6 +1133,16 @@ internal fun PlayerOverlay(
             liveGuideNowNextByChannelKey.clear()
             liveGuideNowNextFetchedAtMsByKey.clear()
             liveGuideNowNextLoadingByKey.clear()
+            liveGuideSearchChannelsByCategoryId.clear()
+            liveGuideSearchChannelsRequested.clear()
+            liveGuideSearchChannelsLoading = false
+            liveGuideSearchFocused = false
+            liveGuideSearchEditing = false
+            liveGuideSearchQuery = ""
+            liveGuideSearchEditRequestNonce = 0
+            liveGuideSearchResultIndex = 0
+            liveGuideSearchReturnIndex = 0
+            hideLiveGuideSearchKeyboard()
             return@LaunchedEffect
         }
         val activeKey = activePlaybackItem?.let(::liveGuideChannelCacheKey)
@@ -884,6 +1153,57 @@ internal fun PlayerOverlay(
         liveGuideNowNextByChannelKey.keys.retainAll(keysToKeep)
         liveGuideNowNextFetchedAtMsByKey.keys.retainAll(keysToKeep)
         liveGuideNowNextLoadingByKey.keys.retainAll(keysToKeep)
+    }
+
+    LaunchedEffect(liveGuideLevel) {
+        if (liveGuideLevel != LiveGuideLevel.CATEGORIES) {
+            liveGuideSearchFocused = false
+            liveGuideSearchEditing = false
+            hideLiveGuideSearchKeyboard()
+        } else {
+            liveGuideSearchResultIndex = liveGuideSearchResultIndex.coerceAtLeast(0)
+            liveGuideSearchReturnIndex = liveGuideSearchReturnIndex.coerceAtLeast(0)
+        }
+    }
+
+    LaunchedEffect(liveGuideSearchRows.size, liveGuideCategoryRowCount) {
+        val maxIndex = (liveGuideCategoryRowCount - 1).coerceAtLeast(0)
+        liveGuideSearchResultIndex = liveGuideSearchResultIndex.coerceIn(0, maxIndex)
+        liveGuideSearchReturnIndex = liveGuideSearchReturnIndex.coerceIn(0, maxIndex)
+    }
+
+    LaunchedEffect(liveGuideLevel, normalizedLiveGuideSearchQuery, liveGuideCategories, showLiveGuide) {
+        if (!showLiveGuide || liveGuideLevel != LiveGuideLevel.CATEGORIES || normalizedLiveGuideSearchQuery.isBlank()) {
+            liveGuideSearchChannelsLoading = false
+            return@LaunchedEffect
+        }
+        if (liveGuideSearchChannelsLoading) return@LaunchedEffect
+        liveGuideSearchChannelsLoading = true
+        try {
+            for (category in liveGuideCategories) {
+                if (!isActive || liveGuideLevel != LiveGuideLevel.CATEGORIES || !showLiveGuide) break
+                val categoryId = normalizeCategoryId(category.id) ?: continue
+                if (liveGuideSearchChannelsRequested[categoryId] == true) continue
+                liveGuideSearchChannelsRequested[categoryId] = true
+                val result = runCatching { loadLiveCategoryChannels(category) }.getOrElse { Result.failure(it) }
+                result
+                    .onSuccess { channels ->
+                        val liveChannels = channels.filter { it.contentType == ContentType.LIVE }
+                        val byCategory =
+                            liveChannels.filter {
+                                normalizeCategoryId(it.categoryId) == categoryId
+                            }
+                        liveGuideSearchChannelsByCategoryId[categoryId] =
+                            if (byCategory.isNotEmpty()) byCategory else liveChannels
+                    }
+                    .onFailure {
+                        // Allow retry later if fetching this category failed.
+                        liveGuideSearchChannelsRequested.remove(categoryId)
+                    }
+            }
+        } finally {
+            liveGuideSearchChannelsLoading = false
+        }
     }
 
     LaunchedEffect(showLiveGuide, liveGuideLevel, selectedLiveGuideChannelKey) {
@@ -1469,9 +1789,9 @@ internal fun PlayerOverlay(
             true
         }
         view.onLiveGuideBack = {
-            navigateLiveGuideBackOneLevel()
-            true
+            handleLiveGuideLeft()
         }
+        view.onLiveGuideSearchKey = { event -> handleLiveGuideSearchKey(event) }
         view.onLiveGuideDismiss = {
             closeLiveGuide()
             true
@@ -1600,6 +1920,28 @@ internal fun PlayerOverlay(
                     isLoading = liveGuideLoading,
                     errorMessage = liveGuideErrorMessage,
                     selectedCategoryName = liveGuideSelectedCategory?.name,
+                    searchQuery = liveGuideSearchQuery,
+                    searchFocused = liveGuideSearchFocused,
+                    searchEditing = liveGuideSearchEditing,
+                    searchEditRequestNonce = liveGuideSearchEditRequestNonce,
+                    searchLoading = liveGuideSearchChannelsLoading,
+                    searchActive = liveGuideSearchActive,
+                    searchRows = liveGuideSearchRows,
+                    selectedSearchIndex = liveGuideSearchResultIndex,
+                    onSearchQueryChange = { query -> updateLiveGuideSearchQuery(query) },
+                    onSearchMoveUp = {
+                        moveLiveGuideSelection(-1)
+                        playerView?.requestFocus()
+                    },
+                    onSearchMoveDown = {
+                        moveLiveGuideSelection(1)
+                        playerView?.requestFocus()
+                    },
+                    onSearchStopEditing = {
+                        liveGuideSearchEditing = false
+                        hideLiveGuideSearchKeyboard()
+                        playerView?.requestFocus()
+                    },
                     selectedChannelTickerText = selectedLiveGuideTickerText,
                     selectedChannelTickerLoading = selectedLiveGuideTickerLoading,
                     alignCategorySelectionToTop = liveGuideReturnCategoryAtTop,
@@ -1846,6 +2188,18 @@ private fun LiveGuidePanel(
         isLoading: Boolean,
         errorMessage: String?,
         selectedCategoryName: String?,
+        searchQuery: String,
+        searchFocused: Boolean,
+        searchEditing: Boolean,
+        searchEditRequestNonce: Int,
+        searchLoading: Boolean,
+        searchActive: Boolean,
+        searchRows: List<LiveGuideSearchRow>,
+        selectedSearchIndex: Int,
+        onSearchQueryChange: (String) -> Unit,
+        onSearchMoveUp: () -> Unit,
+        onSearchMoveDown: () -> Unit,
+        onSearchStopEditing: () -> Unit,
         selectedChannelTickerText: String?,
         selectedChannelTickerLoading: Boolean,
         alignCategorySelectionToTop: Boolean,
@@ -1855,8 +2209,31 @@ private fun LiveGuidePanel(
 ) {
     val listState = rememberLazyListState()
     val density = LocalDensity.current
-    val hasRows = if (level == LiveGuideLevel.CATEGORIES) categories.isNotEmpty() else channels.isNotEmpty()
-    val selectedIndex = if (level == LiveGuideLevel.CATEGORIES) selectedCategoryIndex else selectedChannelIndex
+    val showingCategorySearchResults = level == LiveGuideLevel.CATEGORIES && searchActive
+    val displayedCategories = if (showingCategorySearchResults) emptyList() else categories
+    val displayedChannels =
+            if (showingCategorySearchResults) {
+                searchRows.mapNotNull { row ->
+                    when (row) {
+                        is LiveGuideSearchRow.ChannelRow -> row.channel
+                        else -> null
+                    }
+                }
+            } else {
+                channels
+            }
+    val hasRows =
+            if (level == LiveGuideLevel.CATEGORIES) {
+                if (showingCategorySearchResults) searchRows.isNotEmpty() else displayedCategories.isNotEmpty()
+            } else {
+                displayedChannels.isNotEmpty()
+            }
+    val selectedIndex =
+            when {
+                level == LiveGuideLevel.CATEGORIES && showingCategorySearchResults -> selectedSearchIndex
+                level == LiveGuideLevel.CATEGORIES -> selectedCategoryIndex
+                else -> selectedChannelIndex
+            }
     val selectedBoundedIndex = if (hasRows) selectedIndex.coerceAtLeast(0) else 0
     val visibleWindow by remember(listState, selectedBoundedIndex) {
         derivedStateOf {
@@ -1878,18 +2255,28 @@ private fun LiveGuidePanel(
     val firstVisibleIndex = visibleWindow.first
     val lastVisibleIndex = visibleWindow.second
     val selectedDisplayIndex = visibleWindow.third
+    val listRowSelectionEnabled = !(level == LiveGuideLevel.CATEGORIES && searchFocused)
     val rowHeight = 62.dp
     val rowSpacing = 4.dp
     val headerHeight = 26.dp
+    val searchBarHeight = 40.dp
+    val searchBarVisible = level == LiveGuideLevel.CATEGORIES
 
     LaunchedEffect(
             level,
             selectedBoundedIndex,
             categories.size,
             channels.size,
+            searchRows.size,
+            showingCategorySearchResults,
             alignCategorySelectionToTop
     ) {
-        val rowCount = if (level == LiveGuideLevel.CATEGORIES) categories.size else channels.size
+        val rowCount =
+                if (level == LiveGuideLevel.CATEGORIES) {
+                    if (showingCategorySearchResults) searchRows.size else displayedCategories.size
+                } else {
+                    displayedChannels.size
+                }
         if (rowCount > 0) {
             val targetIndex = selectedBoundedIndex.coerceAtMost(rowCount - 1)
             if (level == LiveGuideLevel.CATEGORIES && alignCategorySelectionToTop) {
@@ -1929,11 +2316,21 @@ private fun LiveGuidePanel(
             contentAlignment = Alignment.CenterEnd
     ) {
         val layoutMetrics =
-                remember(maxHeight, rowHeight, rowSpacing, headerHeight, density.density, density.fontScale) {
+                remember(
+                        maxHeight,
+                        rowHeight,
+                        rowSpacing,
+                        headerHeight,
+                        searchBarVisible,
+                        searchBarHeight,
+                        density.density,
+                        density.fontScale
+                ) {
                     with(density) {
                         val rowPx = rowHeight.roundToPx()
                         val spacingPx = rowSpacing.roundToPx()
-                        val chromePx = (headerHeight + 24.dp).roundToPx()
+                        val searchPx = if (searchBarVisible) (searchBarHeight + 8.dp).roundToPx() else 0
+                        val chromePx = (headerHeight + 24.dp).roundToPx() + searchPx
                         val availablePx = (maxHeight.roundToPx() - chromePx).coerceAtLeast(rowPx)
                         val rowsVisible =
                                 ((availablePx + spacingPx) / (rowPx + spacingPx))
@@ -1986,6 +2383,19 @@ private fun LiveGuidePanel(
                         modifier = Modifier.padding(start = 8.dp)
                 )
             }
+            if (searchBarVisible) {
+                LiveGuideSearchBar(
+                        query = searchQuery,
+                        focused = searchFocused,
+                        editing = searchEditing,
+                        editRequestNonce = searchEditRequestNonce,
+                        loading = searchLoading && searchActive,
+                        onQueryChange = onSearchQueryChange,
+                        onMoveUp = onSearchMoveUp,
+                        onMoveDown = onSearchMoveDown,
+                        onStopEditing = onSearchStopEditing
+                )
+            }
             when {
                 isLoading -> {
                     Box(modifier = Modifier.fillMaxWidth().height(listHeight), contentAlignment = Alignment.Center) {
@@ -2015,7 +2425,12 @@ private fun LiveGuidePanel(
                 !hasRows -> {
                     Box(modifier = Modifier.fillMaxWidth().height(listHeight), contentAlignment = Alignment.Center) {
                         Text(
-                                text = "No channels available",
+                                text =
+                                        if (level == LiveGuideLevel.CATEGORIES && searchActive) {
+                                            "No matching categories or channels"
+                                        } else {
+                                            "No channels available"
+                                        },
                                 color = AppTheme.colors.textSecondary,
                                 fontSize = 13.sp,
                                 fontFamily = AppTheme.fontFamily
@@ -2029,27 +2444,57 @@ private fun LiveGuidePanel(
                             verticalArrangement = Arrangement.spacedBy(rowSpacing)
                     ) {
                         if (level == LiveGuideLevel.CATEGORIES) {
-                            itemsIndexed(
-                                    items = categories,
-                                    key = { _, category -> liveGuideCategoryUiKey(category) }
-                            ) { index, category ->
-                                LiveGuideCategoryRow(
-                                        category = category,
-                                        rowIndex = index,
-                                        selected = index == selectedDisplayIndex,
-                                        thumbnailUrl = categoryThumbnailProvider(category),
-                                        onThumbnailNeeded = onCategoryThumbnailNeeded
-                                )
+                            if (showingCategorySearchResults) {
+                                itemsIndexed(
+                                        items = searchRows,
+                                        key = { _, row -> row.stableKey }
+                                ) { index, row ->
+                                    when (row) {
+                                        is LiveGuideSearchRow.CategoryRow -> {
+                                            LiveGuideCategoryRow(
+                                                    category = row.category,
+                                                    rowIndex = index,
+                                                    selected = listRowSelectionEnabled && index == selectedDisplayIndex,
+                                                    thumbnailUrl = categoryThumbnailProvider(row.category),
+                                                    onThumbnailNeeded = onCategoryThumbnailNeeded
+                                            )
+                                        }
+
+                                        is LiveGuideSearchRow.ChannelRow -> {
+                                            val isSelectedRow = index == selectedDisplayIndex
+                                            LiveGuideChannelRow(
+                                                    channel = row.channel,
+                                                    selected = listRowSelectionEnabled && isSelectedRow,
+                                                    active = row.channel.id == activeChannelId,
+                                                    tickerText = null,
+                                                    tickerLoading = false
+                                            )
+                                        }
+                                    }
+                                }
+                            } else {
+                                itemsIndexed(
+                                        items = displayedCategories,
+                                        key = { _, category -> liveGuideCategoryUiKey(category) }
+                                ) { index, category ->
+                                    LiveGuideCategoryRow(
+                                            category = category,
+                                            rowIndex = index,
+                                            selected = listRowSelectionEnabled && index == selectedDisplayIndex,
+                                            thumbnailUrl = categoryThumbnailProvider(category),
+                                            onThumbnailNeeded = onCategoryThumbnailNeeded
+                                    )
+                                }
                             }
                         } else {
                             itemsIndexed(
-                                    items = channels,
+                                    items = displayedChannels,
                                     key = { _, channel -> channel.id }
                             ) { index, channel ->
                                 val isSelectedRow = index == selectedDisplayIndex
                                 LiveGuideChannelRow(
                                         channel = channel,
-                                        selected = isSelectedRow,
+                                        selected = listRowSelectionEnabled && isSelectedRow,
                                         active = channel.id == activeChannelId,
                                         tickerText = if (isSelectedRow) selectedChannelTickerText else null,
                                         tickerLoading = isSelectedRow && selectedChannelTickerLoading
@@ -2059,6 +2504,153 @@ private fun LiveGuidePanel(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun LiveGuideSearchBar(
+        query: String,
+        focused: Boolean,
+        editing: Boolean,
+        editRequestNonce: Int,
+        loading: Boolean,
+        onQueryChange: (String) -> Unit,
+        onMoveUp: () -> Unit,
+        onMoveDown: () -> Unit,
+        onStopEditing: () -> Unit
+) {
+    val shape = RoundedCornerShape(9.dp)
+    val borderColor =
+            if (focused) AppTheme.colors.focus
+            else AppTheme.colors.borderStrong.copy(alpha = 0.28f)
+    val background =
+            if (focused) AppTheme.colors.focus.copy(alpha = 0.16f)
+            else AppTheme.colors.surfaceAlt.copy(alpha = 0.52f)
+    val displayText =
+            if (query.isNotBlank()) {
+                query
+            } else {
+                "Type to search categories"
+            }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val textFieldFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(editing, editRequestNonce) {
+        if (editing) {
+            textFieldFocusRequester.requestFocus()
+            keyboardController?.show()
+        } else {
+            keyboardController?.hide()
+        }
+    }
+    Row(
+            modifier =
+                    Modifier.fillMaxWidth()
+                            .padding(top = 8.dp, bottom = 8.dp)
+                            .height(40.dp)
+                            .clip(shape)
+                            .background(background)
+                            .border(1.dp, borderColor, shape)
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                    text = "Search: ",
+                    color = AppTheme.colors.textSecondary,
+                    fontSize = 11.sp,
+                    letterSpacing = 0.4.sp,
+                    fontFamily = AppTheme.fontFamily,
+                    fontWeight = FontWeight.SemiBold
+            )
+            BasicTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    enabled = editing,
+                    readOnly = !editing,
+                    singleLine = true,
+                    textStyle =
+                            TextStyle(
+                                    color = AppTheme.colors.textPrimary.copy(alpha = 0.97f),
+                                    fontSize = 12.sp,
+                                    lineHeight = 20.sp,
+                                    fontFamily = AppTheme.fontFamily,
+                                    fontWeight = FontWeight.SemiBold
+                            ),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { onStopEditing() }),
+                    cursorBrush = SolidColor(if (editing) AppTheme.colors.focus else Color.Transparent),
+                    modifier =
+                            Modifier.weight(1f)
+                                    .height(22.dp)
+                                    .focusRequester(textFieldFocusRequester)
+                                    .onPreviewKeyEvent { event: androidx.compose.ui.input.key.KeyEvent ->
+                                        if (event.type != KeyEventType.KeyDown) {
+                                            false
+                                        } else {
+                                            when (event.key) {
+                                                Key.DirectionUp -> {
+                                                    onMoveUp()
+                                                    true
+                                                }
+
+                                                Key.DirectionDown -> {
+                                                    onMoveDown()
+                                                    true
+                                                }
+
+                                                Key.Back, Key.Escape -> {
+                                                    onStopEditing()
+                                                    true
+                                                }
+
+                                                else -> false
+                                            }
+                                        }
+                                    },
+                    decorationBox = { innerTextField ->
+                        Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.CenterStart
+                        ) {
+                            if (query.isBlank()) {
+                                Text(
+                                        text = displayText,
+                                        color = AppTheme.colors.textSecondary.copy(alpha = 0.9f),
+                                        fontSize = 12.sp,
+                                        lineHeight = 20.sp,
+                                        fontFamily = AppTheme.fontFamily,
+                                        fontWeight = FontWeight.Normal,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            innerTextField()
+                        }
+                    }
+            )
+        }
+        if (loading) {
+            Text(
+                    text = "Loading",
+                    color = AppTheme.colors.textSecondary.copy(alpha = 0.9f),
+                    fontSize = 10.sp,
+                    fontFamily = AppTheme.fontFamily,
+                    maxLines = 1
+            )
+        } else if (focused && !editing) {
+            Text(
+                    text = "OK to type",
+                    color = AppTheme.colors.textSecondary.copy(alpha = 0.9f),
+                    fontSize = 10.sp,
+                    fontFamily = AppTheme.fontFamily,
+                    maxLines = 1
+            )
         }
     }
 }

@@ -104,6 +104,7 @@ class XtreamPlayerView @JvmOverloads constructor(
     var onLiveGuideMove: ((Int) -> Boolean)? = null
     var onLiveGuideSelect: (() -> Boolean)? = null
     var onLiveGuideBack: (() -> Boolean)? = null
+    var onLiveGuideSearchKey: ((KeyEvent) -> Boolean)? = null
     var onLiveGuideDismiss: (() -> Boolean)? = null
     var isLiveGuideOpen: Boolean = false
     var onToggleControls: (() -> Boolean)? = null
@@ -264,6 +265,11 @@ class XtreamPlayerView @JvmOverloads constructor(
                     KeyEvent.KEYCODE_ENTER,
                     KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                         return onLiveGuideSelect?.invoke() ?: true
+                    }
+                    else -> {
+                        if (onLiveGuideSearchKey?.invoke(event) == true) {
+                            return true
+                        }
                     }
                 }
             }

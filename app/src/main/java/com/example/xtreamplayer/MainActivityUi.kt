@@ -91,6 +91,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -5358,24 +5359,29 @@ private fun SearchInput(
         onSearch: (() -> Unit)? = null
 ) {
     val shape = RoundedCornerShape(12.dp)
-    val searchButtonFocusRequester = remember { FocusRequester() }
     val textFieldFocusRequester = remember { FocusRequester() }
     val wrapperInteractionSource = remember { MutableInteractionSource() }
     val isWrapperFocused by wrapperInteractionSource.collectIsFocusedAsState()
     var isTextFieldFocused by remember { mutableStateOf(false) }
-    val searchButtonInteractionSource = remember { MutableInteractionSource() }
-    val isSearchButtonFocused by searchButtonInteractionSource.collectIsFocusedAsState()
     val context = LocalContext.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val colors = AppTheme.colors
     val inputMethodManager =
             remember(context) {
                 context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             }
 
-    val isAnyFocused = isWrapperFocused || isTextFieldFocused || isSearchButtonFocused
+    val isAnyFocused = isWrapperFocused || isTextFieldFocused
     val borderColor = if (isAnyFocused) colors.focus else colors.borderStrong
     val backgroundColor = if (isAnyFocused) colors.surfaceAlt else colors.surface
     val triggerSearch = { onSearch?.invoke() }
+    val triggerSearchAndDismissKeyboard = {
+        triggerSearch()
+        if (query.isNotBlank()) {
+            keyboardController?.hide()
+            focusRequester.requestFocus()
+        }
+    }
     val showKeyboard = {
         // toggleSoftInput is more reliable on Android TV
         @Suppress("DEPRECATION")
@@ -5413,8 +5419,8 @@ private fun SearchInput(
                                     } else if (onMoveLeft != null && it.key == Key.DirectionLeft) {
                                         onMoveLeft()
                                         true
-                                    } else if (it.key == Key.DirectionRight) {
-                                        searchButtonFocusRequester.requestFocus()
+                                    } else if (onMoveRight != null && it.key == Key.DirectionRight) {
+                                        onMoveRight()
                                         true
                                     } else if (onMoveUp != null && it.key == Key.DirectionUp) {
                                         onMoveUp()
@@ -5442,7 +5448,7 @@ private fun SearchInput(
                             ),
                     cursorBrush = SolidColor(colors.focus),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { triggerSearch() }),
+                    keyboardActions = KeyboardActions(onSearch = { triggerSearchAndDismissKeyboard() }),
                     modifier =
                             Modifier.fillMaxWidth()
                                     .focusRequester(textFieldFocusRequester)
@@ -5454,8 +5460,10 @@ private fun SearchInput(
                                         ) {
                                             onMoveLeft()
                                             true
-                                        } else if (it.key == Key.DirectionRight) {
-                                            searchButtonFocusRequester.requestFocus()
+                                        } else if (onMoveRight != null &&
+                                                it.key == Key.DirectionRight
+                                        ) {
+                                            onMoveRight()
                                             true
                                         } else if (onMoveUp != null && it.key == Key.DirectionUp) {
                                             onMoveUp()
@@ -5490,63 +5498,6 @@ private fun SearchInput(
                             innerTextField()
                         }
                     }
-            )
-        }
-
-        Spacer(modifier = Modifier.width(8.dp))
-
-        // Search button
-        Box(
-                modifier =
-                        Modifier.size(24.dp)
-                                .focusRequester(searchButtonFocusRequester)
-                                .focusable(interactionSource = searchButtonInteractionSource)
-                                .clickable(
-                                        interactionSource = searchButtonInteractionSource,
-                                        indication = null
-                                ) { triggerSearch() }
-                                .onKeyEvent {
-                                    if (it.type != KeyEventType.KeyDown) {
-                                        false
-                                    } else if (it.key == Key.Enter ||
-                                                    it.key == Key.NumPadEnter ||
-                                                    it.key == Key.DirectionCenter
-                                    ) {
-                                        triggerSearch()
-                                        true
-                                    } else if (it.key == Key.DirectionLeft) {
-                                        focusRequester.requestFocus()
-                                        true
-                                    } else if (onMoveRight != null && it.key == Key.DirectionRight
-                                    ) {
-                                        onMoveRight()
-                                        true
-                                    } else if (onMoveUp != null && it.key == Key.DirectionUp) {
-                                        onMoveUp()
-                                        true
-                                    } else if (onMoveDown != null && it.key == Key.DirectionDown) {
-                                        onMoveDown()
-                                        true
-                                    } else {
-                                        false
-                                    }
-                                }
-                                .background(
-                                        color =
-                                                if (isSearchButtonFocused) colors.focus
-                                                else colors.accentMuted,
-                                        shape = RoundedCornerShape(6.dp)
-                                )
-                                .padding(4.dp),
-                contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = "Search",
-                    tint =
-                            if (isSearchButtonFocused) colors.surface
-                            else colors.textPrimary,
-                    modifier = Modifier.size(16.dp)
             )
         }
     }
