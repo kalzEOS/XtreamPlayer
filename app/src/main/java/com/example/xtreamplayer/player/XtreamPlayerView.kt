@@ -12,7 +12,6 @@ import android.view.KeyEvent
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.PopupWindow
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.os.Handler
@@ -177,17 +176,9 @@ class XtreamPlayerView @JvmOverloads constructor(
     fun dismissSettingsWindowIfShowing(): Boolean {
         val controller = findViewById<View>(Media3UiR.id.exo_controller) as? PlayerControlView
             ?: return false
-        return runCatching {
-            val field = PlayerControlView::class.java.getDeclaredField("settingsWindow")
-            field.isAccessible = true
-            val popup = field.get(controller) as? PopupWindow ?: return false
-            if (popup.isShowing) {
-                popup.dismiss()
-                true
-            } else {
-                false
-            }
-        }.getOrDefault(false)
+        val downHandled = controller.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK))
+        val upHandled = controller.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK))
+        return downHandled || upHandled
     }
 
     override fun onContentAspectRatioChanged(

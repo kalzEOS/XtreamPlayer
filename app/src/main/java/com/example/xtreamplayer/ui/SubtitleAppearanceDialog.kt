@@ -524,8 +524,8 @@ private fun SubtitleAppearanceControlWithReset(
 private fun SubtitleAppearanceToggleRow(
     label: String,
     checked: Boolean,
-    enabled: Boolean = true,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
     focusRequester: FocusRequester? = null,
     onCheckedChange: (Boolean) -> Unit
 ) {

@@ -594,20 +594,9 @@ class ContentRepository(
             seriesSeasonFullMutex.withLock { seriesSeasonFullCache[key] = cached }
             return cached
         }
-        val items = mutableListOf<ContentItem>()
-        var offset = 0
-        val limit = 200
-        while (true) {
-            val pageData = loadSeriesSeasonPage(seriesId, seasonLabel, offset, limit, authConfig)
-            if (pageData.items.isEmpty()) {
-                break
-            }
-            items.addAll(pageData.items)
-            if (pageData.endReached) {
-                break
-            }
-            offset += pageData.items.size
-        }
+        val items =
+            api.fetchSeriesSeasonAll(authConfig, seriesId, seasonLabel)
+                .getOrElse { throw it }
         contentCache.writeSeasonFull(seriesId, seasonLabel, authConfig, items)
         seriesSeasonFullMutex.withLock { seriesSeasonFullCache[key] = items }
         return items

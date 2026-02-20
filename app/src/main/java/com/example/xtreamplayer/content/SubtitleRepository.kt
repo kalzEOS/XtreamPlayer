@@ -24,6 +24,29 @@ private data class CachedSubtitleDescriptor(
     val language: String
 )
 
+internal fun hasLikelyOpenSubtitlesErrorMessage(text: String): Boolean {
+    if (text.isBlank()) return false
+    val normalized = text.lowercase()
+    return normalized.contains("error") ||
+        normalized.contains("rate limit") ||
+        normalized.contains("too many requests") ||
+        normalized.contains("request expired") ||
+        normalized.contains("expired token") ||
+        normalized.contains("\"status\":4")
+}
+
+internal fun isLikelySubtitlePayload(text: String): Boolean {
+    val normalized = text.trim()
+    if (normalized.isBlank()) return false
+    val lowered = normalized.lowercase()
+    return lowered.startsWith("webvtt") ||
+        lowered.contains("-->") ||
+        lowered.contains("[script info]") ||
+        lowered.contains("dialogue:") ||
+        lowered.contains("<tt") ||
+        lowered.contains("<p")
+}
+
 class SubtitleRepository(
     private val context: Context,
     private val api: OpenSubtitlesApi
@@ -87,24 +110,6 @@ class SubtitleRepository(
             val content = contentResult.getOrThrow()
             Timber.d("Downloaded subtitle content: ${content.size} bytes, first bytes: ${content.take(10).joinToString(" ") { String.format("%02X", it) }}")
 
-            // OpenSubtitles sometimes returns HTTP 200 with an error message in the body
-            // instead of a proper error code. Detect this by checking content size and content.
-            if (content.size < 100) {
-                val textContent = content.decodeToString()
-                Timber.e("Subtitle content too small, likely an error: $textContent")
-                if (textContent.contains("error", ignoreCase = true) ||
-                    textContent.contains("limit", ignoreCase = true) ||
-                    textContent.contains("expired", ignoreCase = true)) {
-                    return@withContext Result.failure(
-                        Exception("OpenSubtitles error: $textContent")
-                    )
-                }
-                // Even if it doesn't contain "error", a subtitle file should be larger
-                return@withContext Result.failure(
-                    Exception("Downloaded content too small to be a valid subtitle (${content.size} bytes)")
-                )
-            }
-
             val safeMediaId = sanitizeFileComponent(mediaId, fallback = "media")
             val safeLanguage = sanitizeFileComponent(subtitle.language.lowercase(), fallback = "en")
             val baseName = "${safeMediaId}_${safeLanguage}"
@@ -143,6 +148,18 @@ class SubtitleRepository(
             }
 
             Timber.d("Final subtitle content: ${finalBytes.size} bytes")
+            if (finalBytes.isEmpty()) {
+                return@withContext Result.failure(Exception("Downloaded subtitle content is empty"))
+            }
+            val textContent = finalBytes.decodeToString()
+            if (hasLikelyOpenSubtitlesErrorMessage(textContent)) {
+                return@withContext Result.failure(Exception("OpenSubtitles error: $textContent"))
+            }
+            if (finalBytes.size < MIN_VALIDATION_BYTES && !isLikelySubtitlePayload(textContent)) {
+                return@withContext Result.failure(
+                    Exception("Downloaded content is too small to validate as a subtitle (${finalBytes.size} bytes)")
+                )
+            }
 
             val safeExt = sanitizeSubtitleExtension(finalExt)
             val fileName = "$baseName.$safeExt"
@@ -346,5 +363,6 @@ class SubtitleRepository(
 
     private companion object {
         val RETRYABLE_STATUS_CODES = setOf(429, 500, 502, 503, 504)
+        const val MIN_VALIDATION_BYTES = 24
     }
 }

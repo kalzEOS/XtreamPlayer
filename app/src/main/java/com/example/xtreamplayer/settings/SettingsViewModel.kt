@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import com.example.xtreamplayer.ui.theme.AppFont
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -14,6 +16,9 @@ import javax.inject.Inject
 class SettingsViewModel @Inject constructor(
     private val repository: SettingsRepository
 ) : ViewModel() {
+    private var subtitleAppearanceSaveJob: Job? = null
+    private var pendingSubtitleAppearance: SubtitleAppearanceSettings? = null
+
     init {
         viewModelScope.launch {
             repository.migrateBootSettingsToDataStore()
@@ -51,8 +56,24 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun setSubtitleAppearance(appearance: SubtitleAppearanceSettings) {
+        pendingSubtitleAppearance = appearance
+        subtitleAppearanceSaveJob?.cancel()
+        subtitleAppearanceSaveJob =
+            viewModelScope.launch {
+                delay(SUBTITLE_APPEARANCE_SAVE_DEBOUNCE_MS)
+                val pending = pendingSubtitleAppearance ?: return@launch
+                repository.setSubtitleAppearance(pending)
+                pendingSubtitleAppearance = null
+            }
+    }
+
+    fun flushPendingSubtitleAppearance() {
+        val pending = pendingSubtitleAppearance ?: return
+        subtitleAppearanceSaveJob?.cancel()
+        subtitleAppearanceSaveJob = null
+        pendingSubtitleAppearance = null
         viewModelScope.launch {
-            repository.setSubtitleAppearance(appearance)
+            repository.setSubtitleAppearance(pending)
         }
     }
 
@@ -126,5 +147,14 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             repository.setOpenSubtitlesUserAgent(userAgent)
         }
+    }
+
+    override fun onCleared() {
+        subtitleAppearanceSaveJob?.cancel()
+        super.onCleared()
+    }
+
+    private companion object {
+        const val SUBTITLE_APPEARANCE_SAVE_DEBOUNCE_MS = 150L
     }
 }
