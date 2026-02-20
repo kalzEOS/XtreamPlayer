@@ -1936,7 +1936,10 @@ fun RootScreen(
                         onSave = { updated ->
                             settingsViewModel.setSubtitleAppearance(updated)
                         },
-                        onDismiss = { showSubtitleAppearanceDialog = false }
+                        onDismiss = {
+                            settingsViewModel.flushPendingSubtitleAppearance()
+                            showSubtitleAppearanceDialog = false
+                        }
                     )
                 }
 

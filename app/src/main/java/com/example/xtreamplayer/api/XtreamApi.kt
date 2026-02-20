@@ -503,6 +503,42 @@ class XtreamApi(
         }
     }
 
+    suspend fun fetchSeriesSeasonAll(
+        config: AuthConfig,
+        seriesId: String,
+        seasonLabel: String
+    ): Result<List<ContentItem>> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val url = buildApiUrl(
+                    config,
+                    "get_series_info",
+                    mapOf("series_id" to seriesId)
+                ) ?: return@withContext Result.failure(
+                    IllegalArgumentException("Invalid service URL")
+                )
+                val request = Request.Builder().url(url).get().build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        return@withContext Result.failure(
+                            IllegalStateException("Request failed: ${response.code}")
+                        )
+                    }
+                    val body = response.body ?: return@withContext Result.failure(
+                        IllegalStateException("Empty response")
+                    )
+                    body.charStream().use { stream ->
+                        val reader = JsonReader(stream)
+                        Result.success(parseSeriesSeasonAll(reader, seasonLabel))
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "API request failed")
+                Result.failure(e)
+            }
+        }
+    }
+
     suspend fun fetchLiveNowNext(
         config: AuthConfig,
         streamId: String,
@@ -1392,6 +1428,49 @@ class XtreamApi(
             endReached = offset + limit >= totalCount
         }
         return ContentPage(items = items, endReached = endReached)
+    }
+
+    private fun parseSeriesSeasonAll(
+        reader: JsonReader,
+        seasonLabel: String
+    ): List<ContentItem> {
+        if (reader.peek() != JsonToken.BEGIN_OBJECT) {
+            reader.skipValue()
+            return emptyList()
+        }
+        reader.beginObject()
+        val items = mutableListOf<ContentItem>()
+        while (reader.hasNext()) {
+            val name = reader.nextName()
+            if (name != "episodes") {
+                reader.skipValue()
+                continue
+            }
+            if (reader.peek() != JsonToken.BEGIN_OBJECT) {
+                reader.skipValue()
+                break
+            }
+            reader.beginObject()
+            while (reader.hasNext()) {
+                val seasonKey = reader.nextName()
+                if (seasonKey != seasonLabel) {
+                    reader.skipValue()
+                    continue
+                }
+                if (reader.peek() != JsonToken.BEGIN_ARRAY) {
+                    reader.skipValue()
+                    continue
+                }
+                reader.beginArray()
+                while (reader.hasNext()) {
+                    parseEpisodeEntry(reader, seasonKey)?.let { items.add(it.item) }
+                }
+                reader.endArray()
+            }
+            reader.endObject()
+        }
+        reader.endObject()
+        return items
     }
 
     private fun parseSeriesEpisodesAll(reader: JsonReader): List<ContentItem> {

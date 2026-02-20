@@ -1380,34 +1380,51 @@ internal fun PlayerOverlay(
         file.readBytes()
     }
 
+    fun sanitizeSubtitlePathComponent(raw: String, fallback: String): String {
+        val normalized =
+            raw
+                .replace(Regex("""[\\/:*?"<>|]"""), "_")
+                .replace(Regex("""\.\.+"""), "_")
+                .replace(Regex("""[^A-Za-z0-9._-]"""), "_")
+                .trim('_', '.', ' ')
+        return normalized.takeIf { it.isNotBlank() } ?: fallback
+    }
+
+    suspend fun writeOffsetSubtitleContent(
+        subtitle: ActiveSubtitle,
+        adjustedContent: ByteArray
+    ): Uri? = withContext(Dispatchers.IO) {
+        val fileName = subtitle.fileName ?: return@withContext null
+        val extension = fileName.substringAfterLast('.', "").ifBlank { "srt" }
+        val baseName = fileName.substringBeforeLast('.', fileName)
+        val safeMediaKey = sanitizeSubtitlePathComponent(mediaId, "media")
+        val safeBaseName = sanitizeSubtitlePathComponent(baseName, "subtitle")
+        val dir = java.io.File(context.cacheDir, "subtitles/offset").also { it.mkdirs() }
+        val target = java.io.File(dir, "${safeMediaKey}_${safeBaseName}_offset.$extension")
+        target.writeBytes(adjustedContent)
+        Uri.fromFile(target)
+    }
+
     suspend fun applyOffsetToSubtitle(subtitle: ActiveSubtitle, offsetMs: Long) {
         val format = subtitleFormat(subtitle.fileName)
         if (format == SubtitleFormat.UNKNOWN) return
         val original = subtitle.originalContent ?: return
-        val deltaMs = offsetMs - lastAppliedOffsetMs
-        if (deltaMs == 0L) {
-            lastAppliedOffsetMs = offsetMs
-            publishSubtitleState(subtitle, offsetMs)
-            return
-        }
-        val adjustedContent = applySubtitleOffset(original, deltaMs, format)
-        val path = subtitle.uri.path ?: return
-        withContext(Dispatchers.IO) {
-            java.io.File(path).writeBytes(adjustedContent)
-        }
+        val adjustedContent = applySubtitleOffset(original, offsetMs, format)
+        val subtitleUri =
+            if (offsetMs == 0L) {
+                subtitle.uri
+            } else {
+                writeOffsetSubtitleContent(subtitle, adjustedContent) ?: subtitle.uri
+            }
         playbackEngine.addSubtitle(
-            subtitleUri = subtitle.uri,
+            subtitleUri = subtitleUri,
             language = subtitle.language,
             label = subtitle.label,
             mimeType = subtitleMimeType(subtitle.fileName)
         )
-        val updatedSubtitle =
-            subtitle.copy(
-                originalContent = adjustedContent
-            )
-        activeSubtitle = updatedSubtitle
+        activeSubtitle = subtitle
         lastAppliedOffsetMs = offsetMs
-        publishSubtitleState(updatedSubtitle, offsetMs)
+        publishSubtitleState(subtitle, offsetMs)
     }
 
     fun scheduleOffsetApply(newOffset: Long) {
@@ -1475,18 +1492,26 @@ internal fun PlayerOverlay(
             )
         }
         subtitleOffsetMs = restoredOffsetMs
-        lastAppliedOffsetMs = restoredOffsetMs
+        lastAppliedOffsetMs = 0L
 
         val subtitleToRestore = activeSubtitle
         if (preferredSubtitle != null && subtitleToRestore != null) {
-            playbackEngine.addSubtitle(
-                subtitleUri = subtitleToRestore.uri,
-                language = subtitleToRestore.language,
-                label = subtitleToRestore.label,
-                mimeType = subtitleMimeType(subtitleToRestore.fileName)
-            )
             playbackEngine.setSubtitlesEnabled(true)
-            publishSubtitleState(subtitleToRestore, restoredOffsetMs)
+            if (
+                restoredOffsetMs != 0L &&
+                    subtitleToRestore.originalContent != null &&
+                    isOffsetSupported(subtitleToRestore.fileName)
+            ) {
+                applyOffsetToSubtitle(subtitleToRestore, restoredOffsetMs)
+            } else {
+                playbackEngine.addSubtitle(
+                    subtitleUri = subtitleToRestore.uri,
+                    language = subtitleToRestore.language,
+                    label = subtitleToRestore.label,
+                    mimeType = subtitleMimeType(subtitleToRestore.fileName)
+                )
+                publishSubtitleState(subtitleToRestore, restoredOffsetMs)
+            }
         }
     }
 
@@ -1571,13 +1596,22 @@ internal fun PlayerOverlay(
                         .show()
             } else {
                 activeSubtitle = subtitleToApply
-                playbackEngine.addSubtitle(
-                        subtitleUri = subtitleToApply.uri,
-                        language = subtitleToApply.language,
-                        label = subtitleToApply.label,
-                        mimeType = subtitleMimeType(subtitleToApply.fileName)
-                )
-                publishSubtitleState(subtitleToApply, subtitleOffsetMs)
+                playbackEngine.setSubtitlesEnabled(true)
+                if (
+                    subtitleOffsetMs != 0L &&
+                        subtitleToApply.originalContent != null &&
+                        isOffsetSupported(subtitleToApply.fileName)
+                ) {
+                    applyOffsetToSubtitle(subtitleToApply, subtitleOffsetMs)
+                } else {
+                    playbackEngine.addSubtitle(
+                            subtitleUri = subtitleToApply.uri,
+                            language = subtitleToApply.language,
+                            label = subtitleToApply.label,
+                            mimeType = subtitleMimeType(subtitleToApply.fileName)
+                    )
+                    publishSubtitleState(subtitleToApply, subtitleOffsetMs)
+                }
             }
         }
     }

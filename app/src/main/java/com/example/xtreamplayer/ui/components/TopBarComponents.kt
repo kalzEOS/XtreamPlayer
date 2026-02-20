@@ -60,8 +60,8 @@ internal fun TopBar(title: String, showBack: Boolean, onBack: () -> Unit, onSett
 internal fun TopBarButton(
     label: String,
     onActivate: () -> Unit,
-    enabled: Boolean = true,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
     onMoveLeft: (() -> Unit)? = null,
     onMoveDown: (() -> Unit)? = null,
     onMoveUp: (() -> Unit)? = null
