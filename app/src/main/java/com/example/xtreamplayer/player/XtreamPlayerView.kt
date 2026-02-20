@@ -25,6 +25,8 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerControlView
 import androidx.media3.ui.PlayerView
 import com.example.xtreamplayer.R
+import com.example.xtreamplayer.settings.SubtitleAppearanceSettings
+import com.example.xtreamplayer.settings.applySubtitleAppearanceSettings
 import java.util.Locale
 import androidx.media3.ui.R as Media3UiR
 
@@ -120,6 +122,11 @@ class XtreamPlayerView @JvmOverloads constructor(
             field = value
             bindNowPlayingInfoView()
         }
+    var subtitleAppearanceSettings: SubtitleAppearanceSettings = SubtitleAppearanceSettings()
+        set(value) {
+            field = value
+            applySubtitleAppearance()
+        }
     var isLiveContent: Boolean = false
         set(value) {
             field = value
@@ -213,6 +220,7 @@ class XtreamPlayerView @JvmOverloads constructor(
         bindSettingsView()
         bindTitleView()
         bindNowPlayingInfoView()
+        applySubtitleAppearance()
         updateControlsForContentType()
         updateFocusOrder()
         viewTreeObserver.addOnPreDrawListener(topBarSyncListener)
@@ -233,6 +241,30 @@ class XtreamPlayerView @JvmOverloads constructor(
 
         topBar.visibility = background.visibility
         topBar.alpha = background.alpha
+    }
+
+    private fun applySubtitleAppearance() {
+        val subtitleView = findViewById<androidx.media3.ui.SubtitleView>(Media3UiR.id.exo_subtitles)
+            ?: return
+        val activeSettings =
+            if (
+                subtitleAppearanceSettings.customStyleEnabled &&
+                    !subtitleAppearanceSettings.overrideEmbeddedStyles &&
+                    !hasExternalSubtitleConfiguration()
+            ) {
+                // Keep embedded subtitle author styling when override is disabled.
+                subtitleAppearanceSettings.copy(customStyleEnabled = false)
+            } else {
+                subtitleAppearanceSettings
+            }
+        subtitleView.applySubtitleAppearanceSettings(activeSettings)
+    }
+
+    private fun hasExternalSubtitleConfiguration(): Boolean {
+        return player?.currentMediaItem
+            ?.localConfiguration
+            ?.subtitleConfigurations
+            ?.isNotEmpty() == true
     }
 
     private fun isControllerVisibleForNavigation(): Boolean {

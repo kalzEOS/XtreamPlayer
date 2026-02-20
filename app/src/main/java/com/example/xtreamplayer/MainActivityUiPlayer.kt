@@ -99,6 +99,7 @@ import com.example.xtreamplayer.ui.SubtitleSearchDialog
 import com.example.xtreamplayer.ui.SubtitleTrackDialog
 import com.example.xtreamplayer.ui.VideoResolutionDialog
 import com.example.xtreamplayer.ui.theme.AppTheme
+import com.example.xtreamplayer.settings.SubtitleAppearanceSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -553,6 +554,7 @@ internal fun PlayerOverlay(
         player: Player,
         playbackEngine: Media3PlaybackEngine,
         subtitleRepository: SubtitleRepository,
+        subtitleAppearanceSettings: SubtitleAppearanceSettings,
         openSubtitlesApiKey: String,
         openSubtitlesUserAgent: String,
         mediaId: String,
@@ -1739,6 +1741,7 @@ internal fun PlayerOverlay(
         view.onSubtitleDownloadClick = { showSubtitleDialog = true }
         view.onSubtitleToggleClick = { showSubtitleOptionsDialog = true }
         view.onSubtitleTimingClick = openSubtitleTimingDialog
+        view.subtitleAppearanceSettings = subtitleAppearanceSettings
         view.onAudioTrackClick = { showAudioTrackDialog = true }
         view.onAudioBoostClick = { showAudioBoostDialog = true }
         view.onSettingsClick = { showPlaybackSettingsDialog = true }

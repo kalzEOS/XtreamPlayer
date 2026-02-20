@@ -91,6 +91,7 @@ internal fun BrowseScreen(
     showUiScaleDialogState: MutableState<Boolean>,
     showFontScaleDialogState: MutableState<Boolean>,
     showNextEpisodeThresholdDialogState: MutableState<Boolean>,
+    showSubtitleAppearanceDialogState: MutableState<Boolean>,
     showSubtitleCacheAutoClearDialogState: MutableState<Boolean>,
     showApiKeyDialogState: MutableState<Boolean>,
     cacheClearNonceState: MutableState<Int>,
@@ -157,6 +158,7 @@ internal fun BrowseScreen(
     var showUiScaleDialog by showUiScaleDialogState
     var showFontScaleDialog by showFontScaleDialogState
     var showNextEpisodeThresholdDialog by showNextEpisodeThresholdDialogState
+    var showSubtitleAppearanceDialog by showSubtitleAppearanceDialogState
     var showSubtitleCacheAutoClearDialog by showSubtitleCacheAutoClearDialogState
     var showApiKeyDialog by showApiKeyDialogState
     var cacheClearNonce by cacheClearNonceState
@@ -315,6 +317,7 @@ Row(modifier = Modifier.fillMaxSize()) {
                         onMoveLeft = handleMoveLeft,
                         onToggleAutoPlay = settingsViewModel::toggleAutoPlayNext,
                         onOpenNextEpisodeThreshold = { showNextEpisodeThresholdDialog = true },
+                        onOpenSubtitleAppearance = { showSubtitleAppearanceDialog = true },
                         onOpenSubtitleCacheAutoClear = { showSubtitleCacheAutoClearDialog = true },
                         onToggleSubtitles = settingsViewModel::toggleSubtitles,
                         onOpenAppearance = { showAppearance = true },

@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.xtreamplayer.auth.AuthConfig
 import com.example.xtreamplayer.settings.SettingsState
+import com.example.xtreamplayer.settings.subtitleAppearanceLabel
 import com.example.xtreamplayer.settings.subtitleAutoClearLabel
 import com.example.xtreamplayer.ui.theme.AppFont
 import com.example.xtreamplayer.ui.theme.AppTheme
@@ -61,6 +62,7 @@ fun SettingsScreen(
     onMoveLeft: () -> Unit,
     onToggleAutoPlay: () -> Unit,
     onOpenNextEpisodeThreshold: () -> Unit,
+    onOpenSubtitleAppearance: () -> Unit,
     onOpenSubtitleCacheAutoClear: () -> Unit,
     onToggleSubtitles: () -> Unit,
     onOpenAppearance: () -> Unit,
@@ -79,11 +81,13 @@ fun SettingsScreen(
     val colors = AppTheme.colors
     val apiKeyLabel = if (settings.openSubtitlesApiKey.isNotBlank()) "Configured" else "Not set"
     val thresholdLabel = "${settings.nextEpisodeThresholdSeconds}s"
+    val subtitleAppearance = subtitleAppearanceLabel(settings.subtitleAppearance)
     val subtitleCacheAutoClear = subtitleAutoClearLabel(settings.subtitleCacheAutoClearIntervalMs)
     val playbackActions = listOf(
         SettingsAction("Auto-play next", flagLabel(settings.autoPlayNext), onToggleAutoPlay),
         SettingsAction("Next episode prompt", thresholdLabel, onOpenNextEpisodeThreshold),
         SettingsAction("Subtitles", flagLabel(settings.subtitlesEnabled), onToggleSubtitles),
+        SettingsAction("Subtitle appearance", subtitleAppearance, onOpenSubtitleAppearance),
         SettingsAction("Auto clear subtitle cache", subtitleCacheAutoClear, onOpenSubtitleCacheAutoClear),
         SettingsAction("OpenSubtitles API key", apiKeyLabel, onOpenSubtitlesApiKey)
     )

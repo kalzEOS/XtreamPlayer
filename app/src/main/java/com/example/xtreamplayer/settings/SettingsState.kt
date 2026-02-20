@@ -45,6 +45,7 @@ data class SettingsState(
     val autoPlayNext: Boolean = true,
     val nextEpisodeThresholdSeconds: Int = 45,
     val subtitlesEnabled: Boolean = true,
+    val subtitleAppearance: SubtitleAppearanceSettings = SubtitleAppearanceSettings(),
     val subtitleCacheAutoClearIntervalMs: Long = SubtitleCacheAutoClearOption.THIRTY_DAYS.intervalMs,
     val matchFrameRateEnabled: Boolean = true,
     val checkUpdatesOnStartup: Boolean = true,
