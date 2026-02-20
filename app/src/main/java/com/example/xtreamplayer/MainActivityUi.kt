@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.view.inputmethod.InputMethodManager
@@ -243,6 +244,7 @@ private const val RESUME_MIN_WATCH_MS = 30_000L
 private const val CONTINUE_WATCHING_MAX_PROGRESS_PERCENT = 98L
 private const val LOCAL_RESUME_MAX_PROGRESS_PERCENT = 95L
 private const val SUBTITLE_AUTO_CLEAR_CHECK_INTERVAL_MS = 60L * 60L * 1000L
+private const val DOUBLE_BACK_EXIT_WINDOW_MS = 2_000L
 
 @Composable
 fun RootScreen(
@@ -357,6 +359,7 @@ fun RootScreen(
     var resumePositionMs by playerViewModel.resumePositionMs
     var resumeFocusId by playerViewModel.resumeFocusId
     var activePlaybackSubtitleState by remember { mutableStateOf<PlaybackSubtitleState?>(null) }
+    var lastExitBackPressElapsedMs by remember { mutableLongStateOf(0L) }
     val resumeFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(navExpanded) {
@@ -968,6 +971,30 @@ fun RootScreen(
 
     BackHandler(enabled = showManageLists) { showManageLists = false }
     BackHandler(enabled = showAppearance) { showAppearance = false }
+    val shouldHandleRootBackForExit =
+            activePlaybackQueue == null &&
+                    !showManageLists &&
+                    !showAppearance &&
+                    !showLocalFilesGuest &&
+                    movieInfoItem == null &&
+                    !showThemeDialog &&
+                    !showFontDialog &&
+                    !showUiScaleDialog &&
+                    !showFontScaleDialog &&
+                    !showNextEpisodeThresholdDialog &&
+                    !showSubtitleAppearanceDialog &&
+                    !showSubtitleCacheAutoClearDialog &&
+                    !showApiKeyDialog &&
+                    !updateUiState.showDialog
+    BackHandler(enabled = shouldHandleRootBackForExit) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastExitBackPressElapsedMs < DOUBLE_BACK_EXIT_WINDOW_MS) {
+            (context as? ComponentActivity)?.finish()
+        } else {
+            lastExitBackPressElapsedMs = now
+            Toast.makeText(context, "Press back again to exit", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     val handleItemFocused: (ContentItem) -> Unit = { item ->
         if (activePlaybackQueue == null) {
