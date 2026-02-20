@@ -34,8 +34,18 @@ class SubtitleRepositoryHeuristicsTest {
 
     @Test
     fun `detects likely opensubtitles error payloads`() {
-        assertTrue(hasLikelyOpenSubtitlesErrorMessage("""{"message":"rate limit reached"}"""))
+        assertTrue(hasLikelyOpenSubtitlesErrorMessage("""{"status":429,"message":"rate limit reached"}"""))
         assertTrue(hasLikelyOpenSubtitlesErrorMessage("Request expired"))
+        assertTrue(hasLikelyOpenSubtitlesErrorMessage("""{"status":401,"error":"invalid api key"}"""))
         assertFalse(hasLikelyOpenSubtitlesErrorMessage("WEBVTT\n00:00.000 --> 00:01.000"))
+        assertFalse(
+            hasLikelyOpenSubtitlesErrorMessage(
+                """
+                1
+                00:00:01,000 --> 00:00:02,000
+                We fixed the error and kept going.
+                """.trimIndent()
+            )
+        )
     }
 }

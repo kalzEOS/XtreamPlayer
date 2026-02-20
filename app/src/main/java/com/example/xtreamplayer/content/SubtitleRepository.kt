@@ -26,13 +26,24 @@ private data class CachedSubtitleDescriptor(
 
 internal fun hasLikelyOpenSubtitlesErrorMessage(text: String): Boolean {
     if (text.isBlank()) return false
-    val normalized = text.lowercase()
-    return normalized.contains("error") ||
-        normalized.contains("rate limit") ||
-        normalized.contains("too many requests") ||
-        normalized.contains("request expired") ||
-        normalized.contains("expired token") ||
-        normalized.contains("\"status\":4")
+    val normalized = text.trim()
+    if (isLikelySubtitlePayload(normalized)) return false
+    val lowered = normalized.lowercase()
+    val hasRateLimitSignal =
+        lowered.contains("rate limit") ||
+            lowered.contains("too many requests") ||
+            lowered.contains("request expired") ||
+            lowered.contains("expired token")
+    if (hasRateLimitSignal) return true
+    val looksLikeJson = lowered.startsWith("{") || lowered.startsWith("[")
+    if (!looksLikeJson) return false
+    val hasStatusSignal = lowered.contains("\"status\":") || lowered.contains("\"code\":")
+    val hasErrorSignal =
+        lowered.contains("\"error\"") ||
+            lowered.contains("\"errors\"") ||
+            lowered.contains("\"message\":\"error") ||
+            lowered.contains("\"message\": \"error")
+    return hasStatusSignal && hasErrorSignal
 }
 
 internal fun isLikelySubtitlePayload(text: String): Boolean {
