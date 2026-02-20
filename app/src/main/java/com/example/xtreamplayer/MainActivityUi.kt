@@ -167,6 +167,7 @@ import com.example.xtreamplayer.ui.NextEpisodeThresholdDialog
 import com.example.xtreamplayer.ui.PlaybackSettingsDialog
 import com.example.xtreamplayer.ui.PlaybackSpeedDialog
 import com.example.xtreamplayer.ui.SubtitleCacheAutoClearDialog
+import com.example.xtreamplayer.ui.SubtitleAppearanceDialog
 import com.example.xtreamplayer.ui.SubtitleDialogState
 import com.example.xtreamplayer.ui.SubtitleOptionsDialog
 import com.example.xtreamplayer.ui.SubtitleSearchDialog
@@ -239,6 +240,7 @@ private data class LibrarySyncRequest(
 
 private const val LOCAL_MEDIA_ID_PREFIX = "local:"
 private const val RESUME_MIN_WATCH_MS = 30_000L
+private const val CONTINUE_WATCHING_MAX_PROGRESS_PERCENT = 98L
 private const val LOCAL_RESUME_MAX_PROGRESS_PERCENT = 95L
 private const val SUBTITLE_AUTO_CLEAR_CHECK_INTERVAL_MS = 60L * 60L * 1000L
 
@@ -329,6 +331,8 @@ fun RootScreen(
     var showFontScaleDialog by showFontScaleDialogState
     val showNextEpisodeThresholdDialogState = remember { mutableStateOf(false) }
     var showNextEpisodeThresholdDialog by showNextEpisodeThresholdDialogState
+    val showSubtitleAppearanceDialogState = remember { mutableStateOf(false) }
+    var showSubtitleAppearanceDialog by showSubtitleAppearanceDialogState
     val showSubtitleCacheAutoClearDialogState = remember { mutableStateOf(false) }
     var showSubtitleCacheAutoClearDialog by showSubtitleCacheAutoClearDialogState
     var showLocalFilesGuest by remember { mutableStateOf(false) }
@@ -1272,7 +1276,7 @@ fun RootScreen(
                 val progressPercent = if (duration > 0) (position * 100) / duration else 0
                 val subtitleState = activePlaybackSubtitleState
                 coroutineScope.launch {
-                    if (duration > 0 && progressPercent >= 90) {
+                    if (duration > 0 && progressPercent >= CONTINUE_WATCHING_MAX_PROGRESS_PERCENT) {
                         continueWatchingRepository.removeEntry(config, item)
                     } else {
                         val parentItem =
@@ -1785,6 +1789,7 @@ fun RootScreen(
                         showUiScaleDialogState = showUiScaleDialogState,
                         showFontScaleDialogState = showFontScaleDialogState,
                         showNextEpisodeThresholdDialogState = showNextEpisodeThresholdDialogState,
+                        showSubtitleAppearanceDialogState = showSubtitleAppearanceDialogState,
                         showSubtitleCacheAutoClearDialogState = showSubtitleCacheAutoClearDialogState,
                         showApiKeyDialogState = showApiKeyDialogState,
                         cacheClearNonceState = cacheClearNonceState,
@@ -1896,6 +1901,15 @@ fun RootScreen(
                         currentIntervalMs = settings.subtitleCacheAutoClearIntervalMs,
                         onIntervalChange = { settingsViewModel.setSubtitleCacheAutoClearInterval(it) },
                         onDismiss = { showSubtitleCacheAutoClearDialog = false }
+                    )
+                }
+                if (showSubtitleAppearanceDialog) {
+                    SubtitleAppearanceDialog(
+                        initialSettings = settings.subtitleAppearance,
+                        onSave = { updated ->
+                            settingsViewModel.setSubtitleAppearance(updated)
+                        },
+                        onDismiss = { showSubtitleAppearanceDialog = false }
                     )
                 }
 

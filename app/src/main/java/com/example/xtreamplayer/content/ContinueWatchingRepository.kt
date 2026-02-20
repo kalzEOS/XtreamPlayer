@@ -302,6 +302,6 @@ class ContinueWatchingRepository(private val context: Context) {
     private companion object {
         const val MAX_ENTRIES = 50
         const val MIN_WATCH_MS = 30_000L
-        const val MAX_PROGRESS_PERCENT = 95
+        const val MAX_PROGRESS_PERCENT = 98
     }
 }

@@ -60,6 +60,7 @@ internal fun TopBar(title: String, showBack: Boolean, onBack: () -> Unit, onSett
 internal fun TopBarButton(
     label: String,
     onActivate: () -> Unit,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier,
     onMoveLeft: (() -> Unit)? = null,
     onMoveDown: (() -> Unit)? = null,
@@ -68,9 +69,18 @@ internal fun TopBarButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val shape = RoundedCornerShape(12.dp)
-    val borderColor = if (isFocused) AppTheme.colors.focus else AppTheme.colors.borderStrong
+    val borderColor =
+        when {
+            !enabled -> AppTheme.colors.border
+            isFocused -> AppTheme.colors.focus
+            else -> AppTheme.colors.borderStrong
+        }
     val buttonBrush =
-        if (isFocused) {
+        if (!enabled) {
+            Brush.horizontalGradient(
+                colors = listOf(AppTheme.colors.surfaceAlt, AppTheme.colors.surface)
+            )
+        } else if (isFocused) {
             Brush.horizontalGradient(colors = listOf(AppTheme.colors.accent, AppTheme.colors.accentAlt))
         } else {
             Brush.horizontalGradient(colors = listOf(AppTheme.colors.accentMutedAlt, AppTheme.colors.surfaceAlt))
@@ -79,8 +89,11 @@ internal fun TopBarButton(
         modifier =
             modifier.height(40.dp)
                 .width(140.dp)
-                .focusable(interactionSource = interactionSource)
+                .focusable(interactionSource = interactionSource, enabled = enabled)
                 .onKeyEvent {
+                    if (!enabled) {
+                        return@onKeyEvent false
+                    }
                     if (it.type != KeyEventType.KeyDown) {
                         false
                     } else if (it.key == Key.DirectionLeft && onMoveLeft != null) {
@@ -103,6 +116,7 @@ internal fun TopBarButton(
                     }
                 }
                 .clickable(
+                    enabled = enabled,
                     interactionSource = interactionSource,
                     indication = null,
                     onClick = onActivate
@@ -113,7 +127,12 @@ internal fun TopBarButton(
     ) {
         Text(
             text = label,
-            color = if (isFocused) AppTheme.colors.textOnAccent else AppTheme.colors.textPrimary,
+            color =
+                when {
+                    !enabled -> AppTheme.colors.textTertiary
+                    isFocused -> AppTheme.colors.textOnAccent
+                    else -> AppTheme.colors.textPrimary
+                },
             fontSize = 14.sp,
             fontFamily = AppTheme.fontFamily,
             fontWeight = FontWeight.SemiBold,

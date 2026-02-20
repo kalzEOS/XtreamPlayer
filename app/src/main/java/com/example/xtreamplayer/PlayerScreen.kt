@@ -46,6 +46,7 @@ internal fun PlayerScreen(
         player = playbackEngine.player,
         playbackEngine = playbackEngine,
         subtitleRepository = subtitleRepository,
+        subtitleAppearanceSettings = settings.subtitleAppearance,
         openSubtitlesApiKey = settings.openSubtitlesApiKey,
         openSubtitlesUserAgent = settings.openSubtitlesUserAgent,
         mediaId = activePlaybackItem?.streamId?.toString() ?: "",

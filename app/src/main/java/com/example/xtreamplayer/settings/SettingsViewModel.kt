@@ -50,6 +50,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setSubtitleAppearance(appearance: SubtitleAppearanceSettings) {
+        viewModelScope.launch {
+            repository.setSubtitleAppearance(appearance)
+        }
+    }
+
     fun setMatchFrameRateEnabled(enabled: Boolean) {
         viewModelScope.launch {
             repository.setMatchFrameRateEnabled(enabled)

@@ -21,6 +21,18 @@ class SettingsRepository(private val context: Context) {
         val autoPlay = prefs[Keys.AUTO_PLAY_NEXT] ?: true
         val nextEpisodeThreshold = prefs[Keys.NEXT_EPISODE_THRESHOLD] ?: 45
         val subtitles = prefs[Keys.SUBTITLES_ENABLED] ?: true
+        val subtitleAppearance =
+            SubtitleAppearanceSettings(
+                customStyleEnabled = prefs[Keys.SUBTITLE_CUSTOM_STYLE_ENABLED] ?: false,
+                textSizeSp = prefs[Keys.SUBTITLE_TEXT_SIZE_SP] ?: 18f,
+                textColor = prefs[Keys.SUBTITLE_TEXT_COLOR] ?: android.graphics.Color.WHITE,
+                backgroundOpacityPercent = prefs[Keys.SUBTITLE_BACKGROUND_OPACITY_PERCENT] ?: 55,
+                edgeType = prefs[Keys.SUBTITLE_EDGE_TYPE] ?: androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                bottomPaddingFraction =
+                    prefs[Keys.SUBTITLE_BOTTOM_PADDING_FRACTION]
+                        ?: androidx.media3.ui.SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION,
+                overrideEmbeddedStyles = prefs[Keys.SUBTITLE_OVERRIDE_EMBEDDED_STYLES] ?: false
+            ).normalized()
         val subtitleCacheAutoClearIntervalMs =
             prefs[Keys.SUBTITLE_CACHE_AUTO_CLEAR_INTERVAL_MS]
                 ?: SubtitleCacheAutoClearOption.THIRTY_DAYS.intervalMs
@@ -42,6 +54,7 @@ class SettingsRepository(private val context: Context) {
             autoPlayNext = autoPlay,
             nextEpisodeThresholdSeconds = nextEpisodeThreshold,
             subtitlesEnabled = subtitles,
+            subtitleAppearance = subtitleAppearance,
             subtitleCacheAutoClearIntervalMs = subtitleCacheAutoClearIntervalMs,
             matchFrameRateEnabled = matchFrameRate,
             checkUpdatesOnStartup = checkUpdatesOnStartup,
@@ -123,6 +136,19 @@ class SettingsRepository(private val context: Context) {
     suspend fun setSubtitlesEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[Keys.SUBTITLES_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setSubtitleAppearance(appearance: SubtitleAppearanceSettings) {
+        val normalized = appearance.normalized()
+        context.dataStore.edit { prefs ->
+            prefs[Keys.SUBTITLE_CUSTOM_STYLE_ENABLED] = normalized.customStyleEnabled
+            prefs[Keys.SUBTITLE_TEXT_SIZE_SP] = normalized.textSizeSp
+            prefs[Keys.SUBTITLE_TEXT_COLOR] = normalized.textColor
+            prefs[Keys.SUBTITLE_BACKGROUND_OPACITY_PERCENT] = normalized.backgroundOpacityPercent
+            prefs[Keys.SUBTITLE_EDGE_TYPE] = normalized.edgeType
+            prefs[Keys.SUBTITLE_BOTTOM_PADDING_FRACTION] = normalized.bottomPaddingFraction
+            prefs[Keys.SUBTITLE_OVERRIDE_EMBEDDED_STYLES] = normalized.overrideEmbeddedStyles
         }
     }
 
@@ -264,6 +290,13 @@ class SettingsRepository(private val context: Context) {
         val AUTO_PLAY_NEXT = booleanPreferencesKey("auto_play_next")
         val NEXT_EPISODE_THRESHOLD = intPreferencesKey("next_episode_threshold")
         val SUBTITLES_ENABLED = booleanPreferencesKey("subtitles_enabled")
+        val SUBTITLE_CUSTOM_STYLE_ENABLED = booleanPreferencesKey("subtitle_custom_style_enabled")
+        val SUBTITLE_TEXT_SIZE_SP = floatPreferencesKey("subtitle_text_size_sp")
+        val SUBTITLE_TEXT_COLOR = intPreferencesKey("subtitle_text_color")
+        val SUBTITLE_BACKGROUND_OPACITY_PERCENT = intPreferencesKey("subtitle_background_opacity_percent")
+        val SUBTITLE_EDGE_TYPE = intPreferencesKey("subtitle_edge_type")
+        val SUBTITLE_BOTTOM_PADDING_FRACTION = floatPreferencesKey("subtitle_bottom_padding_fraction")
+        val SUBTITLE_OVERRIDE_EMBEDDED_STYLES = booleanPreferencesKey("subtitle_override_embedded_styles")
         val SUBTITLE_CACHE_AUTO_CLEAR_INTERVAL_MS = longPreferencesKey("subtitle_cache_auto_clear_interval_ms")
         val SUBTITLE_CACHE_AUTO_CLEAR_LAST_RUN_MS = longPreferencesKey("subtitle_cache_auto_clear_last_run_ms")
         val MATCH_FRAME_RATE_ENABLED = booleanPreferencesKey("match_frame_rate_enabled")
