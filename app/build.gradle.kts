@@ -3,8 +3,8 @@ import java.util.Properties
 import org.gradle.api.provider.Property
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
-val appVersionCode = 126
-val appVersionName = "3.3"
+val appVersionCode = 127
+val appVersionName = "3.3.1"
 
 plugins {
     alias(libs.plugins.android.application)
