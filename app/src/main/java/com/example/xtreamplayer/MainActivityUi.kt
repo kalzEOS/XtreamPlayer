@@ -280,20 +280,6 @@ fun RootScreen(
             favoritesRepository.favoriteContentKeys.collectAsStateWithLifecycle(
                     initialValue = emptySet()
             )
-    val favoriteCategoryKeys by
-            favoritesRepository.favoriteCategoryKeys.collectAsStateWithLifecycle(
-                    initialValue = emptySet()
-            )
-    val favoriteContentEntries by
-            favoritesRepository.favoriteContentEntries.collectAsStateWithLifecycle(
-                    initialValue = emptyList()
-            )
-    val favoriteCategoryEntries by
-            favoritesRepository.favoriteCategoryEntries.collectAsStateWithLifecycle(
-                    initialValue = emptyList()
-            )
-    val historyEntries by
-            historyRepository.historyEntries.collectAsStateWithLifecycle(initialValue = emptyList())
     val continueWatchingEntries by
             continueWatchingRepository.continueWatchingEntries.collectAsStateWithLifecycle(
                     initialValue = emptyList()
@@ -1198,58 +1184,9 @@ fun RootScreen(
                 }
             }
 
-    val filteredFavoriteContentKeys =
-            remember(favoriteContentKeys, activeConfig) {
-                if (activeConfig == null) {
-                    emptySet()
-                } else {
-                    favoritesRepository.filterKeysForConfig(favoriteContentKeys, activeConfig)
-                }
-            }
-    val filteredFavoriteCategoryKeys =
-            remember(favoriteCategoryKeys, activeConfig) {
-                if (activeConfig == null) {
-                    emptySet()
-                } else {
-                    favoritesRepository.filterKeysForConfig(favoriteCategoryKeys, activeConfig)
-                }
-            }
-    val filteredFavoriteContentItems =
-            remember(favoriteContentEntries, filteredFavoriteContentKeys, activeConfig) {
-                if (activeConfig == null) {
-                    emptyList()
-                } else {
-                    favoriteContentEntries
-                            .filter {
-                                favoritesRepository.isKeyForConfig(it.key, activeConfig) &&
-                                        filteredFavoriteContentKeys.contains(it.key)
-                            }
-                            .map { it.item }
-                            .distinctBy { "${it.contentType.name}:${it.id}" }
-                }
-            }
-    val filteredFavoriteCategoryItems =
-            remember(favoriteCategoryEntries, filteredFavoriteCategoryKeys, activeConfig) {
-                if (activeConfig == null) {
-                    emptyList()
-                } else {
-                    favoriteCategoryEntries
-                            .filter {
-                                favoritesRepository.isKeyForConfig(it.key, activeConfig) &&
-                                        filteredFavoriteCategoryKeys.contains(it.key)
-                            }
-                            .map { it.category }
-                            .distinctBy { "${it.type.name}:${it.id}" }
-                }
-            }
     val isContentFavorite: (ContentItem) -> Boolean = { item ->
         val config = authState.activeConfig
         config != null && favoritesRepository.isContentFavorite(favoriteContentKeys, config, item)
-    }
-    val isCategoryFavorite: (CategoryItem) -> Boolean = { category ->
-        val config = authState.activeConfig
-        config != null &&
-                favoritesRepository.isCategoryFavorite(favoriteCategoryKeys, config, category)
     }
 
     val filteredContinueWatchingItems =
@@ -1825,7 +1762,6 @@ fun RootScreen(
                         cacheClearNonceState = cacheClearNonceState,
                         contentRepository = contentRepository,
                         favoritesRepository = favoritesRepository,
-                        historyRepository = historyRepository,
                         continueWatchingRepository = continueWatchingRepository,
                         subtitleRepository = subtitleRepository,
                         playbackEngine = playbackEngine,
@@ -1846,10 +1782,6 @@ fun RootScreen(
                         resumeFocusId = resumeFocusId,
                         resumeFocusRequester = resumeFocusRequester,
                         filteredContinueWatchingItems = filteredContinueWatchingItems,
-                        filteredFavoriteContentItems = filteredFavoriteContentItems,
-                        filteredFavoriteCategoryItems = filteredFavoriteCategoryItems,
-                        filteredFavoriteContentKeys = filteredFavoriteContentKeys,
-                        filteredFavoriteCategoryKeys = filteredFavoriteCategoryKeys,
                         isPlaybackActive = activePlaybackQueue != null,
                         onItemFocused = handleItemFocused,
                         onPlay = handlePlayItem,
@@ -1867,8 +1799,6 @@ fun RootScreen(
                         },
                         onToggleFavorite = handleToggleFavorite,
                         onToggleCategoryFavorite = handleToggleCategoryFavorite,
-                        isItemFavorite = isContentFavorite,
-                        isCategoryFavorite = isCategoryFavorite,
                         onSeriesPlaybackStart = { activePlaybackSeriesParent = it },
                         onTriggerSectionSync = { section, config ->
                             triggerSectionSync(section, config)
