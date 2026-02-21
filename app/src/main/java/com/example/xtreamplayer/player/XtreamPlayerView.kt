@@ -733,21 +733,24 @@ class XtreamPlayerView @JvmOverloads constructor(
 
     private fun navigableControls(ids: List<Int>): List<View> {
         return ids.mapNotNull { findViewById<View>(it) }
-            .filter { it.isVisible && it.isShown }
+            .filter { isControlNavigable(it) }
             .onEach { ensureControlNavigable(it) }
     }
 
     private fun ensureControlNavigable(view: View) {
-        // Keep the lane always navigable; unavailable actions are handled as no-op by click handlers.
-        if (!view.isEnabled) {
-            view.isEnabled = true
-        }
+        // Keep DPAD traversal reliable without overriding player command availability.
         if (!view.isFocusable) {
             view.isFocusable = true
         }
         if (!view.isFocusableInTouchMode) {
             view.isFocusableInTouchMode = true
         }
+    }
+
+    private fun isControlNavigable(view: View): Boolean {
+        if (!view.isVisible || !view.isShown) return false
+        if (!view.isEnabled) return false
+        return true
     }
 
     private fun wireHorizontalLane(views: List<View>) {
@@ -818,7 +821,7 @@ class XtreamPlayerView @JvmOverloads constructor(
     }
 
     private fun moveFocusTo(target: View?): Boolean {
-        if (target == null || target.visibility != View.VISIBLE || !target.isShown) {
+        if (target == null || !isControlNavigable(target)) {
             return false
         }
         ensureControlNavigable(target)
@@ -919,10 +922,13 @@ class XtreamPlayerView @JvmOverloads constructor(
 
     private fun handleExplicitControllerNavigation(keyCode: Int): Boolean {
         val focusedId = findFocus()?.id ?: return false
+        val laneOrderIds = transportControlOrderIds() + rightControlOrderIds()
+        val laneOrderIndexById = laneOrderIds.withIndex().associate { (index, id) -> id to index }
         val transportControls = navigableControls(transportControlOrderIds())
         val rightControls = navigableControls(rightControlOrderIds())
         val bottomLane = transportControls + rightControls
         val focusedLaneIndex = bottomLane.indexOfFirst { it.id == focusedId }
+        val focusedLaneOrderIndex = laneOrderIndexById[focusedId]
         val progress = findViewById<View>(Media3UiR.id.exo_progress)
         val progressVisible = isProgressNavigationEnabled(progress)
         val preferredTransport =
@@ -933,6 +939,13 @@ class XtreamPlayerView @JvmOverloads constructor(
             KeyEvent.KEYCODE_DPAD_RIGHT -> {
                 if (focusedLaneIndex >= 0) {
                     moveFocusTo(bottomLane.getOrNull(focusedLaneIndex + 1))
+                } else if (focusedLaneOrderIndex != null) {
+                    moveFocusTo(
+                        bottomLane.firstOrNull { view ->
+                            val index = laneOrderIndexById[view.id] ?: Int.MAX_VALUE
+                            index > focusedLaneOrderIndex
+                        }
+                    )
                 } else {
                     false
                 }
@@ -940,6 +953,13 @@ class XtreamPlayerView @JvmOverloads constructor(
             KeyEvent.KEYCODE_DPAD_LEFT -> {
                 if (focusedLaneIndex >= 0) {
                     moveFocusTo(bottomLane.getOrNull(focusedLaneIndex - 1))
+                } else if (focusedLaneOrderIndex != null) {
+                    moveFocusTo(
+                        bottomLane.lastOrNull { view ->
+                            val index = laneOrderIndexById[view.id] ?: Int.MIN_VALUE
+                            index < focusedLaneOrderIndex
+                        }
+                    )
                 } else {
                     false
                 }
@@ -958,7 +978,7 @@ class XtreamPlayerView @JvmOverloads constructor(
                 }
             }
             KeyEvent.KEYCODE_DPAD_UP -> {
-                if (focusedLaneIndex >= 0) {
+                if (focusedLaneIndex >= 0 || focusedLaneOrderIndex != null) {
                     if (progressVisible) {
                         moveFocusTo(progress)
                     } else {
@@ -1044,10 +1064,6 @@ class XtreamPlayerView @JvmOverloads constructor(
         val next = nextButtonView ?: findViewById<View>(Media3UiR.id.exo_next).also {
             nextButtonView = it
         }
-        prev?.isEnabled = true
-        prev?.isFocusable = true
-        next?.isEnabled = true
-        next?.isFocusable = true
         prev?.setOnClickListener {
             if (isLiveContent) {
                 onChannelDown?.invoke()
