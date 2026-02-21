@@ -45,7 +45,6 @@ import com.example.xtreamplayer.content.CategoryItem
 import com.example.xtreamplayer.content.ContentItem
 import com.example.xtreamplayer.content.ContentRepository
 import com.example.xtreamplayer.content.ContentType
-import com.example.xtreamplayer.content.ContinueWatchingEntry
 import com.example.xtreamplayer.content.ContinueWatchingRepository
 import com.example.xtreamplayer.content.FavoritesRepository
 import com.example.xtreamplayer.content.ProgressiveSyncCoordinator
@@ -59,6 +58,7 @@ import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -116,7 +116,6 @@ internal fun BrowseScreen(
     contentItemFocusRequester: FocusRequester,
     resumeFocusId: String?,
     resumeFocusRequester: FocusRequester,
-    filteredContinueWatchingItems: List<ContinueWatchingEntry>,
     isPlaybackActive: Boolean,
     onItemFocused: (ContentItem) -> Unit,
     onPlay: (ContentItem, List<ContentItem>) -> Unit,
@@ -217,6 +216,17 @@ internal fun BrowseScreen(
         val config = activeConfig
         config != null && favoritesRepository.isCategoryFavorite(favoriteCategoryKeys, config, category)
     }
+    val filteredContinueWatchingFlow =
+        remember(activeConfig) {
+            val config = activeConfig
+            if (config == null) {
+                flowOf(emptyList())
+            } else {
+                continueWatchingRepository.continueWatchingEntriesForConfig(config)
+            }
+        }
+    val filteredContinueWatchingItems by
+        filteredContinueWatchingFlow.collectAsStateWithLifecycle(initialValue = emptyList())
 
     LaunchedEffect(navMoveToContentTrigger) {
         if (navMoveToContentTrigger <= 0) return@LaunchedEffect
