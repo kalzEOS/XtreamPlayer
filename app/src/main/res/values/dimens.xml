@@ -1,20 +1,39 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <dimen name="exo_icon_size">56dp</dimen>
-    <dimen name="exo_icon_padding">12dp</dimen>
-    <dimen name="exo_icon_horizontal_margin">6dp</dimen>
+    <dimen name="exo_icon_size">30dp</dimen>
+    <dimen name="exo_icon_padding">4dp</dimen>
+    <dimen name="exo_icon_horizontal_margin">4dp</dimen>
     <!-- Use library defaults for rewind/ffwd label sizing to avoid clipping. -->
 
-    <dimen name="exo_small_icon_width">36dp</dimen>
-    <dimen name="exo_small_icon_height">36dp</dimen>
-    <dimen name="exo_small_icon_horizontal_margin">6dp</dimen>
-    <dimen name="exo_small_icon_padding_horizontal">8dp</dimen>
-    <dimen name="exo_small_icon_padding_vertical">8dp</dimen>
+    <dimen name="exo_small_icon_width">30dp</dimen>
+    <dimen name="exo_small_icon_height">30dp</dimen>
+    <dimen name="exo_small_icon_horizontal_margin">4dp</dimen>
+    <dimen name="exo_small_icon_padding_horizontal">5dp</dimen>
+    <dimen name="exo_small_icon_padding_vertical">5dp</dimen>
 
-    <dimen name="exo_styled_bottom_bar_height">64dp</dimen>
+    <dimen name="exo_styled_bottom_bar_height">74dp</dimen>
     <dimen name="exo_styled_bottom_bar_time_padding">12dp</dimen>
     <dimen name="exo_styled_controls_padding">16dp</dimen>
 
     <dimen name="exo_styled_progress_layout_height">12dp</dimen>
+    <dimen name="exo_live_progress_line_height">2dp</dimen>
+    <dimen name="exo_live_progress_line_offset_top">8dp</dimen>
+    <dimen name="exo_styled_progress_margin_bottom">46dp</dimen>
+    <dimen name="exo_styled_time_margin_bottom">44dp</dimen>
     <dimen name="exo_styled_progress_bar_height">4dp</dimen>
+    <dimen name="exo_styled_minimal_controls_margin_bottom">46dp</dimen>
+    <dimen name="exo_controls_pill_inner_padding_horizontal">6dp</dimen>
+    <dimen name="exo_controls_pill_inner_padding_vertical">2dp</dimen>
+    <dimen name="exo_controls_pill_content_height">36dp</dimen>
+    <dimen name="exo_controls_pill_min_width">1dp</dimen>
+    <dimen name="exo_controls_lane_edge_margin">12dp</dimen>
+    <dimen name="exo_controls_lane_bottom_margin">4dp</dimen>
+    <dimen name="exo_now_playing_min_width">1dp</dimen>
+    <dimen name="exo_time_side_margin">10dp</dimen>
+    <dimen name="exo_time_text_min_width">56dp</dimen>
+    <dimen name="exo_progress_time_gap">8dp</dimen>
+    <dimen name="exo_progress_side_inset_start">72dp</dimen>
+    <dimen name="exo_progress_side_inset_end">92dp</dimen>
+    <dimen name="exo_now_playing_margin_start">10dp</dimen>
+    <dimen name="exo_now_playing_margin_end">8dp</dimen>
 </resources>

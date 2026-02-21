@@ -1099,7 +1099,7 @@ fun RootScreen(
         if (current.contentType != ContentType.LIVE) return@switchLiveChannel false
         val liveItems = activePlaybackItems.filter { it.contentType == ContentType.LIVE }
         if (liveItems.isEmpty()) return@switchLiveChannel false
-        val currentIndex = liveItems.indexOfFirst { it.id == current.id }.takeIf { it >= 0 }
+        val currentIndex = liveItems.indexOfFirst { isSameContentIdentity(it, current) }.takeIf { it >= 0 }
             ?: return@switchLiveChannel false
         val nextIndex = ((currentIndex + delta) % liveItems.size + liveItems.size) % liveItems.size
         val nextItem = liveItems[nextIndex]
@@ -2321,7 +2321,8 @@ private fun isSameContentIdentity(first: ContentItem, second: ContentItem): Bool
 }
 
 private fun queueMediaIdFor(item: ContentItem): String {
-    return "${item.contentType.name}:${item.id}"
+    val stableId = item.streamId?.takeUnless { it.isBlank() } ?: item.id
+    return "${item.contentType.name}:$stableId"
 }
 
 private fun buildPlaybackQueue(
@@ -2330,11 +2331,11 @@ private fun buildPlaybackQueue(
         authConfig: AuthConfig
 ): PlaybackQueue {
     val playableItems = items.filter(::isPlayableContent).toMutableList()
-    if (playableItems.none { it.id == current.id }) {
+    if (playableItems.none { isSameContentIdentity(it, current) }) {
         playableItems.add(current)
     }
     val startIndex =
-            playableItems.indexOfFirst { it.id == current.id }.let { index ->
+            playableItems.indexOfFirst { isSameContentIdentity(it, current) }.let { index ->
                 if (index >= 0) index else 0
             }
     val fallbackUris = LinkedHashMap<String, List<Uri>>()
@@ -7306,9 +7307,9 @@ fun FavoritesScreen(
                                         when {
                                             isReturnTargetById || isReturnTargetByIndex ->
                                                     contentItemFocusRequester
-                                            index == backDownTargetIndex -> backDownFocusRequester
                                             !pendingCategoryReturnFocus && index == 0 ->
                                                     contentItemFocusRequester
+                                            index == backDownTargetIndex -> backDownFocusRequester
                                             else -> null
                                         }
                                 val isLeftEdge = index % categoryColumns == 0
