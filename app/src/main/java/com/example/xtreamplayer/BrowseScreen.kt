@@ -68,6 +68,62 @@ import androidx.compose.runtime.withFrameNanos
 private const val BROWSE_NAV_ANIM_DURATION_MS = 180
 
 @Composable
+private fun BrowseSideNavRail(
+    selectedSection: Section,
+    navExpanded: Boolean,
+    navLayoutExpanded: Boolean,
+    onSectionSelected: (Section) -> Unit,
+    onMoveRight: () -> Unit,
+    allNavItemFocusRequester: FocusRequester,
+    continueWatchingNavItemFocusRequester: FocusRequester,
+    favoritesNavItemFocusRequester: FocusRequester,
+    moviesNavItemFocusRequester: FocusRequester,
+    seriesNavItemFocusRequester: FocusRequester,
+    liveNavItemFocusRequester: FocusRequester,
+    categoriesNavItemFocusRequester: FocusRequester,
+    localFilesNavItemFocusRequester: FocusRequester,
+    settingsNavItemFocusRequester: FocusRequester
+) {
+    var navSlideExpanded by remember { mutableStateOf(navExpanded) }
+    LaunchedEffect(navExpanded) {
+        if (navExpanded) {
+            navSlideExpanded = false
+            withFrameNanos {}
+            delay(16)
+            navSlideExpanded = true
+        } else {
+            navSlideExpanded = false
+        }
+    }
+    val navProgress by animateFloatAsState(
+        targetValue = if (navSlideExpanded) 1f else 0f,
+        animationSpec = tween(durationMillis = BROWSE_NAV_ANIM_DURATION_MS),
+        label = "browseNavSlide"
+    )
+    val navWidthPx = with(LocalDensity.current) { NAV_WIDTH.toPx() }
+    val navOffsetPx = -navWidthPx * (1f - navProgress)
+    SideNav(
+        selectedSection = selectedSection,
+        onSectionSelected = onSectionSelected,
+        onMoveRight = onMoveRight,
+        expanded = navSlideExpanded,
+        layoutExpanded = navLayoutExpanded,
+        allNavItemFocusRequester = allNavItemFocusRequester,
+        continueWatchingNavItemFocusRequester = continueWatchingNavItemFocusRequester,
+        favoritesNavItemFocusRequester = favoritesNavItemFocusRequester,
+        moviesNavItemFocusRequester = moviesNavItemFocusRequester,
+        seriesNavItemFocusRequester = seriesNavItemFocusRequester,
+        liveNavItemFocusRequester = liveNavItemFocusRequester,
+        categoriesNavItemFocusRequester = categoriesNavItemFocusRequester,
+        localFilesNavItemFocusRequester = localFilesNavItemFocusRequester,
+        settingsNavItemFocusRequester = settingsNavItemFocusRequester,
+        modifier =
+            Modifier.graphicsLayer { translationX = navOffsetPx }
+                .alpha(navProgress)
+    )
+}
+
+@Composable
 internal fun BrowseScreen(
     context: Context,
     coroutineScope: CoroutineScope,
@@ -156,29 +212,16 @@ internal fun BrowseScreen(
     val focusManager = LocalFocusManager.current
     var navMoveToContentTrigger by remember { mutableIntStateOf(0) }
     var navLayoutExpanded by remember { mutableStateOf(true) }
-    var navSlideExpanded by remember { mutableStateOf(true) }
     LaunchedEffect(navExpanded) {
         if (navExpanded) {
             navLayoutExpanded = true
-            navSlideExpanded = false
-            withFrameNanos {}
-            delay(16)
-            navSlideExpanded = true
         } else {
-            navSlideExpanded = false
             delay(BROWSE_NAV_ANIM_DURATION_MS.toLong())
             if (!navExpanded) {
                 navLayoutExpanded = false
             }
         }
     }
-    val navProgress by animateFloatAsState(
-        targetValue = if (navSlideExpanded) 1f else 0f,
-        animationSpec = tween(durationMillis = BROWSE_NAV_ANIM_DURATION_MS),
-        label = "browseNavSlide"
-    )
-    val navWidthPx = with(LocalDensity.current) { NAV_WIDTH.toPx() }
-    val navOffsetPx = -navWidthPx * (1f - navProgress)
     val favoriteContentKeys by
         favoritesRepository.favoriteContentKeys.collectAsStateWithLifecycle(initialValue = emptySet())
     val favoriteCategoryKeys by
@@ -285,38 +328,31 @@ internal fun BrowseScreen(
     }
 
 Row(modifier = Modifier.fillMaxSize()) {
-    SideNav(
-            selectedSection = selectedSection,
-            onSectionSelected = {
-                selectedSection = it
-                // Trigger lazy sync for SERIES/LIVE when first accessed
-                if (it == Section.SERIES || it == Section.LIVE) {
-                    activeConfig?.let { config ->
-                        onTriggerSectionSync(it, config)
-                    }
+    BrowseSideNavRail(
+        selectedSection = selectedSection,
+        navExpanded = navExpanded,
+        navLayoutExpanded = navLayoutExpanded,
+        onSectionSelected = { section ->
+            selectedSection = section
+            if (section == Section.SERIES || section == Section.LIVE) {
+                activeConfig?.let { config ->
+                    onTriggerSectionSync(section, config)
                 }
-                // Don't auto-focus content - user must press Right to navigate
-                // there
-            },
-            onMoveRight = {
-                Timber.d("NavItem: onMoveRight called, attempting directional move to content")
-                navMoveToContentTrigger++
-            },
-            expanded = navSlideExpanded,
-            layoutExpanded = navLayoutExpanded,
-            allNavItemFocusRequester = allNavItemFocusRequester,
-            continueWatchingNavItemFocusRequester =
-                    continueWatchingNavItemFocusRequester,
-            favoritesNavItemFocusRequester = favoritesNavItemFocusRequester,
-            moviesNavItemFocusRequester = moviesNavItemFocusRequester,
-            seriesNavItemFocusRequester = seriesNavItemFocusRequester,
-            liveNavItemFocusRequester = liveNavItemFocusRequester,
-            categoriesNavItemFocusRequester = categoriesNavItemFocusRequester,
-            localFilesNavItemFocusRequester = localFilesNavItemFocusRequester,
-            settingsNavItemFocusRequester = settingsNavItemFocusRequester,
-            modifier =
-                    Modifier.graphicsLayer { translationX = navOffsetPx }
-                            .alpha(navProgress)
+            }
+        },
+        onMoveRight = {
+            Timber.d("NavItem: onMoveRight called, attempting directional move to content")
+            navMoveToContentTrigger++
+        },
+        allNavItemFocusRequester = allNavItemFocusRequester,
+        continueWatchingNavItemFocusRequester = continueWatchingNavItemFocusRequester,
+        favoritesNavItemFocusRequester = favoritesNavItemFocusRequester,
+        moviesNavItemFocusRequester = moviesNavItemFocusRequester,
+        seriesNavItemFocusRequester = seriesNavItemFocusRequester,
+        liveNavItemFocusRequester = liveNavItemFocusRequester,
+        categoriesNavItemFocusRequester = categoriesNavItemFocusRequester,
+        localFilesNavItemFocusRequester = localFilesNavItemFocusRequester,
+        settingsNavItemFocusRequester = settingsNavItemFocusRequester
     )
 
     Box(modifier = Modifier.fillMaxHeight().weight(1f)) {
