@@ -9,6 +9,7 @@ import com.example.xtreamplayer.auth.AuthConfig
 import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 
@@ -49,6 +50,13 @@ class FavoritesRepository(private val context: Context) {
 
     fun isCategoryFavorite(keys: Set<String>, config: AuthConfig, category: CategoryItem): Boolean {
         return keys.contains(categoryKey(config, category))
+    }
+
+    fun isContentFavoriteFlow(config: AuthConfig, item: ContentItem): Flow<Boolean> {
+        return favoriteContentKeys
+            .map { keys -> isContentFavorite(keys, config, item) }
+            .distinctUntilChanged()
+            .flowOn(Dispatchers.Default)
     }
 
     fun filterKeysForConfig(keys: Set<String>, config: AuthConfig): Set<String> {

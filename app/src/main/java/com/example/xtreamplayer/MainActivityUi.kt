@@ -20,8 +20,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -276,28 +274,6 @@ fun RootScreen(
     val authState by authViewModel.uiState.collectAsStateWithLifecycle()
     val savedConfig by authViewModel.savedConfig.collectAsStateWithLifecycle()
     val savedConfigLoaded by authViewModel.savedConfigLoaded.collectAsStateWithLifecycle()
-    val favoriteContentKeys by
-            favoritesRepository.favoriteContentKeys.collectAsStateWithLifecycle(
-                    initialValue = emptySet()
-            )
-    val favoriteCategoryKeys by
-            favoritesRepository.favoriteCategoryKeys.collectAsStateWithLifecycle(
-                    initialValue = emptySet()
-            )
-    val favoriteContentEntries by
-            favoritesRepository.favoriteContentEntries.collectAsStateWithLifecycle(
-                    initialValue = emptyList()
-            )
-    val favoriteCategoryEntries by
-            favoritesRepository.favoriteCategoryEntries.collectAsStateWithLifecycle(
-                    initialValue = emptyList()
-            )
-    val historyEntries by
-            historyRepository.historyEntries.collectAsStateWithLifecycle(initialValue = emptyList())
-    val continueWatchingEntries by
-            continueWatchingRepository.continueWatchingEntries.collectAsStateWithLifecycle(
-                    initialValue = emptyList()
-            )
     val localPlaybackResumeRepository = remember { LocalPlaybackResumeRepository(context) }
     val localPlaybackResumeEntries by
         localPlaybackResumeRepository.entries.collectAsStateWithLifecycle(initialValue = emptyList())
@@ -310,8 +286,6 @@ fun RootScreen(
 
     var selectedSection by browseViewModel.selectedSection
     var navExpanded by browseViewModel.navExpanded
-    var navLayoutExpanded by remember { mutableStateOf(true) }
-    var navSlideExpanded by remember { mutableStateOf(true) }
     val showManageListsState = remember { mutableStateOf(false) }
     var showManageLists by showManageListsState
     val showAppearanceState = remember { mutableStateOf(false) }
@@ -364,22 +338,6 @@ fun RootScreen(
     var activePlaybackSubtitleState by remember { mutableStateOf<PlaybackSubtitleState?>(null) }
     var lastExitBackPressElapsedMs by remember { mutableLongStateOf(0L) }
     val resumeFocusRequester = remember { FocusRequester() }
-
-    LaunchedEffect(navExpanded) {
-        if (navExpanded) {
-            navLayoutExpanded = true
-            navSlideExpanded = false
-            withFrameNanos {}
-            delay(16)
-            navSlideExpanded = true
-        } else {
-            navSlideExpanded = false
-            delay(NAV_ANIM_DURATION_MS.toLong())
-            if (!navExpanded) {
-                navLayoutExpanded = false
-            }
-        }
-    }
 
     // Progressive sync coordinator
     val settingsRepository = remember { com.example.xtreamplayer.settings.SettingsRepository(context) }
@@ -1047,14 +1005,14 @@ fun RootScreen(
             movieInfoItem = null
             movieInfoInfo = null
             movieInfoFromContinueWatching = true
-            movieInfoResumePositionMs =
-                    continueWatchingEntries.firstOrNull {
-                        it.item.contentType == ContentType.MOVIES &&
-                                (it.item.id == item.id || it.item.streamId == item.streamId)
-                    }?.positionMs?.takeIf { it > 0 }
+            movieInfoResumePositionMs = null
             movieInfoQueue = if (items.isEmpty()) listOf(item) else items
             movieInfoLoadJob =
                     coroutineScope.launch {
+                        movieInfoResumePositionMs =
+                            continueWatchingRepository.findContinueWatchingEntry(config, item)
+                                ?.positionMs
+                                ?.takeIf { it > 0 }
                         val infoResult = runCatching { contentRepository.loadMovieInfo(item, config) }
                         val info = infoResult.getOrNull()
                         if (info == null) {
@@ -1198,81 +1156,23 @@ fun RootScreen(
                 }
             }
 
-    val filteredFavoriteContentKeys =
-            remember(favoriteContentKeys, activeConfig) {
-                if (activeConfig == null) {
-                    emptySet()
-                } else {
-                    favoritesRepository.filterKeysForConfig(favoriteContentKeys, activeConfig)
-                }
-            }
-    val filteredFavoriteCategoryKeys =
-            remember(favoriteCategoryKeys, activeConfig) {
-                if (activeConfig == null) {
-                    emptySet()
-                } else {
-                    favoritesRepository.filterKeysForConfig(favoriteCategoryKeys, activeConfig)
-                }
-            }
-    val filteredFavoriteContentItems =
-            remember(favoriteContentEntries, filteredFavoriteContentKeys, activeConfig) {
-                if (activeConfig == null) {
-                    emptyList()
-                } else {
-                    favoriteContentEntries
-                            .filter {
-                                favoritesRepository.isKeyForConfig(it.key, activeConfig) &&
-                                        filteredFavoriteContentKeys.contains(it.key)
-                            }
-                            .map { it.item }
-                            .distinctBy { "${it.contentType.name}:${it.id}" }
-                }
-            }
-    val filteredFavoriteCategoryItems =
-            remember(favoriteCategoryEntries, filteredFavoriteCategoryKeys, activeConfig) {
-                if (activeConfig == null) {
-                    emptyList()
-                } else {
-                    favoriteCategoryEntries
-                            .filter {
-                                favoritesRepository.isKeyForConfig(it.key, activeConfig) &&
-                                        filteredFavoriteCategoryKeys.contains(it.key)
-                            }
-                            .map { it.category }
-                            .distinctBy { "${it.type.name}:${it.id}" }
-                }
-            }
-    val isContentFavorite: (ContentItem) -> Boolean = { item ->
-        val config = authState.activeConfig
-        config != null && favoritesRepository.isContentFavorite(favoriteContentKeys, config, item)
-    }
-    val isCategoryFavorite: (CategoryItem) -> Boolean = { category ->
-        val config = authState.activeConfig
-        config != null &&
-                favoritesRepository.isCategoryFavorite(favoriteCategoryKeys, config, category)
-    }
-
-    val filteredContinueWatchingItems =
-            remember(continueWatchingEntries, activeConfig) {
-                if (activeConfig == null) {
-                    emptyList()
-                } else {
-                    continueWatchingEntries.filter {
-                        continueWatchingRepository.isEntryForConfig(it, activeConfig)
-                    }
-                }
-            }
-    val activeContinueWatchingEntry =
-        remember(activePlaybackItem, filteredContinueWatchingItems) {
-            val playbackItem = activePlaybackItem
-            if (playbackItem == null) {
-                null
+    val activeContinueWatchingEntryFlow =
+        remember(
+            activeConfig,
+            activePlaybackItem?.id,
+            activePlaybackItem?.streamId,
+            activePlaybackItem?.contentType
+        ) {
+            val config = activeConfig
+            val item = activePlaybackItem
+            if (config == null || item == null) {
+                flowOf(null)
             } else {
-                filteredContinueWatchingItems.firstOrNull {
-                    isSameContentIdentity(it.item, playbackItem)
-                }
+                continueWatchingRepository.continueWatchingEntryForContent(config, item)
             }
         }
+    val activeContinueWatchingEntry by
+        activeContinueWatchingEntryFlow.collectAsStateWithLifecycle(initialValue = null)
     LaunchedEffect(
         activePlaybackItem?.id,
         activePlaybackItem?.contentType,
@@ -1785,14 +1685,6 @@ fun RootScreen(
 
                 // Removed extra long sync banner; top-right pill is the only sync indicator.
 
-                val navProgress by animateFloatAsState(
-                        targetValue = if (navSlideExpanded) 1f else 0f,
-                        animationSpec = tween(durationMillis = NAV_ANIM_DURATION_MS),
-                        label = "navSlide"
-                )
-                val navWidthPx = with(LocalDensity.current) { NAV_WIDTH.toPx() }
-                val navOffsetPx = -navWidthPx * (1f - navProgress)
-
                 BrowseScreen(
                         context = context,
                         coroutineScope = coroutineScope,
@@ -1804,10 +1696,6 @@ fun RootScreen(
                         appVersionName = appVersionName,
                         selectedSectionState = browseViewModel.selectedSection,
                         navExpandedState = browseViewModel.navExpanded,
-                        navLayoutExpanded = navLayoutExpanded,
-                        navSlideExpanded = navSlideExpanded,
-                        navOffsetPx = navOffsetPx,
-                        navProgress = navProgress,
                         moveFocusToNavState = moveFocusToNavState,
                         focusToContentTriggerState = focusToContentTriggerState,
                         showManageListsState = showManageListsState,
@@ -1825,7 +1713,6 @@ fun RootScreen(
                         cacheClearNonceState = cacheClearNonceState,
                         contentRepository = contentRepository,
                         favoritesRepository = favoritesRepository,
-                        historyRepository = historyRepository,
                         continueWatchingRepository = continueWatchingRepository,
                         subtitleRepository = subtitleRepository,
                         playbackEngine = playbackEngine,
@@ -1845,11 +1732,6 @@ fun RootScreen(
                         contentItemFocusRequester = contentItemFocusRequester,
                         resumeFocusId = resumeFocusId,
                         resumeFocusRequester = resumeFocusRequester,
-                        filteredContinueWatchingItems = filteredContinueWatchingItems,
-                        filteredFavoriteContentItems = filteredFavoriteContentItems,
-                        filteredFavoriteCategoryItems = filteredFavoriteCategoryItems,
-                        filteredFavoriteContentKeys = filteredFavoriteContentKeys,
-                        filteredFavoriteCategoryKeys = filteredFavoriteCategoryKeys,
                         isPlaybackActive = activePlaybackQueue != null,
                         onItemFocused = handleItemFocused,
                         onPlay = handlePlayItem,
@@ -1867,8 +1749,6 @@ fun RootScreen(
                         },
                         onToggleFavorite = handleToggleFavorite,
                         onToggleCategoryFavorite = handleToggleCategoryFavorite,
-                        isItemFavorite = isContentFavorite,
-                        isCategoryFavorite = isCategoryFavorite,
                         onSeriesPlaybackStart = { activePlaybackSeriesParent = it },
                         onTriggerSectionSync = { section, config ->
                             triggerSectionSync(section, config)
@@ -2156,6 +2036,38 @@ fun RootScreen(
 
         if (movieInfoItem != null) {
             val item = movieInfoItem!!
+            val movieInfoFavoriteFlow =
+                remember(
+                    authState.activeConfig,
+                    item.id,
+                    item.streamId,
+                    item.contentType
+                ) {
+                    val config = authState.activeConfig
+                    if (config == null) {
+                        flowOf(false)
+                    } else {
+                        favoritesRepository.isContentFavoriteFlow(config, item)
+                    }
+                }
+            val isMovieFavorite by
+                movieInfoFavoriteFlow.collectAsStateWithLifecycle(initialValue = false)
+            val movieInfoContinueWatchingEntryFlow =
+                remember(
+                    authState.activeConfig,
+                    item.id,
+                    item.streamId,
+                    item.contentType
+                ) {
+                    val config = authState.activeConfig
+                    if (config == null) {
+                        flowOf(null)
+                    } else {
+                        continueWatchingRepository.continueWatchingEntryForContent(config, item)
+                    }
+                }
+            val movieInfoContinueWatchingEntry by
+                movieInfoContinueWatchingEntryFlow.collectAsStateWithLifecycle(initialValue = null)
             val activeMovieMatches =
                     activePlaybackItem?.let {
                         it.contentType == ContentType.MOVIES &&
@@ -2177,18 +2089,14 @@ fun RootScreen(
                     } else {
                         null
                     }
-            val isInContinueWatching =
-                    continueWatchingEntries.any {
-                        it.item.contentType == ContentType.MOVIES &&
-                                (it.item.id == item.id || it.item.streamId == item.streamId)
-                    }
+            val isInContinueWatching = movieInfoContinueWatchingEntry != null
             MovieInfoDialog(
                     item = item,
                     info = movieInfoInfo,
                     playbackVideoTrackLabel = playbackVideoTrackLabel,
                     playbackAudioTrackLabel = playbackAudioTrackLabel,
                     queueItems = movieInfoQueue,
-                    isFavorite = isContentFavorite(item),
+                    isFavorite = isMovieFavorite,
                     onToggleFavorite = { handleToggleFavorite(it) },
                     onPlay = { selected, queue ->
                         movieInfoItem = null

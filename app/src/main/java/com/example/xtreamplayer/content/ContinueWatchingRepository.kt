@@ -9,6 +9,8 @@ import com.example.xtreamplayer.auth.AuthConfig
 import com.example.xtreamplayer.resolveSubtitlePersistence
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
@@ -118,6 +120,30 @@ class ContinueWatchingRepository(private val context: Context) {
         return entry.key.startsWith("${accountKey(config)}|")
     }
 
+    fun continueWatchingEntriesForConfig(config: AuthConfig): Flow<List<ContinueWatchingEntry>> {
+        return continueWatchingEntries
+            .map { entries -> entries.filter { isEntryForConfig(it, config) } }
+            .distinctUntilChanged()
+    }
+
+    fun continueWatchingEntryForContent(
+        config: AuthConfig,
+        item: ContentItem
+    ): Flow<ContinueWatchingEntry?> {
+        return continueWatchingEntriesForConfig(config)
+            .map { entries ->
+                entries.firstOrNull { entry -> isSameContentIdentity(entry.item, item) }
+            }
+            .distinctUntilChanged()
+    }
+
+    suspend fun findContinueWatchingEntry(
+        config: AuthConfig,
+        item: ContentItem
+    ): ContinueWatchingEntry? {
+        return continueWatchingEntryForContent(config, item).first()
+    }
+
     private fun contentKey(config: AuthConfig, item: ContentItem): String {
         return "${accountKey(config)}|${item.contentType.name}|${contentIdentity(item)}"
     }
@@ -138,6 +164,11 @@ class ContinueWatchingRepository(private val context: Context) {
 
     private fun contentIdentity(item: ContentItem): String {
         return item.streamId?.takeUnless { it.isBlank() } ?: item.id
+    }
+
+    private fun isSameContentIdentity(first: ContentItem, second: ContentItem): Boolean {
+        if (first.contentType != second.contentType) return false
+        return contentIdentity(first) == contentIdentity(second)
     }
 
     private fun accountKey(config: AuthConfig): String {
