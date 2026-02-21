@@ -14,9 +14,10 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
-import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -28,9 +29,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -41,11 +44,14 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.neverEqualPolicy
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -60,6 +66,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -1180,6 +1187,9 @@ internal fun PlayerOverlay(
             liveGuideSearchChannelsLoading = false
             return@LaunchedEffect
         }
+        // Debounce short bursts of typing so we don't spin up the category fetch loop on
+        // every intermediate query state.
+        delay(180)
         if (liveGuideSearchChannelsLoading) return@LaunchedEffect
         liveGuideSearchChannelsLoading = true
         try {
@@ -1713,6 +1723,14 @@ internal fun PlayerOverlay(
 
     val openSubtitleTimingDialog: () -> Unit = {
         subtitleCoroutineScope.launch {
+            if (activeSubtitle == null && hasEmbeddedTextTracks(player)) {
+                Toast.makeText(
+                    context,
+                    "Embedded subtitle timing offset is not supported yet",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return@launch
+            }
             val subtitle =
                 activeSubtitle ?: withContext(Dispatchers.IO) {
                     subtitleRepository.getCachedSubtitlesForMedia(mediaId)
@@ -2954,20 +2972,96 @@ private fun LiveGuideChannelRow(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LiveGuideTickerText(text: String) {
-    Text(
-            text = text,
-            color = AppTheme.colors.textPrimary.copy(alpha = 0.95f),
-            fontSize = 11.sp,
-            fontFamily = AppTheme.fontFamily,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Clip,
+    val textStyle =
+            TextStyle(
+                    color = AppTheme.colors.textPrimary.copy(alpha = 0.95f),
+                    fontSize = 11.sp,
+                    fontFamily = AppTheme.fontFamily,
+                    fontWeight = FontWeight.SemiBold
+            )
+    var textWidthPx by remember(text) { mutableIntStateOf(0) }
+    val loopGap = 56.dp
+    val scrollSpeed = 36.dp
+    val offsetX = remember(text) { Animatable(0f) }
+
+    BoxWithConstraints(
             modifier =
                     Modifier.fillMaxWidth()
-                            .basicMarquee(iterations = Int.MAX_VALUE)
+                            .clipToBounds()
+    ) {
+        val density = LocalDensity.current
+        val containerWidthPx = with(density) { maxWidth.roundToPx() }
+        val gapPx = with(density) { loopGap.roundToPx().toFloat() }
+        val textWidth = textWidthPx.toFloat()
+        val shouldAnimate = textWidth > containerWidthPx && containerWidthPx > 0
+        val cycleDistancePx = textWidth + gapPx
+        val pixelsPerSecond = with(density) { scrollSpeed.toPx() }
+        val durationMs =
+                if (shouldAnimate && cycleDistancePx > 0f && pixelsPerSecond > 0f) {
+                    ((cycleDistancePx / pixelsPerSecond) * 1000f).roundToInt().coerceAtLeast(4000)
+                } else {
+                    0
+                }
+
+        LaunchedEffect(text, shouldAnimate, cycleDistancePx, durationMs) {
+            offsetX.snapTo(0f)
+            if (!shouldAnimate || durationMs <= 0) return@LaunchedEffect
+            while (isActive) {
+                offsetX.animateTo(
+                        targetValue = -cycleDistancePx,
+                        animationSpec = tween(durationMillis = durationMs, easing = LinearEasing)
+                )
+                // Reset at exactly one cycle distance so the second copy becomes the first seamlessly.
+                offsetX.snapTo(0f)
+            }
+        }
+
+        LiveGuideTickerLabel(
+                text = text,
+                style = textStyle,
+                modifier =
+                        Modifier.alpha(0f)
+                                .wrapContentWidth(unbounded = true)
+                                .onSizeChanged { size ->
+                                    textWidthPx = size.width
+                                }
+        )
+
+        if (!shouldAnimate) {
+            LiveGuideTickerLabel(
+                    text = text,
+                    style = textStyle,
+                    modifier = Modifier.fillMaxWidth(),
+                    overflow = TextOverflow.Ellipsis
+            )
+        } else {
+            Row(
+                    modifier = Modifier.offset { IntOffset(offsetX.value.roundToInt(), 0) },
+                    horizontalArrangement = Arrangement.spacedBy(loopGap)
+            ) {
+                LiveGuideTickerLabel(text = text, style = textStyle)
+                LiveGuideTickerLabel(text = text, style = textStyle)
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveGuideTickerLabel(
+        text: String,
+        style: TextStyle,
+        modifier: Modifier = Modifier,
+        overflow: TextOverflow = TextOverflow.Clip
+) {
+    Text(
+            text = text,
+            style = style,
+            maxLines = 1,
+            softWrap = false,
+            overflow = overflow,
+            modifier = modifier
     )
 }
 

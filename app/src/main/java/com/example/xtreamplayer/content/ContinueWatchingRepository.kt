@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
+import kotlin.math.abs
 
 private val Context.continueWatchingDataStore by preferencesDataStore(name = "continue_watching")
 
@@ -57,6 +58,19 @@ class ContinueWatchingRepository(private val context: Context) {
                     subtitleLabel = subtitleLabel,
                     subtitleOffsetMs = subtitleOffsetMs
                 )
+
+            val shouldSkipWrite =
+                existingEntry != null &&
+                    abs(existingEntry.positionMs - positionMs) < MIN_SAVE_DELTA_MS &&
+                    existingEntry.durationMs == durationMs &&
+                    existingEntry.parentItem?.id == parentItem?.id &&
+                    existingEntry.subtitleFileName == resolvedSubtitlePersistence.subtitleFileName &&
+                    existingEntry.subtitleLanguage == resolvedSubtitlePersistence.subtitleLanguage &&
+                    existingEntry.subtitleLabel == resolvedSubtitlePersistence.subtitleLabel &&
+                    existingEntry.subtitleOffsetMs == resolvedSubtitlePersistence.subtitleOffsetMs
+            if (shouldSkipWrite) {
+                return@edit
+            }
 
             // Add new entry at the front
             entries.add(
@@ -303,5 +317,6 @@ class ContinueWatchingRepository(private val context: Context) {
         const val MAX_ENTRIES = 50
         const val MIN_WATCH_MS = 30_000L
         const val MAX_PROGRESS_PERCENT = 98
+        const val MIN_SAVE_DELTA_MS = 30_000L
     }
 }

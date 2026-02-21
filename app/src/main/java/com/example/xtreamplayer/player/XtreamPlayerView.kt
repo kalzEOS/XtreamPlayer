@@ -1,5 +1,6 @@
 package com.example.xtreamplayer.player
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -8,7 +9,6 @@ import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
 import android.util.AttributeSet
-import android.text.TextUtils
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
@@ -21,6 +21,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.ViewTreeObserver
+import android.view.animation.LinearInterpolator
 import androidx.core.view.isVisible
 import androidx.core.graphics.toColorInt
 import androidx.media3.common.Player
@@ -33,6 +34,7 @@ import com.example.xtreamplayer.R
 import com.example.xtreamplayer.settings.SubtitleAppearanceSettings
 import com.example.xtreamplayer.settings.applySubtitleAppearanceSettings
 import java.util.Locale
+import kotlin.math.roundToInt
 import androidx.media3.ui.R as Media3UiR
 
 @UnstableApi
@@ -57,7 +59,8 @@ class XtreamPlayerView @JvmOverloads constructor(
     private var titleView: TextView? = null
     private var nowPlayingInfoView: TextView? = null
     private var topBarView: View? = null
-    private var nowPlayingMarqueeLayoutListener: View.OnLayoutChangeListener? = null
+    private var nowPlayingTickerLayoutListener: View.OnLayoutChangeListener? = null
+    private var nowPlayingTickerAnimator: ValueAnimator? = null
     var focusAccentColor: Int = "#4F8CFF".toColorInt()
         set(value) {
             if (field == value) return
@@ -167,6 +170,9 @@ class XtreamPlayerView @JvmOverloads constructor(
     private var seekHudText: TextView? = null
     private var seekHudProgress: ProgressBar? = null
     private var seekHudHideRunnable: Runnable? = null
+    private val nowPlayingTickerSeparator = "     |     "
+    private val nowPlayingTickerSpeedDpPerSecond = 36f
+    private val nowPlayingTickerMinDurationMs = 4000L
     private val topBarSyncListener = ViewTreeObserver.OnPreDrawListener {
         syncTopBarWithControlsBackground()
         true
@@ -235,7 +241,8 @@ class XtreamPlayerView @JvmOverloads constructor(
     override fun onDetachedFromWindow() {
         stopSeekRepeat()
         hideSeekHud()
-        clearNowPlayingMarqueeListener()
+        clearNowPlayingTickerLayoutListener()
+        stopNowPlayingTickerAnimation()
         viewTreeObserver.removeOnPreDrawListener(topBarSyncListener)
         super.onDetachedFromWindow()
     }
@@ -733,21 +740,24 @@ class XtreamPlayerView @JvmOverloads constructor(
 
     private fun navigableControls(ids: List<Int>): List<View> {
         return ids.mapNotNull { findViewById<View>(it) }
-            .filter { it.isVisible && it.isShown }
+            .filter { isControlNavigable(it) }
             .onEach { ensureControlNavigable(it) }
     }
 
     private fun ensureControlNavigable(view: View) {
-        // Keep the lane always navigable; unavailable actions are handled as no-op by click handlers.
-        if (!view.isEnabled) {
-            view.isEnabled = true
-        }
+        // Keep DPAD traversal reliable without overriding player command availability.
         if (!view.isFocusable) {
             view.isFocusable = true
         }
         if (!view.isFocusableInTouchMode) {
             view.isFocusableInTouchMode = true
         }
+    }
+
+    private fun isControlNavigable(view: View): Boolean {
+        if (!view.isVisible || !view.isShown) return false
+        if (!view.isEnabled) return false
+        return true
     }
 
     private fun wireHorizontalLane(views: List<View>) {
@@ -818,7 +828,7 @@ class XtreamPlayerView @JvmOverloads constructor(
     }
 
     private fun moveFocusTo(target: View?): Boolean {
-        if (target == null || target.visibility != View.VISIBLE || !target.isShown) {
+        if (target == null || !isControlNavigable(target)) {
             return false
         }
         ensureControlNavigable(target)
@@ -919,10 +929,13 @@ class XtreamPlayerView @JvmOverloads constructor(
 
     private fun handleExplicitControllerNavigation(keyCode: Int): Boolean {
         val focusedId = findFocus()?.id ?: return false
+        val laneOrderIds = transportControlOrderIds() + rightControlOrderIds()
+        val laneOrderIndexById = laneOrderIds.withIndex().associate { (index, id) -> id to index }
         val transportControls = navigableControls(transportControlOrderIds())
         val rightControls = navigableControls(rightControlOrderIds())
         val bottomLane = transportControls + rightControls
         val focusedLaneIndex = bottomLane.indexOfFirst { it.id == focusedId }
+        val focusedLaneOrderIndex = laneOrderIndexById[focusedId]
         val progress = findViewById<View>(Media3UiR.id.exo_progress)
         val progressVisible = isProgressNavigationEnabled(progress)
         val preferredTransport =
@@ -933,6 +946,13 @@ class XtreamPlayerView @JvmOverloads constructor(
             KeyEvent.KEYCODE_DPAD_RIGHT -> {
                 if (focusedLaneIndex >= 0) {
                     moveFocusTo(bottomLane.getOrNull(focusedLaneIndex + 1))
+                } else if (focusedLaneOrderIndex != null) {
+                    moveFocusTo(
+                        bottomLane.firstOrNull { view ->
+                            val index = laneOrderIndexById[view.id] ?: Int.MAX_VALUE
+                            index > focusedLaneOrderIndex
+                        }
+                    )
                 } else {
                     false
                 }
@@ -940,6 +960,13 @@ class XtreamPlayerView @JvmOverloads constructor(
             KeyEvent.KEYCODE_DPAD_LEFT -> {
                 if (focusedLaneIndex >= 0) {
                     moveFocusTo(bottomLane.getOrNull(focusedLaneIndex - 1))
+                } else if (focusedLaneOrderIndex != null) {
+                    moveFocusTo(
+                        bottomLane.lastOrNull { view ->
+                            val index = laneOrderIndexById[view.id] ?: Int.MIN_VALUE
+                            index < focusedLaneOrderIndex
+                        }
+                    )
                 } else {
                     false
                 }
@@ -958,7 +985,7 @@ class XtreamPlayerView @JvmOverloads constructor(
                 }
             }
             KeyEvent.KEYCODE_DPAD_UP -> {
-                if (focusedLaneIndex >= 0) {
+                if (focusedLaneIndex >= 0 || focusedLaneOrderIndex != null) {
                     if (progressVisible) {
                         moveFocusTo(progress)
                     } else {
@@ -1044,10 +1071,6 @@ class XtreamPlayerView @JvmOverloads constructor(
         val next = nextButtonView ?: findViewById<View>(Media3UiR.id.exo_next).also {
             nextButtonView = it
         }
-        prev?.isEnabled = true
-        prev?.isFocusable = true
-        next?.isEnabled = true
-        next?.isFocusable = true
         prev?.setOnClickListener {
             if (isLiveContent) {
                 onChannelDown?.invoke()
@@ -1080,49 +1103,87 @@ class XtreamPlayerView @JvmOverloads constructor(
             view.text = text
             view.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
             if (text.isBlank()) {
-                clearNowPlayingMarqueeListener()
-                view.isSelected = false
+                clearNowPlayingTickerLayoutListener()
+                stopNowPlayingTickerAnimation()
+                view.scrollTo(0, 0)
             } else {
-                view.ellipsize = TextUtils.TruncateAt.MARQUEE
-                view.marqueeRepeatLimit = -1
+                view.ellipsize = null
                 view.isSingleLine = true
                 view.setHorizontallyScrolling(true)
-                startNowPlayingMarqueeWhenReady(view)
+                startNowPlayingTickerWhenReady(view, text)
             }
         }
     }
 
-    private fun clearNowPlayingMarqueeListener() {
+    private fun clearNowPlayingTickerLayoutListener() {
         val view = nowPlayingInfoView ?: return
-        val listener = nowPlayingMarqueeLayoutListener ?: return
+        val listener = nowPlayingTickerLayoutListener ?: return
         view.removeOnLayoutChangeListener(listener)
-        nowPlayingMarqueeLayoutListener = null
+        nowPlayingTickerLayoutListener = null
     }
 
-    private fun startNowPlayingMarqueeWhenReady(view: TextView) {
-        clearNowPlayingMarqueeListener()
-        view.isSelected = false
+    private fun stopNowPlayingTickerAnimation() {
+        nowPlayingTickerAnimator?.cancel()
+        nowPlayingTickerAnimator = null
+    }
 
-        fun enableWhenSized(): Boolean {
+    private fun startNowPlayingTickerWhenReady(view: TextView, rawText: String) {
+        clearNowPlayingTickerLayoutListener()
+        stopNowPlayingTickerAnimation()
+        view.scrollTo(0, 0)
+
+        fun startWhenSized(): Boolean {
             if (view.visibility != View.VISIBLE || !view.isShown) return false
             if (view.width <= 1 || view.height <= 1) return false
-            // Marquee only runs when selected/focused.
-            view.isSelected = true
+            val availableWidth = (view.width - view.paddingLeft - view.paddingRight).coerceAtLeast(0).toFloat()
+            if (availableWidth <= 1f) return false
+            val baseWidth = view.paint.measureText(rawText)
+            if (baseWidth <= availableWidth) {
+                view.text = rawText
+                view.scrollTo(0, 0)
+                return true
+            }
+
+            val repeatedText = rawText + nowPlayingTickerSeparator + rawText
+            view.text = repeatedText
+            val cycleDistance = view.paint.measureText(rawText + nowPlayingTickerSeparator)
+            if (cycleDistance <= 1f) {
+                view.scrollTo(0, 0)
+                return true
+            }
+
+            val pixelsPerSecond =
+                view.resources.displayMetrics.density * nowPlayingTickerSpeedDpPerSecond
+            val durationMs =
+                ((cycleDistance / pixelsPerSecond) * 1000f).toLong()
+                    .coerceAtLeast(nowPlayingTickerMinDurationMs)
+
+            nowPlayingTickerAnimator =
+                ValueAnimator.ofFloat(0f, cycleDistance).apply {
+                    interpolator = LinearInterpolator()
+                    duration = durationMs
+                    repeatCount = ValueAnimator.INFINITE
+                    addUpdateListener { animation ->
+                        val scrollX = (animation.animatedValue as Float).roundToInt()
+                        view.scrollTo(scrollX, 0)
+                    }
+                    start()
+                }
             return true
         }
 
-        if (enableWhenSized()) return
+        if (startWhenSized()) return
 
         val listener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            if (enableWhenSized()) {
-                clearNowPlayingMarqueeListener()
+            if (startWhenSized()) {
+                clearNowPlayingTickerLayoutListener()
             }
         }
-        nowPlayingMarqueeLayoutListener = listener
+        nowPlayingTickerLayoutListener = listener
         view.addOnLayoutChangeListener(listener)
         view.post {
-            if (enableWhenSized()) {
-                clearNowPlayingMarqueeListener()
+            if (startWhenSized()) {
+                clearNowPlayingTickerLayoutListener()
             }
         }
     }

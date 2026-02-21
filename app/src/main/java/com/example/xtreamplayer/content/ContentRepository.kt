@@ -13,7 +13,9 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import kotlin.math.ceil
@@ -170,6 +172,7 @@ class ContentRepository(
     private val seriesSeasonsMutex = Mutex()
     private val liveEpgMutex = Mutex()
     private val categoryThumbnailMutex = Mutex()
+    private val categoryThumbnailLoadLimiter = Semaphore(permits = 3)
     private val categoryCache = object : LinkedHashMap<String, List<CategoryItem>>(100, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<CategoryItem>>): Boolean {
             return size > 100
@@ -1814,9 +1817,11 @@ class ContentRepository(
             }
             return cached
         }
-        val page = runCatching {
-            loadCategoryPage(type, categoryId, 0, 1, authConfig)
-        }.getOrNull()
+        val page = categoryThumbnailLoadLimiter.withPermit {
+            runCatching {
+                loadCategoryPage(type, categoryId, 0, 1, authConfig)
+            }.getOrNull()
+        }
         val imageUrl = page?.items?.firstOrNull()?.imageUrl
         contentCache.writeCategoryThumbnail(type, categoryId, authConfig, imageUrl)
         categoryThumbnailMutex.withLock {
