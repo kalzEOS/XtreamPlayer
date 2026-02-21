@@ -4,12 +4,15 @@ import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
 import android.util.AttributeSet
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
+import android.util.StateSet
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -19,8 +22,11 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.ViewTreeObserver
 import androidx.core.view.isVisible
+import androidx.core.graphics.toColorInt
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.PlayerControlView
 import androidx.media3.ui.PlayerView
 import com.example.xtreamplayer.R
@@ -51,6 +57,13 @@ class XtreamPlayerView @JvmOverloads constructor(
     private var titleView: TextView? = null
     private var nowPlayingInfoView: TextView? = null
     private var topBarView: View? = null
+    private var nowPlayingMarqueeLayoutListener: View.OnLayoutChangeListener? = null
+    var focusAccentColor: Int = "#4F8CFF".toColorInt()
+        set(value) {
+            if (field == value) return
+            field = value
+            applyFocusChrome()
+        }
     var onResizeModeClick: (() -> Unit)? = null
         set(value) {
             field = value
@@ -128,6 +141,7 @@ class XtreamPlayerView @JvmOverloads constructor(
         }
     var isLiveContent: Boolean = false
         set(value) {
+            if (field == value) return
             field = value
             updateControlsForContentType()
         }
@@ -214,12 +228,14 @@ class XtreamPlayerView @JvmOverloads constructor(
         applySubtitleAppearance()
         updateControlsForContentType()
         updateFocusOrder()
+        applyFocusChrome()
         viewTreeObserver.addOnPreDrawListener(topBarSyncListener)
     }
 
     override fun onDetachedFromWindow() {
         stopSeekRepeat()
         hideSeekHud()
+        clearNowPlayingMarqueeListener()
         viewTreeObserver.removeOnPreDrawListener(topBarSyncListener)
         super.onDetachedFromWindow()
     }
@@ -260,8 +276,20 @@ class XtreamPlayerView @JvmOverloads constructor(
 
     private fun isControllerVisibleForNavigation(): Boolean {
         if (isControllerFullyVisible) return true
+        val controller = findViewById<View>(Media3UiR.id.exo_controller) ?: return false
+        if (controller.visibility != View.VISIBLE || !controller.isShown) return false
         val background = findViewById<View>(Media3UiR.id.exo_controls_background)
-        return background?.visibility == View.VISIBLE && background.alpha > 0.01f
+        val backgroundVisible =
+            background != null &&
+                background.visibility == View.VISIBLE &&
+                background.alpha > 0.06f
+        val bottomBar = findViewById<View>(Media3UiR.id.exo_bottom_bar)
+        val bottomBarVisible =
+            bottomBar != null &&
+                bottomBar.visibility == View.VISIBLE &&
+                bottomBar.alpha > 0.06f &&
+                (bottomBar.height <= 1 || bottomBar.translationY < bottomBar.height * 0.9f)
+        return backgroundVisible || bottomBarVisible
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -309,8 +337,20 @@ class XtreamPlayerView @JvmOverloads constructor(
                 // Ignore held repeats to prevent rapid control focus run-through / accidental zapping.
                 return true
             }
-            val controlsShowing = isControllerVisibleForNavigation()
             val controlsFullyVisible = isControllerFullyVisible
+            val controlsShowing = isControllerVisibleForNavigation()
+            if (controlsShowing &&
+                event.repeatCount == 0 &&
+                (event.keyCode == KeyEvent.KEYCODE_DPAD_UP ||
+                    event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN ||
+                    event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
+                    event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)
+            ) {
+                updateFocusOrder()
+                if (handleExplicitControllerNavigation(event.keyCode)) {
+                    return true
+                }
+            }
             if (controlsShowing &&
                 event.repeatCount > 0 &&
                 (event.keyCode == KeyEvent.KEYCODE_DPAD_UP ||
@@ -652,6 +692,18 @@ class XtreamPlayerView @JvmOverloads constructor(
         val isLive = isLiveContent
         setViewVisible(Media3UiR.id.exo_prev, true)
         setViewVisible(Media3UiR.id.exo_next, true)
+        val progress = findViewById<View>(Media3UiR.id.exo_progress)
+        if (progress != null) {
+            if (isLive) {
+                progress.visibility = View.GONE
+                progress.isEnabled = false
+                progress.isFocusable = false
+            } else {
+                progress.visibility = View.VISIBLE
+                progress.isEnabled = true
+                progress.isFocusable = true
+            }
+        }
         setViewVisible(Media3UiR.id.exo_rew_with_amount, !isLive)
         setViewVisible(Media3UiR.id.exo_ffwd_with_amount, !isLive)
         setViewVisible(Media3UiR.id.exo_shuffle, false)
@@ -659,8 +711,11 @@ class XtreamPlayerView @JvmOverloads constructor(
         setViewVisible(Media3UiR.id.exo_subtitle, false)
         setViewVisible(R.id.exo_subtitle_timing, !isLive)
         setViewVisible(R.id.exo_subtitle_download, !isLive)
+        findViewById<View>(R.id.exo_live_progress_line)?.visibility =
+            if (isLive) View.VISIBLE else View.GONE
         bindPrevNextView()
         updateFocusOrder()
+        applyFocusChrome()
     }
 
     private fun setViewVisible(id: Int, visible: Boolean) {
@@ -670,42 +725,252 @@ class XtreamPlayerView @JvmOverloads constructor(
     }
 
     private fun updateFocusOrder() {
-        updateRowFocusOrder(
-            listOf(
-                Media3UiR.id.exo_vr,
-                Media3UiR.id.exo_shuffle,
-                Media3UiR.id.exo_repeat_toggle,
-                Media3UiR.id.exo_subtitle,
-                R.id.exo_subtitle_timing,
-                R.id.exo_subtitle_download,
-                R.id.exo_audio_track,
-                R.id.exo_audio_boost,
-                R.id.exo_resize_mode,
-                Media3UiR.id.exo_settings,
-                Media3UiR.id.exo_fullscreen,
-                Media3UiR.id.exo_overflow_show
-            )
-        )
-        updateRowFocusOrder(
-            listOf(
-                Media3UiR.id.exo_prev,
-                Media3UiR.id.exo_rew_with_amount,
-                Media3UiR.id.exo_play_pause,
-                Media3UiR.id.exo_ffwd_with_amount,
-                Media3UiR.id.exo_next
-            )
-        )
+        val transportControls = navigableControls(transportControlOrderIds())
+        val rightControls = navigableControls(rightControlOrderIds())
+        wireHorizontalLane(transportControls + rightControls)
+        wireVerticalFocusTargets(transportControls, rightControls)
     }
 
-    private fun updateRowFocusOrder(ids: List<Int>) {
-        val views = ids.mapNotNull { findViewById<View>(it) }
-            .filter { it.isVisible && it.isFocusable }
+    private fun navigableControls(ids: List<Int>): List<View> {
+        return ids.mapNotNull { findViewById<View>(it) }
+            .filter { it.isVisible && it.isShown }
+            .onEach { ensureControlNavigable(it) }
+    }
+
+    private fun ensureControlNavigable(view: View) {
+        // Keep the lane always navigable; unavailable actions are handled as no-op by click handlers.
+        if (!view.isEnabled) {
+            view.isEnabled = true
+        }
+        if (!view.isFocusable) {
+            view.isFocusable = true
+        }
+        if (!view.isFocusableInTouchMode) {
+            view.isFocusableInTouchMode = true
+        }
+    }
+
+    private fun wireHorizontalLane(views: List<View>) {
         if (views.isEmpty()) return
         views.forEachIndexed { index, view ->
             val left = views.getOrNull(index - 1)
             val right = views.getOrNull(index + 1)
             view.nextFocusLeftId = left?.id ?: View.NO_ID
             view.nextFocusRightId = right?.id ?: View.NO_ID
+        }
+    }
+
+    private fun wireVerticalFocusTargets(transportControls: List<View>, rightControls: List<View>) {
+        val progress = findViewById<View>(Media3UiR.id.exo_progress) ?: return
+        val back = backButtonView ?: findViewById<View>(R.id.exo_back)
+        val progressVisible = isProgressNavigationEnabled(progress)
+        val preferredTransport =
+            transportControls.firstOrNull { it.id == Media3UiR.id.exo_play_pause }
+                ?: transportControls.firstOrNull()
+                ?: rightControls.firstOrNull()
+        if (progressVisible) {
+            back?.nextFocusDownId = progress.id
+            progress.nextFocusUpId = back?.id ?: View.NO_ID
+            progress.nextFocusDownId = preferredTransport?.id ?: View.NO_ID
+            (transportControls + rightControls).forEach { control ->
+                control.nextFocusUpId = progress.id
+            }
+        } else {
+            back?.nextFocusDownId = preferredTransport?.id ?: View.NO_ID
+            preferredTransport?.nextFocusUpId = back?.id ?: View.NO_ID
+            (transportControls + rightControls).forEach { control ->
+                control.nextFocusUpId = back?.id ?: View.NO_ID
+            }
+        }
+    }
+
+    private fun isProgressNavigationEnabled(progress: View?): Boolean {
+        if (isLiveContent) return false
+        if (progress == null) return false
+        if (progress.visibility != View.VISIBLE || !progress.isShown) return false
+        if (progress.alpha <= 0.01f) return false
+        if (progress.width <= 1 || progress.height <= 1) return false
+        return true
+    }
+
+    private fun transportControlOrderIds(): List<Int> {
+        return listOf(
+            Media3UiR.id.exo_prev,
+            Media3UiR.id.exo_rew_with_amount,
+            Media3UiR.id.exo_play_pause,
+            Media3UiR.id.exo_ffwd_with_amount,
+            Media3UiR.id.exo_next
+        )
+    }
+
+    private fun rightControlOrderIds(): List<Int> {
+        return listOf(
+            R.id.exo_subtitle_timing,
+            Media3UiR.id.exo_subtitle,
+            R.id.exo_subtitle_download,
+            R.id.exo_audio_track,
+            R.id.exo_audio_boost,
+            R.id.exo_resize_mode,
+            Media3UiR.id.exo_settings,
+            Media3UiR.id.exo_fullscreen,
+            Media3UiR.id.exo_overflow_show
+        )
+    }
+
+    private fun moveFocusTo(target: View?): Boolean {
+        if (target == null || target.visibility != View.VISIBLE || !target.isShown) {
+            return false
+        }
+        ensureControlNavigable(target)
+        val moved = target.requestFocus()
+        if (moved && isControllerVisibleForNavigation()) {
+            setControllerShowTimeoutMs(defaultControllerTimeoutMs)
+            showController()
+        }
+        return moved
+    }
+
+    private fun applyFocusChrome() {
+        val pillBackground = createGlassPillBackgroundDrawable(focusAccentColor)
+        listOf(Media3UiR.id.exo_center_controls, Media3UiR.id.exo_basic_controls).forEach { id ->
+            findViewById<View>(id)?.background = pillBackground.constantState?.newDrawable()?.mutate()
+        }
+        val background = createFocusBackgroundDrawable(focusAccentColor)
+        focusChromeControlIds().forEach { id ->
+            findViewById<View>(id)?.background = background.constantState?.newDrawable()?.mutate()
+        }
+        applyProgressFocusChrome()
+    }
+
+    private fun createGlassPillBackgroundDrawable(accent: Int): Drawable {
+        // Lighter overall glass body with a subtle accent shadow dropping from the top.
+        val topSheenShadow = applyAlpha(accent, 0.34f)
+        val upperGlass = applyAlpha(Color.WHITE, 0.24f)
+        val lowerGlass = applyAlpha(Color.WHITE, 0.15f)
+        return GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(topSheenShadow, upperGlass, lowerGlass)
+        ).apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 999f
+            setStroke(1, applyAlpha(Color.WHITE, 0.42f))
+        }
+    }
+
+    private fun applyProgressFocusChrome() {
+        val progress = findViewById<DefaultTimeBar>(Media3UiR.id.exo_progress) ?: return
+        updateProgressScrubberStyle(progress, progress.hasFocus())
+        progress.onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus ->
+            updateProgressScrubberStyle(progress, hasFocus)
+        }
+    }
+
+    private fun updateProgressScrubberStyle(progress: DefaultTimeBar, focused: Boolean) {
+        val focusedScrubber = applyAlpha(focusAccentColor, 0.95f)
+        val unfocusedScrubber = Color.WHITE
+        progress.setScrubberColor(if (focused) focusedScrubber else unfocusedScrubber)
+        progress.invalidate()
+    }
+
+    private fun focusChromeControlIds(): List<Int> {
+        return listOf(
+            R.id.exo_back,
+            Media3UiR.id.exo_prev,
+            Media3UiR.id.exo_rew_with_amount,
+            Media3UiR.id.exo_play_pause,
+            Media3UiR.id.exo_ffwd_with_amount,
+            Media3UiR.id.exo_next,
+            R.id.exo_subtitle_timing,
+            Media3UiR.id.exo_subtitle,
+            R.id.exo_subtitle_download,
+            R.id.exo_audio_track,
+            R.id.exo_audio_boost,
+            R.id.exo_resize_mode,
+            Media3UiR.id.exo_settings,
+            Media3UiR.id.exo_fullscreen,
+            Media3UiR.id.exo_overflow_show
+        )
+    }
+
+    private fun createFocusBackgroundDrawable(accent: Int): Drawable {
+        fun shape(fill: Int, stroke: Int): GradientDrawable {
+            return GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 999f
+                setColor(fill)
+                setStroke(2, stroke)
+            }
+        }
+        val focused = shape(applyAlpha(accent, 0.42f), applyAlpha(accent, 0.95f))
+        val pressed = shape(applyAlpha(accent, 0.56f), applyAlpha(accent, 1f))
+        val normal = shape(Color.TRANSPARENT, Color.TRANSPARENT)
+        return StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_pressed), pressed)
+            addState(intArrayOf(android.R.attr.state_focused), focused)
+            addState(intArrayOf(android.R.attr.state_selected), focused)
+            addState(StateSet.WILD_CARD, normal)
+        }
+    }
+
+    private fun applyAlpha(color: Int, alphaFraction: Float): Int {
+        val alpha = (alphaFraction.coerceIn(0f, 1f) * 255f).toInt()
+        return Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
+    }
+
+    private fun handleExplicitControllerNavigation(keyCode: Int): Boolean {
+        val focusedId = findFocus()?.id ?: return false
+        val transportControls = navigableControls(transportControlOrderIds())
+        val rightControls = navigableControls(rightControlOrderIds())
+        val bottomLane = transportControls + rightControls
+        val focusedLaneIndex = bottomLane.indexOfFirst { it.id == focusedId }
+        val progress = findViewById<View>(Media3UiR.id.exo_progress)
+        val progressVisible = isProgressNavigationEnabled(progress)
+        val preferredTransport =
+            transportControls.firstOrNull { it.id == Media3UiR.id.exo_play_pause }
+                ?: transportControls.firstOrNull()
+                ?: rightControls.firstOrNull()
+        return when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                if (focusedLaneIndex >= 0) {
+                    moveFocusTo(bottomLane.getOrNull(focusedLaneIndex + 1))
+                } else {
+                    false
+                }
+            }
+            KeyEvent.KEYCODE_DPAD_LEFT -> {
+                if (focusedLaneIndex >= 0) {
+                    moveFocusTo(bottomLane.getOrNull(focusedLaneIndex - 1))
+                } else {
+                    false
+                }
+            }
+            KeyEvent.KEYCODE_DPAD_DOWN -> {
+                if (focusedId == Media3UiR.id.exo_progress && progressVisible) {
+                    moveFocusTo(preferredTransport)
+                } else if (focusedId == (backButtonView?.id ?: R.id.exo_back)) {
+                    if (progressVisible) {
+                        moveFocusTo(progress)
+                    } else {
+                        moveFocusTo(preferredTransport)
+                    }
+                } else {
+                    false
+                }
+            }
+            KeyEvent.KEYCODE_DPAD_UP -> {
+                if (focusedLaneIndex >= 0) {
+                    if (progressVisible) {
+                        moveFocusTo(progress)
+                    } else {
+                        moveFocusTo(backButtonView ?: findViewById(R.id.exo_back))
+                    }
+                } else if (focusedId == Media3UiR.id.exo_progress && progressVisible) {
+                    moveFocusTo(backButtonView ?: findViewById(R.id.exo_back))
+                } else {
+                    false
+                }
+            }
+            else -> false
         }
     }
 
@@ -779,6 +1044,10 @@ class XtreamPlayerView @JvmOverloads constructor(
         val next = nextButtonView ?: findViewById<View>(Media3UiR.id.exo_next).also {
             nextButtonView = it
         }
+        prev?.isEnabled = true
+        prev?.isFocusable = true
+        next?.isEnabled = true
+        next?.isFocusable = true
         prev?.setOnClickListener {
             if (isLiveContent) {
                 onChannelDown?.invoke()
@@ -811,14 +1080,49 @@ class XtreamPlayerView @JvmOverloads constructor(
             view.text = text
             view.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
             if (text.isBlank()) {
+                clearNowPlayingMarqueeListener()
                 view.isSelected = false
             } else {
                 view.ellipsize = TextUtils.TruncateAt.MARQUEE
                 view.marqueeRepeatLimit = -1
                 view.isSingleLine = true
                 view.setHorizontallyScrolling(true)
-                // Marquee only runs when selected/focused.
-                view.isSelected = true
+                startNowPlayingMarqueeWhenReady(view)
+            }
+        }
+    }
+
+    private fun clearNowPlayingMarqueeListener() {
+        val view = nowPlayingInfoView ?: return
+        val listener = nowPlayingMarqueeLayoutListener ?: return
+        view.removeOnLayoutChangeListener(listener)
+        nowPlayingMarqueeLayoutListener = null
+    }
+
+    private fun startNowPlayingMarqueeWhenReady(view: TextView) {
+        clearNowPlayingMarqueeListener()
+        view.isSelected = false
+
+        fun enableWhenSized(): Boolean {
+            if (view.visibility != View.VISIBLE || !view.isShown) return false
+            if (view.width <= 1 || view.height <= 1) return false
+            // Marquee only runs when selected/focused.
+            view.isSelected = true
+            return true
+        }
+
+        if (enableWhenSized()) return
+
+        val listener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            if (enableWhenSized()) {
+                clearNowPlayingMarqueeListener()
+            }
+        }
+        nowPlayingMarqueeLayoutListener = listener
+        view.addOnLayoutChangeListener(listener)
+        view.post {
+            if (enableWhenSized()) {
+                clearNowPlayingMarqueeListener()
             }
         }
     }

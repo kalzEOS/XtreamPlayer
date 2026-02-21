@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
@@ -1764,10 +1765,16 @@ internal fun PlayerOverlay(
         }
     }
 
+    val playerAccentColor = AppTheme.colors.accent.toArgb()
+    // Use the active playback mode as the single source of truth to avoid transient
+    // live-only UI leaking into VOD when item metadata lags during transitions.
+    val isLivePlayback = currentContentType == ContentType.LIVE
+
     val bindMutablePlayerCallbacks: (XtreamPlayerView) -> Unit = { view ->
         view.resizeMode = resizeMode.resizeMode
         view.forcedAspectRatio = resizeMode.forcedAspectRatio
         view.setResizeModeLabel(resizeMode.label)
+        view.focusAccentColor = playerAccentColor
         view.titleText = title
         view.nowPlayingInfoText = nowPlayingInfoLabel
         view.onResizeModeClick = { resizeMode = nextResizeMode(resizeMode) }
@@ -1779,8 +1786,8 @@ internal fun PlayerOverlay(
         view.onAudioTrackClick = { showAudioTrackDialog = true }
         view.onAudioBoostClick = { showAudioBoostDialog = true }
         view.onSettingsClick = { showPlaybackSettingsDialog = true }
-        view.isLiveContent = currentContentType == ContentType.LIVE
-        view.fastSeekEnabled = currentContentType != ContentType.LIVE
+        view.isLiveContent = isLivePlayback
+        view.fastSeekEnabled = !isLivePlayback
         view.defaultControllerTimeoutMs = 3000
         view.onToggleControls = {
             if (showLiveGuide || isPlayerModalOpen) {
@@ -1795,21 +1802,21 @@ internal fun PlayerOverlay(
             }
         }
         view.onChannelUp = {
-            if (!isPlayerModalOpen && currentContentType == ContentType.LIVE) {
+            if (!isPlayerModalOpen && isLivePlayback) {
                 onLiveChannelSwitch(1)
             } else {
                 false
             }
         }
         view.onChannelDown = {
-            if (!isPlayerModalOpen && currentContentType == ContentType.LIVE) {
+            if (!isPlayerModalOpen && isLivePlayback) {
                 onLiveChannelSwitch(-1)
             } else {
                 false
             }
         }
         view.onOpenLiveGuide = {
-            if (!isPlayerModalOpen && currentContentType == ContentType.LIVE) {
+            if (!isPlayerModalOpen && isLivePlayback) {
                 showLiveGuidePanel()
                 true
             } else {
