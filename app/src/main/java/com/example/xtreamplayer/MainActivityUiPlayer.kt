@@ -1180,6 +1180,9 @@ internal fun PlayerOverlay(
             liveGuideSearchChannelsLoading = false
             return@LaunchedEffect
         }
+        // Debounce short bursts of typing so we don't spin up the category fetch loop on
+        // every intermediate query state.
+        delay(180)
         if (liveGuideSearchChannelsLoading) return@LaunchedEffect
         liveGuideSearchChannelsLoading = true
         try {
@@ -1713,6 +1716,14 @@ internal fun PlayerOverlay(
 
     val openSubtitleTimingDialog: () -> Unit = {
         subtitleCoroutineScope.launch {
+            if (activeSubtitle == null && hasEmbeddedTextTracks(player)) {
+                Toast.makeText(
+                    context,
+                    "Embedded subtitle timing offset is not supported yet",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return@launch
+            }
             val subtitle =
                 activeSubtitle ?: withContext(Dispatchers.IO) {
                     subtitleRepository.getCachedSubtitlesForMedia(mediaId)

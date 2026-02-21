@@ -202,6 +202,8 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import kotlin.math.max
@@ -245,6 +247,7 @@ private const val CONTINUE_WATCHING_MAX_PROGRESS_PERCENT = 98L
 private const val LOCAL_RESUME_MAX_PROGRESS_PERCENT = 95L
 private const val SUBTITLE_AUTO_CLEAR_CHECK_INTERVAL_MS = 60L * 60L * 1000L
 private const val DOUBLE_BACK_EXIT_WINDOW_MS = 2_000L
+private const val PLAYBACK_PROGRESS_SAVE_INTERVAL_MS = 30_000L
 
 @Composable
 fun RootScreen(
@@ -1414,7 +1417,7 @@ fun RootScreen(
     // Periodic playback tracking
     LaunchedEffect(activePlaybackQueue, activePlaybackItem) {
         while (activePlaybackQueue != null) {
-            delay(10_000)
+            delay(PLAYBACK_PROGRESS_SAVE_INTERVAL_MS)
             savePlaybackProgress()
         }
     }
@@ -2111,6 +2114,7 @@ fun RootScreen(
                         val items = mutableListOf<ContentItem>()
                         var page = 0
                         val limit = 200
+                        var retryFirstPageWithRefresh = false
                         while (true) {
                             val pageData =
                                     contentRepository.loadCategoryPage(
@@ -2119,8 +2123,15 @@ fun RootScreen(
                                             page = page,
                                             limit = limit,
                                             authConfig = config,
-                                            forceRefresh = true
+                                            forceRefresh = retryFirstPageWithRefresh
                                     )
+                            if (page == 0 && pageData.items.isEmpty() && !retryFirstPageWithRefresh) {
+                                // Keep search/navigation responsive by reading cache first, then do
+                                // one forced refresh only if page 0 is empty.
+                                retryFirstPageWithRefresh = true
+                                continue
+                            }
+                            retryFirstPageWithRefresh = false
                             if (pageData.items.isEmpty()) break
                             items += pageData.items.filter { it.contentType == ContentType.LIVE }
                             if (pageData.endReached) break
@@ -2668,11 +2679,39 @@ private fun scaleTextSize(size: TextUnit, scale: Float): TextUnit {
     return if (scale == 1f) size else (size.value * scale).sp
 }
 
+private fun stableContentIdentity(item: ContentItem): String {
+    return item.streamId.ifBlank { item.id }.ifBlank { item.id }
+}
+
+private fun stableContentKey(item: ContentItem): String {
+    return "${item.contentType.name}:${stableContentIdentity(item)}"
+}
+
+private fun stableCategoryKey(item: CategoryItem): String {
+    return "${item.type.name}:${item.id}"
+}
+
+private suspend fun requestFocusWithFrameRetries(
+    requester: FocusRequester,
+    frameRetries: Int = 2
+): Boolean {
+    val immediate = runCatching { requester.requestFocus() }.getOrDefault(false)
+    if (immediate) return true
+    repeat(frameRetries) {
+        withFrameNanos {}
+        if (runCatching { requester.requestFocus() }.getOrDefault(false)) {
+            return true
+        }
+    }
+    return false
+}
+
 private const val POSTER_ASPECT_RATIO = 2f / 3f
 private const val LANDSCAPE_ASPECT_RATIO = 16f / 9f
 private const val NAV_ANIM_DURATION_MS = 180
 private const val LIVE_RECONNECT_MAX_ATTEMPTS = 3
 private const val LIVE_RECONNECT_DELAY_MS = 1_000L
+private val seriesCardMetaLoadLimiter = Semaphore(permits = 2)
 private val CONTENT_HORIZONTAL_PADDING = 104.dp
 private val DETAIL_ROW_SPACING = 6.dp
 private val DETAIL_SECTION_SPACING = 10.dp
@@ -4199,7 +4238,7 @@ private fun StaticContentList(
     ) {
         items(
                 count = items.size,
-                key = { index -> "${items[index].id}-$index" }
+                key = { index -> stableContentKey(items[index]) }
         ) { index ->
             val item = items[index]
             val requester =
@@ -4270,7 +4309,7 @@ private fun PagedContentList(
         items(
                 count = lazyItems.itemCount,
                 key = { index ->
-                    lazyItems[index]?.let { "${it.id}-$index" } ?: "item-$index"
+                    lazyItems[index]?.let(::stableContentKey) ?: "item-placeholder-$index"
                 }
         ) { index ->
             val item = lazyItems[index]
@@ -4526,6 +4565,7 @@ private fun ContentCard(
     val posterStyle = isNaturalPoster || isPoster
     val isLiveCard = item?.contentType == ContentType.LIVE && !posterStyle
     val showBackdrop = (posterStyle && item != null && !isNaturalPoster) || isLiveCard
+    val renderBackdrop = showBackdrop && isFocused
     val cardAspectRatio = if (posterStyle) POSTER_ASPECT_RATIO else LANDSCAPE_ASPECT_RATIO
     val imageContentScale = if (posterStyle || isLiveCard) ContentScale.Fit else ContentScale.Crop
     val contentPadding = 2.dp
@@ -4664,7 +4704,7 @@ private fun ContentCard(
             contentAlignment = Alignment.BottomStart
     ) {
         if (imageRequest != null) {
-            if (showBackdrop) {
+            if (renderBackdrop) {
                 val backdropBlur = if (isLiveCard) liveBackdropBlur else 18.dp
                 val backdropAlpha = if (isLiveCard) liveBackdropAlpha else 0.65f
                 AsyncImage(
@@ -4798,6 +4838,7 @@ private fun ContinueWatchingCard(
             item.contentType == ContentType.SERIES && item.containerExtension.isNullOrBlank()
     val isNaturalPoster = item.contentType == ContentType.MOVIES || isSeriesTitle
     val showBackdrop = !isNaturalPoster
+    val renderBackdrop = showBackdrop && isFocused
     val cardAspectRatio = POSTER_ASPECT_RATIO
     val imageContentScale = ContentScale.Fit
     val titleSize = scaleTextSize(16.sp, fontScaleFactor)
@@ -4897,7 +4938,7 @@ private fun ContinueWatchingCard(
             contentAlignment = Alignment.BottomStart
     ) {
         if (imageRequest != null) {
-            if (showBackdrop) {
+            if (renderBackdrop) {
                 AsyncImage(
                         model = imageRequest,
                         contentDescription = null,
@@ -4976,34 +5017,36 @@ private fun rememberSeriesCardMeta(
                     key1 = item.streamId,
                     key2 = authConfig
             ) {
-                val summaries =
-                        runCatching {
-                                    contentRepository.loadSeriesSeasons(
-                                            item.streamId,
-                                            authConfig
-                                    )
-                                }
-                                .getOrNull()
-                if (!summaries.isNullOrEmpty()) {
-                    value =
-                            SeriesSeasonMeta(
-                                    seasonCount = summaries.size,
-                                    hasEpisodes = summaries.any { it.episodeCount > 0 }
-                            )
-                } else {
-                    val count =
+                seriesCardMetaLoadLimiter.withPermit {
+                    val summaries =
                             runCatching {
-                                        contentRepository.loadSeriesSeasonCount(
+                                        contentRepository.loadSeriesSeasons(
                                                 item.streamId,
                                                 authConfig
                                         )
                                     }
                                     .getOrNull()
-                    value =
-                            SeriesSeasonMeta(
-                                    seasonCount = count,
-                                    hasEpisodes = if (count == 0) false else null
-                            )
+                    if (!summaries.isNullOrEmpty()) {
+                        value =
+                                SeriesSeasonMeta(
+                                        seasonCount = summaries.size,
+                                        hasEpisodes = summaries.any { it.episodeCount > 0 }
+                                )
+                    } else {
+                        val count =
+                                runCatching {
+                                            contentRepository.loadSeriesSeasonCount(
+                                                    item.streamId,
+                                                    authConfig
+                                            )
+                                        }
+                                        .getOrNull()
+                        value =
+                                SeriesSeasonMeta(
+                                        seasonCount = count,
+                                        hasEpisodes = if (count == 0) false else null
+                                )
+                    }
                 }
             }
     val count = seasonMeta?.seasonCount
@@ -5066,6 +5109,7 @@ private fun CategoryCard(
     val backdropAlpha = if (lightTheme) 0.9f else 0.9f
     val backdropScrimAlpha = if (lightTheme) 0.2f else 0.2f
     val backdropScrimColor = if (lightTheme) Color.White else Color.Black
+    val renderBackdrop = isFocused
     val labelColor =
             when {
                 useContrastText -> bestContrastText(backgroundColor, colors.textPrimary, colors.textOnAccent)
@@ -5189,7 +5233,7 @@ private fun CategoryCard(
                             .padding(2.dp),
             contentAlignment = Alignment.BottomStart
     ) {
-        if (imageRequest != null) {
+        if (imageRequest != null && renderBackdrop) {
             AsyncImage(
                     model = imageRequest,
                     contentDescription = null,
@@ -5654,10 +5698,6 @@ fun SectionScreen(
         if (pendingSeriesReturnFocus && selectedSeries == null) {
             // Wait for items to be available
             if (lazyItems.itemCount == 0) return@LaunchedEffect
-            // Wait for composition to complete
-            withFrameNanos {}
-            delay(32)
-            withFrameNanos {}
             val shouldResume =
                     resumeFocusId != null &&
                             lazyItems.itemSnapshotList.items.any { it.id == resumeFocusId }
@@ -5667,14 +5707,7 @@ fun SectionScreen(
                     } else {
                         contentItemFocusRequester
                     }
-            // Retry focus request multiple times
-            repeat(5) { attempt ->
-                runCatching { requester.requestFocus() }
-                if (attempt < 4) {
-                    delay(32)
-                    withFrameNanos {}
-                }
-            }
+            requestFocusWithFrameRetries(requester, frameRetries = 2)
             pendingSeriesReturnFocus = false
         }
     }
@@ -5858,7 +5891,7 @@ fun SectionScreen(
                         items(
                                 count = lazyItems.itemCount,
                                 key = { index ->
-                                    lazyItems[index]?.let { "${it.id}-$index" } ?: "item-$index"
+                                    lazyItems[index]?.let(::stableContentKey) ?: "item-placeholder-$index"
                                 }
                         ) { index ->
                             val item = lazyItems[index]
@@ -6585,24 +6618,13 @@ fun FavoritesScreen(
 
     LaunchedEffect(pendingSeriesReturnFocus, selectedSeries) {
         if (pendingSeriesReturnFocus && selectedSeries == null) {
-            // Wait for composition to complete
-            withFrameNanos {}
-            delay(32)
-            withFrameNanos {}
             val requester =
                     if (resumeFocusId != null) {
                         resumeFocusRequester
                     } else {
                         contentItemFocusRequester
                     }
-            // Retry focus request multiple times
-            repeat(5) { attempt ->
-                runCatching { requester.requestFocus() }
-                if (attempt < 4) {
-                    delay(32)
-                    withFrameNanos {}
-                }
-            }
+            requestFocusWithFrameRetries(requester, frameRetries = 2)
             pendingSeriesReturnFocus = false
         }
     }
@@ -6640,14 +6662,7 @@ fun FavoritesScreen(
                         } else {
                             contentItemFocusRequester
                         }
-                for (attempt in 0..2) {
-                    val focused = runCatching { requester.requestFocus() }.getOrDefault(false)
-                    if (focused) break
-                    if (attempt < 2) {
-                        delay(16)
-                        withFrameNanos {}
-                    }
-                }
+                requestFocusWithFrameRetries(requester, frameRetries = 2)
             }
             FavoritesView.ITEMS -> {
                 val requester =
@@ -6657,29 +6672,16 @@ fun FavoritesScreen(
                             itemsFirstFocusRequester
                         }
                 // Wait for the grid node to attach, then move focus off Back to the first card.
-                repeat(8) { attempt ->
-                    val focused = runCatching { requester.requestFocus() }.getOrDefault(false)
-                    if (focused) {
-                        pendingViewFocus = false
-                        return@LaunchedEffect
-                    }
-                    if (attempt < 7) {
-                        delay(32)
-                        withFrameNanos {}
-                    }
+                val focused = requestFocusWithFrameRetries(requester, frameRetries = 3)
+                if (focused) {
+                    pendingViewFocus = false
+                    return@LaunchedEffect
                 }
             }
             FavoritesView.CATEGORIES -> {
                 val requester =
                         contentItemFocusRequester
-                for (attempt in 0..2) {
-                    val focused = runCatching { requester.requestFocus() }.getOrDefault(false)
-                    if (focused) break
-                    if (attempt < 2) {
-                        delay(16)
-                        withFrameNanos {}
-                    }
-                }
+                requestFocusWithFrameRetries(requester, frameRetries = 2)
                 pendingCategoryReturnFocus = false
             }
         }
@@ -6929,7 +6931,7 @@ fun FavoritesScreen(
                     ) {
                         items(
                                 count = sortedContent.size,
-                                key = { index -> "${sortedContent[index].id}-$index" }
+                                key = { index -> stableContentKey(sortedContent[index]) }
                         ) { index ->
                             val item = sortedContent[index]
                             val backDownTargetIndex =
@@ -7020,26 +7022,13 @@ fun FavoritesScreen(
                         }
                         // Wait for items to be available before attempting focus
                         if (lazyItems.itemCount == 0) return@LaunchedEffect
-                        withFrameNanos {}
-                        delay(32)
-                        withFrameNanos {}
-                        repeat(5) { attempt ->
-                            runCatching { contentItemFocusRequester.requestFocus() }
-                            if (attempt < 4) {
-                                delay(32)
-                                withFrameNanos {}
-                            }
-                        }
+                        requestFocusWithFrameRetries(contentItemFocusRequester, frameRetries = 2)
                         pendingCategoryEnterFocus = false
                     }
                     LaunchedEffect(pendingSeriesReturnFocus, selectedSeries, lazyItems.itemCount, resumeFocusId) {
                         if (pendingSeriesReturnFocus && selectedSeries == null && selectedCategory != null) {
                             // Wait for items to be available
                             if (lazyItems.itemCount == 0) return@LaunchedEffect
-                            // Wait for composition to complete
-                            withFrameNanos {}
-                            delay(32)
-                            withFrameNanos {}
                             val shouldResume =
                                     resumeFocusId != null &&
                                             lazyItems.itemSnapshotList.items.any { it?.id == resumeFocusId }
@@ -7049,14 +7038,7 @@ fun FavoritesScreen(
                                     } else {
                                         contentItemFocusRequester
                                     }
-                            // Retry focus request multiple times
-                            repeat(5) { attempt ->
-                                runCatching { requester.requestFocus() }
-                                if (attempt < 4) {
-                                    delay(32)
-                                    withFrameNanos {}
-                                }
-                            }
+                            requestFocusWithFrameRetries(requester, frameRetries = 2)
                             pendingSeriesReturnFocus = false
                         }
                     }
@@ -7172,8 +7154,8 @@ fun FavoritesScreen(
                                 items(
                                         count = lazyItems.itemCount,
                                         key = { index ->
-                                            lazyItems[index]?.let { "${it.id}-$index" }
-                                                ?: "fav-cat-item-$index"
+                                            lazyItems[index]?.let(::stableContentKey)
+                                                ?: "fav-cat-item-placeholder-$index"
                                         }
                                 ) { index ->
                                     val item = lazyItems[index]
@@ -7291,7 +7273,10 @@ fun FavoritesScreen(
                                 modifier = Modifier.fillMaxWidth().weight(1f),
                                 state = gridState
                         ) {
-                            items(sortedCategories.size) { index ->
+                            items(
+                                count = sortedCategories.size,
+                                key = { index -> stableCategoryKey(sortedCategories[index]) }
+                            ) { index ->
                                 val category = sortedCategories[index]
                                 val backDownTargetIndex =
                                         (categoryColumns - 1).coerceAtMost(sortedCategories.lastIndex)
@@ -7885,10 +7870,6 @@ fun CategorySectionScreen(
                         if (targetIndex > 0) {
                             contentGridState.scrollToItem(targetIndex)
                         }
-                        // Wait for composition to complete
-                        withFrameNanos {}
-                        delay(32)
-                        withFrameNanos {}
                         val resumeId = lastId ?: resumeFocusId
                         val shouldResume =
                                 resumeId != null && itemsSnapshot.any { it?.id == resumeId }
@@ -7898,14 +7879,7 @@ fun CategorySectionScreen(
                                 } else {
                                     contentItemFocusRequester
                                 }
-                        // Retry focus request multiple times
-                        repeat(5) { attempt ->
-                            runCatching { requester.requestFocus() }
-                            if (attempt < 4) {
-                                delay(32)
-                                withFrameNanos {}
-                            }
-                        }
+                        requestFocusWithFrameRetries(requester, frameRetries = 2)
                         pendingSeriesReturnFocus = false
                     }
                 }
@@ -7986,8 +7960,8 @@ fun CategorySectionScreen(
                                 items(
                                         count = lazyItems.itemCount,
                                         key = { index ->
-                                            lazyItems[index]?.let { "${it.id}-$index" }
-                                                ?: "cat-item-$index"
+                                            lazyItems[index]?.let(::stableContentKey)
+                                                ?: "cat-item-placeholder-$index"
                                         }
                                 ) { index ->
                                     val item = lazyItems[index]
@@ -8237,7 +8211,10 @@ fun CategorySectionScreen(
                             modifier = Modifier.fillMaxWidth().weight(1f),
                             state = categoryGridState
                     ) {
-                        items(filteredCategories.size) { index ->
+                        items(
+                            count = filteredCategories.size,
+                            key = { index -> stableCategoryKey(filteredCategories[index]) }
+                        ) { index ->
                             val category = filteredCategories[index]
                             val requester =
                                     when {
@@ -8495,9 +8472,6 @@ fun ContinueWatchingScreen(
         if (!pendingSeriesReturnFocus || selectedSeries != null || displayEntries.isEmpty()) {
             return@LaunchedEffect
         }
-        withFrameNanos {}
-        delay(32)
-        withFrameNanos {}
         val shouldResume =
             resumeFocusId != null &&
                 displayEntries.any { entry ->
@@ -8505,16 +8479,10 @@ fun ContinueWatchingScreen(
                         resolvedParents[entry.key]?.id == resumeFocusId
                 }
         val requester = if (shouldResume) resumeFocusRequester else contentItemFocusRequester
-        repeat(5) { attempt ->
-            val focused = runCatching { requester.requestFocus() }.getOrDefault(false)
-            if (focused) {
-                pendingSeriesReturnFocus = false
-                return@LaunchedEffect
-            }
-            if (attempt < 4) {
-                delay(32)
-                withFrameNanos {}
-            }
+        val focused = requestFocusWithFrameRetries(requester, frameRetries = 2)
+        if (focused) {
+            pendingSeriesReturnFocus = false
+            return@LaunchedEffect
         }
         pendingSeriesReturnFocus = false
     }
@@ -9902,7 +9870,7 @@ fun SeriesSeasonsScreen(
                             ) {
                                 items(
                                     count = displayEpisodes.size,
-                                    key = { index -> "${displayEpisodes[index].id}-$index" }
+                                    key = { index -> stableContentKey(displayEpisodes[index]) }
                                 ) { index ->
                                     val item = displayEpisodes[index]
                                     val requester =
@@ -10732,7 +10700,7 @@ fun SeriesEpisodesScreen(
                 items(
                         count = lazyItems.itemCount,
                         key = { index ->
-                            lazyItems[index]?.let { "${it.id}-$index" } ?: "episode-$index"
+                            lazyItems[index]?.let(::stableContentKey) ?: "episode-placeholder-$index"
                         }
                 ) { index ->
                     val item = lazyItems[index]
