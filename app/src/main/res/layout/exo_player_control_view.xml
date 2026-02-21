@@ -109,6 +109,17 @@
             android:clickable="false"
             android:focusable="false" />
 
+        <View
+            android:id="@id/exo_progress_placeholder"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/exo_styled_progress_layout_height"
+            android:layout_alignParentBottom="true"
+            android:layout_toEndOf="@id/exo_time"
+            android:layout_toStartOf="@id/exo_duration"
+            android:layout_marginStart="@dimen/exo_progress_time_gap"
+            android:layout_marginEnd="@dimen/exo_progress_time_gap"
+            android:layout_marginBottom="@dimen/exo_styled_progress_margin_bottom" />
+
         <LinearLayout
             android:id="@id/exo_center_controls"
             android:layout_width="wrap_content"
@@ -302,15 +313,6 @@
         </HorizontalScrollView>
 
     </RelativeLayout>
-
-    <View
-        android:id="@id/exo_progress_placeholder"
-        android:layout_width="match_parent"
-        android:layout_height="@dimen/exo_styled_progress_layout_height"
-        android:layout_gravity="bottom"
-        android:layout_marginStart="@dimen/exo_progress_side_inset_start"
-        android:layout_marginEnd="@dimen/exo_progress_side_inset_end"
-        android:layout_marginBottom="@dimen/exo_styled_progress_margin_bottom" />
 
     <LinearLayout
         android:id="@id/exo_minimal_controls"
