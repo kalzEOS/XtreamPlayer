@@ -20,8 +20,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -288,8 +286,6 @@ fun RootScreen(
 
     var selectedSection by browseViewModel.selectedSection
     var navExpanded by browseViewModel.navExpanded
-    var navLayoutExpanded by remember { mutableStateOf(true) }
-    var navSlideExpanded by remember { mutableStateOf(true) }
     val showManageListsState = remember { mutableStateOf(false) }
     var showManageLists by showManageListsState
     val showAppearanceState = remember { mutableStateOf(false) }
@@ -342,22 +338,6 @@ fun RootScreen(
     var activePlaybackSubtitleState by remember { mutableStateOf<PlaybackSubtitleState?>(null) }
     var lastExitBackPressElapsedMs by remember { mutableLongStateOf(0L) }
     val resumeFocusRequester = remember { FocusRequester() }
-
-    LaunchedEffect(navExpanded) {
-        if (navExpanded) {
-            navLayoutExpanded = true
-            navSlideExpanded = false
-            withFrameNanos {}
-            delay(16)
-            navSlideExpanded = true
-        } else {
-            navSlideExpanded = false
-            delay(NAV_ANIM_DURATION_MS.toLong())
-            if (!navExpanded) {
-                navLayoutExpanded = false
-            }
-        }
-    }
 
     // Progressive sync coordinator
     val settingsRepository = remember { com.example.xtreamplayer.settings.SettingsRepository(context) }
@@ -1705,14 +1685,6 @@ fun RootScreen(
 
                 // Removed extra long sync banner; top-right pill is the only sync indicator.
 
-                val navProgress by animateFloatAsState(
-                        targetValue = if (navSlideExpanded) 1f else 0f,
-                        animationSpec = tween(durationMillis = NAV_ANIM_DURATION_MS),
-                        label = "navSlide"
-                )
-                val navWidthPx = with(LocalDensity.current) { NAV_WIDTH.toPx() }
-                val navOffsetPx = -navWidthPx * (1f - navProgress)
-
                 BrowseScreen(
                         context = context,
                         coroutineScope = coroutineScope,
@@ -1724,10 +1696,6 @@ fun RootScreen(
                         appVersionName = appVersionName,
                         selectedSectionState = browseViewModel.selectedSection,
                         navExpandedState = browseViewModel.navExpanded,
-                        navLayoutExpanded = navLayoutExpanded,
-                        navSlideExpanded = navSlideExpanded,
-                        navOffsetPx = navOffsetPx,
-                        navProgress = navProgress,
                         moveFocusToNavState = moveFocusToNavState,
                         focusToContentTriggerState = focusToContentTriggerState,
                         showManageListsState = showManageListsState,

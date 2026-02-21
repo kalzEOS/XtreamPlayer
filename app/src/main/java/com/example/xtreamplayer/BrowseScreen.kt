@@ -52,6 +52,7 @@ import com.example.xtreamplayer.content.ProgressiveSyncState
 import com.example.xtreamplayer.content.SubtitleRepository
 import com.example.xtreamplayer.settings.SettingsState
 import com.example.xtreamplayer.settings.SettingsViewModel
+import com.example.xtreamplayer.ui.components.NAV_WIDTH
 import com.example.xtreamplayer.ui.components.SideNav
 import com.example.xtreamplayer.ui.theme.AppTheme
 import java.util.Locale
@@ -63,6 +64,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import androidx.compose.runtime.withFrameNanos
+
+private const val BROWSE_NAV_ANIM_DURATION_MS = 180
 
 @Composable
 internal fun BrowseScreen(
@@ -76,10 +79,6 @@ internal fun BrowseScreen(
     appVersionName: String,
     selectedSectionState: MutableState<Section>,
     navExpandedState: MutableState<Boolean>,
-    navLayoutExpanded: Boolean,
-    navSlideExpanded: Boolean,
-    navOffsetPx: Float,
-    navProgress: Float,
     moveFocusToNavState: MutableState<Boolean>,
     focusToContentTriggerState: MutableState<Int>,
     showManageListsState: MutableState<Boolean>,
@@ -156,6 +155,30 @@ internal fun BrowseScreen(
     var cacheClearNonce by cacheClearNonceState
     val focusManager = LocalFocusManager.current
     var navMoveToContentTrigger by remember { mutableIntStateOf(0) }
+    var navLayoutExpanded by remember { mutableStateOf(true) }
+    var navSlideExpanded by remember { mutableStateOf(true) }
+    LaunchedEffect(navExpanded) {
+        if (navExpanded) {
+            navLayoutExpanded = true
+            navSlideExpanded = false
+            withFrameNanos {}
+            delay(16)
+            navSlideExpanded = true
+        } else {
+            navSlideExpanded = false
+            delay(BROWSE_NAV_ANIM_DURATION_MS.toLong())
+            if (!navExpanded) {
+                navLayoutExpanded = false
+            }
+        }
+    }
+    val navProgress by animateFloatAsState(
+        targetValue = if (navSlideExpanded) 1f else 0f,
+        animationSpec = tween(durationMillis = BROWSE_NAV_ANIM_DURATION_MS),
+        label = "browseNavSlide"
+    )
+    val navWidthPx = with(LocalDensity.current) { NAV_WIDTH.toPx() }
+    val navOffsetPx = -navWidthPx * (1f - navProgress)
     val favoriteContentKeys by
         favoritesRepository.favoriteContentKeys.collectAsStateWithLifecycle(initialValue = emptySet())
     val favoriteCategoryKeys by
