@@ -846,6 +846,9 @@ class XtreamPlayerView @JvmOverloads constructor(
         if (isLiveContent) return false
         if (progress == null) return false
         if (progress.visibility != View.VISIBLE || !progress.isShown) return false
+        // Skip the seek bar in DPAD routing when Media3 marks it disabled (e.g., failed/non-seekable playback).
+        if (!progress.isEnabled) return false
+        if (!progress.isFocusable && !progress.hasFocusable()) return false
         if (progress.alpha <= 0.01f) return false
         if (progress.width <= 1 || progress.height <= 1) return false
         return true
