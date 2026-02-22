@@ -1,0 +1,73 @@
+name: Pre-release Channel
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: Branch to build from
+        required: true
+      tag_name:
+        description: Pre-release tag (example XtreamPlayerv3.3.6-rc1)
+        required: true
+      release_title:
+        description: Release title (example Xtream Player v3.3.6-rc1)
+        required: true
+      release_notes:
+        description: Release notes (must start with # Changes:)
+        required: true
+
+jobs:
+  publish-pre-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Validate Metadata
+        run: |
+          set -euo pipefail
+          notes_file="$(mktemp)"
+          printf '%s\n' "${{ inputs.release_notes }}" > "${notes_file}"
+          ./scripts/validate_release_metadata.sh \
+            "${{ inputs.tag_name }}" \
+            "${{ inputs.release_title }}" \
+            "${notes_file}" \
+            "true" \
+            "${{ inputs.target_branch }}"
+
+      - name: Build Release APK
+        run: |
+          set -euo pipefail
+          ./gradlew :app:assembleRelease --stacktrace
+
+      - name: Resolve APK Path
+        id: apk
+        run: |
+          set -euo pipefail
+          apk_path="$(ls -1 app/build/outputs/apk/release/*.apk | head -n 1)"
+          if [[ -z "${apk_path}" ]]; then
+            echo "No APK found."
+            exit 1
+          fi
+          echo "apk_path=${apk_path}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish Pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          target_commitish: ${{ inputs.target_branch }}
+          name: ${{ inputs.release_title }}
+          body: ${{ inputs.release_notes }}
+          prerelease: true
+          files: ${{ steps.apk.outputs.apk_path }}

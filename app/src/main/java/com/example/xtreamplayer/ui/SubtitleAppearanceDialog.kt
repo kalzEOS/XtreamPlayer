@@ -67,18 +67,21 @@ import kotlin.math.roundToInt
 @Composable
 fun SubtitleAppearanceDialog(
     initialSettings: SubtitleAppearanceSettings,
-    onSave: (SubtitleAppearanceSettings) -> Unit,
+    onPreview: (SubtitleAppearanceSettings) -> Unit,
+    onApply: (SubtitleAppearanceSettings) -> Unit,
     onDismiss: () -> Unit
 ) {
     val previewHeight = 260.dp
     val defaults = remember { SubtitleAppearanceSettings().normalized() }
-    var draft by remember(initialSettings) { mutableStateOf(initialSettings.normalized()) }
+    val initialNormalized = remember(initialSettings) { initialSettings.normalized() }
+    var draft by remember(initialSettings) { mutableStateOf(initialNormalized) }
     var showResetAllConfirmation by remember { mutableStateOf(false) }
     val colors = AppTheme.colors
     val shape = RoundedCornerShape(14.dp)
     val panelShape = RoundedCornerShape(12.dp)
     val enableCustomStyleFocusRequester = remember { FocusRequester() }
     val resetAllFocusRequester = remember { FocusRequester() }
+    val applyFocusRequester = remember { FocusRequester() }
     val closeFocusRequester = remember { FocusRequester() }
     val sampleCues = remember {
         listOf(
@@ -96,7 +99,7 @@ fun SubtitleAppearanceDialog(
             return false
         }
         draft = normalized
-        onSave(normalized)
+        onPreview(normalized)
         return true
     }
     suspend fun requestFocusWithFrames(target: FocusRequester) {
@@ -109,6 +112,17 @@ fun SubtitleAppearanceDialog(
         requestFocusWithFrames(closeFocusRequester)
     }
     val canResetAll = draft != defaults
+    val hasPendingChanges = draft != initialNormalized
+    val closeMoveLeft: (() -> Unit)? =
+        when {
+            hasPendingChanges -> {
+                { applyFocusRequester.requestFocus() }
+            }
+            canResetAll -> {
+                { resetAllFocusRequester.requestFocus() }
+            }
+            else -> null
+        }
 
     AppDialog(
         onDismissRequest = onDismiss,
@@ -158,10 +172,21 @@ fun SubtitleAppearanceDialog(
                             onMoveDown = { enableCustomStyleFocusRequester.requestFocus() }
                         )
                         TopBarButton(
+                            label = "APPLY",
+                            onActivate = {
+                                onApply(draft)
+                                onDismiss()
+                            },
+                            enabled = hasPendingChanges,
+                            modifier = Modifier.focusRequester(applyFocusRequester),
+                            onMoveLeft = { resetAllFocusRequester.requestFocus() },
+                            onMoveDown = { enableCustomStyleFocusRequester.requestFocus() }
+                        )
+                        TopBarButton(
                             label = "CLOSE",
                             onActivate = onDismiss,
                             modifier = Modifier.focusRequester(closeFocusRequester),
-                            onMoveLeft = if (canResetAll) ({ resetAllFocusRequester.requestFocus() }) else null,
+                            onMoveLeft = closeMoveLeft,
                             onMoveDown = { enableCustomStyleFocusRequester.requestFocus() }
                         )
                     }
@@ -406,7 +431,7 @@ fun SubtitleAppearanceDialog(
                             }
                         }
                         Text(
-                            text = "Changes are saved automatically.",
+                            text = "Changes are previewed live. Select APPLY to save.",
                             color = colors.textSecondary,
                             fontSize = 11.sp,
                             fontFamily = AppTheme.fontFamily

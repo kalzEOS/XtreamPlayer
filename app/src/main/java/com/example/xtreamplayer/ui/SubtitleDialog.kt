@@ -1921,7 +1921,8 @@ private fun SettingsOptionRow(
 fun SubtitleOffsetDialog(
     offsetMs: Long,
     onOffsetChange: (Long) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onCancel: (() -> Unit)? = null
 ) {
     AppDialog(
         onDismissRequest = onDismiss,
@@ -1936,7 +1937,8 @@ fun SubtitleOffsetDialog(
             SubtitleOffsetControls(
                 offsetMs = offsetMs,
                 onOffsetChange = onOffsetChange,
-                onDismiss = onDismiss
+                onDismiss = onDismiss,
+                onCancel = onCancel
             )
         }
     }
@@ -1946,7 +1948,8 @@ fun SubtitleOffsetDialog(
 private fun SubtitleOffsetControls(
     offsetMs: Long,
     onOffsetChange: (Long) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onCancel: (() -> Unit)?
 ) {
     val smallStep = 100L  // 0.1 seconds
     val largeStep = 500L  // 0.5 seconds
@@ -1955,6 +1958,7 @@ private fun SubtitleOffsetControls(
     val minusSmallRequester = remember { FocusRequester() }
     val resetRequester = remember { FocusRequester() }
     val plusSmallRequester = remember { FocusRequester() }
+    val cancelRequester = remember { FocusRequester() }
     val doneRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
@@ -2048,15 +2052,22 @@ private fun SubtitleOffsetControls(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
+                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                DialogCloseButton(
+                    focusRequester = cancelRequester,
+                    onDismiss = { (onCancel ?: onDismiss).invoke() },
+                    onNavigateUp = { plusSmallRequester.requestFocus() },
+                    label = "Cancel",
+                    modifier = Modifier.fillMaxWidth(0.32f)
+                )
                 DialogCloseButton(
                     focusRequester = doneRequester,
                     onDismiss = onDismiss,
                     onNavigateUp = { plusSmallRequester.requestFocus() },
                     label = "Done",
-                    modifier = Modifier.fillMaxWidth(0.5f)
+                    modifier = Modifier.fillMaxWidth(0.32f)
                 )
             }
         }

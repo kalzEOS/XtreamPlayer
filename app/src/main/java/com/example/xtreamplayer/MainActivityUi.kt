@@ -124,7 +124,6 @@ import androidx.media3.common.util.UnstableApi
 import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
 import coil.compose.AsyncImage
-import coil.request.ImageRequest
 import com.example.xtreamplayer.auth.AuthConfig
 import com.example.xtreamplayer.auth.AuthViewModel
 import com.example.xtreamplayer.content.CategoryItem
@@ -139,15 +138,19 @@ import com.example.xtreamplayer.content.HistoryEntry
 import com.example.xtreamplayer.content.HistoryRepository
 import com.example.xtreamplayer.content.LocalPlaybackResumeRepository
 import com.example.xtreamplayer.content.MovieInfo
+import com.example.xtreamplayer.content.resolveContinueWatchingMinWatchMs
 import com.example.xtreamplayer.content.SeriesInfo
 import com.example.xtreamplayer.content.SearchNormalizer
 import com.example.xtreamplayer.content.SubtitleRepository
+import com.example.xtreamplayer.content.shouldStoreContinueWatchingEntry
+import com.example.xtreamplayer.observability.AppDiagnostics
 import com.example.xtreamplayer.player.Media3PlaybackEngine
 import com.example.xtreamplayer.player.BufferProfile
 import com.example.xtreamplayer.settings.PlaybackSettingsController
 import com.example.xtreamplayer.settings.ClockFormatOption
 import com.example.xtreamplayer.settings.SettingsState
 import com.example.xtreamplayer.settings.SettingsViewModel
+import com.example.xtreamplayer.settings.SubtitleAppearanceSettings
 import com.example.xtreamplayer.update.UpdateRelease
 import com.example.xtreamplayer.update.compareVersions
 import com.example.xtreamplayer.update.downloadUpdateApk
@@ -175,6 +178,7 @@ import com.example.xtreamplayer.ui.FontScaleDialog
 import com.example.xtreamplayer.ui.ThemeSelectionDialog
 import com.example.xtreamplayer.ui.UiScaleDialog
 import com.example.xtreamplayer.ui.VideoResolutionDialog
+import com.example.xtreamplayer.ui.buildTvImageRequest
 import com.example.xtreamplayer.ui.rememberDebouncedSearchState
 import com.example.xtreamplayer.ui.components.AppBackground
 import com.example.xtreamplayer.ui.components.MenuButton
@@ -204,6 +208,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import kotlin.LazyThreadSafetyMode
 import kotlin.math.max
 import kotlin.math.min
 
@@ -246,6 +251,7 @@ private const val LOCAL_RESUME_MAX_PROGRESS_PERCENT = 95L
 private const val SUBTITLE_AUTO_CLEAR_CHECK_INTERVAL_MS = 60L * 60L * 1000L
 private const val DOUBLE_BACK_EXIT_WINDOW_MS = 2_000L
 private const val PLAYBACK_PROGRESS_SAVE_INTERVAL_MS = 30_000L
+private const val STARTUP_DEFER_NON_CRITICAL_MS = 1_000L
 
 @Composable
 fun RootScreen(
@@ -312,6 +318,7 @@ fun RootScreen(
     var showNextEpisodeThresholdDialog by showNextEpisodeThresholdDialogState
     val showSubtitleAppearanceDialogState = remember { mutableStateOf(false) }
     var showSubtitleAppearanceDialog by showSubtitleAppearanceDialogState
+    var subtitleAppearancePreview by remember { mutableStateOf<SubtitleAppearanceSettings?>(null) }
     val showSubtitleCacheAutoClearDialogState = remember { mutableStateOf(false) }
     var showSubtitleCacheAutoClearDialog by showSubtitleCacheAutoClearDialogState
     var showLocalFilesGuest by remember { mutableStateOf(false) }
@@ -329,6 +336,7 @@ fun RootScreen(
     var movieInfoResumePositionMs by remember { mutableStateOf<Long?>(null) }
     var movieInfoLoadJob by remember { mutableStateOf<Job?>(null) }
     var playbackFallbackAttempts by playerViewModel.playbackFallbackAttempts
+    var playbackPrimaryRetries by playerViewModel.playbackPrimaryRetries
     var liveReconnectAttempts by playerViewModel.liveReconnectAttempts
     var liveReconnectJob by playerViewModel.liveReconnectJob
     var pendingResume by playerViewModel.pendingResume
@@ -339,9 +347,23 @@ fun RootScreen(
     var lastExitBackPressElapsedMs by remember { mutableLongStateOf(0L) }
     val resumeFocusRequester = remember { FocusRequester() }
 
+    var startupDeferredReady by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        withFrameNanos {}
+        delay(STARTUP_DEFER_NON_CRITICAL_MS)
+        startupDeferredReady = true
+    }
+
     // Progressive sync coordinator
-    val settingsRepository = remember { com.example.xtreamplayer.settings.SettingsRepository(context) }
-    LaunchedEffect(settings.subtitleCacheAutoClearIntervalMs) {
+    val settingsRepository by remember {
+        lazy(LazyThreadSafetyMode.NONE) {
+            com.example.xtreamplayer.settings.SettingsRepository(context)
+        }
+    }
+    LaunchedEffect(settings.subtitleCacheAutoClearIntervalMs, startupDeferredReady) {
+        if (!startupDeferredReady) {
+            return@LaunchedEffect
+        }
         val intervalMs = settings.subtitleCacheAutoClearIntervalMs
         if (intervalMs <= 0L) {
             return@LaunchedEffect
@@ -376,7 +398,10 @@ fun RootScreen(
             authState.activeConfig?.let { config ->
                 "${config.baseUrl}|${config.username}|${config.listName}|${config.password}"
             }
-    LaunchedEffect(syncCoordinatorAccountKey) {
+    LaunchedEffect(syncCoordinatorAccountKey, startupDeferredReady) {
+        if (!startupDeferredReady) {
+            return@LaunchedEffect
+        }
         val previousCoordinator = progressiveSyncCoordinator
         if (previousCoordinator != null) {
             withContext(NonCancellable) {
@@ -405,7 +430,10 @@ fun RootScreen(
     }
 
     // Auto-start fast start sync on first login
-    LaunchedEffect(authState.activeConfig, progressiveSyncCoordinator) {
+    LaunchedEffect(authState.activeConfig, progressiveSyncCoordinator, startupDeferredReady) {
+        if (!startupDeferredReady) {
+            return@LaunchedEffect
+        }
         val coordinator = progressiveSyncCoordinator ?: return@LaunchedEffect
         if (authState.activeConfig != null) {
             val config = authState.activeConfig ?: return@LaunchedEffect
@@ -444,7 +472,10 @@ fun RootScreen(
     }
 
     // Auto-start background sync after fast start completes
-    LaunchedEffect(syncState.fastStartReady) {
+    LaunchedEffect(syncState.fastStartReady, startupDeferredReady) {
+        if (!startupDeferredReady) {
+            return@LaunchedEffect
+        }
         val coordinator = progressiveSyncCoordinator ?: return@LaunchedEffect
         if (syncState.fastStartReady && !syncState.fullIndexComplete) {
             kotlinx.coroutines.delay(2000) // 2 second grace period
@@ -611,7 +642,10 @@ fun RootScreen(
         authViewModel.tryAutoSignIn(settings)
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(startupDeferredReady) {
+        if (!startupDeferredReady) {
+            return@LaunchedEffect
+        }
         startupUpdateCheckEnabled = settingsRepository.isStartupUpdateCheckEnabled()
     }
 
@@ -900,6 +934,7 @@ fun RootScreen(
     LaunchedEffect(activePlaybackQueue) {
         val queue = activePlaybackQueue
         playbackFallbackAttempts = queue?.fallbackUris?.mapValues { 0 } ?: emptyMap()
+        playbackPrimaryRetries = queue?.fallbackUris?.mapValues { 0 } ?: emptyMap()
         val player: ExoPlayer? = playbackEngine.player
         if (queue != null) {
             if (player == null) return@LaunchedEffect
@@ -1197,16 +1232,21 @@ fun RootScreen(
             val position = safePlayer.currentPosition
             val duration = safePlayer.duration
             val minWatchMs =
-                if (duration > 0) {
-                    minOf(RESUME_MIN_WATCH_MS, duration / 10)
-                } else {
-                    RESUME_MIN_WATCH_MS
-                }
+                resolveContinueWatchingMinWatchMs(
+                    durationMs = duration,
+                    baseMinWatchMs = RESUME_MIN_WATCH_MS
+                )
             if (position >= minWatchMs) {
-                val progressPercent = if (duration > 0) (position * 100) / duration else 0
+                val shouldStore =
+                    shouldStoreContinueWatchingEntry(
+                        positionMs = position,
+                        durationMs = duration,
+                        baseMinWatchMs = RESUME_MIN_WATCH_MS,
+                        completionThresholdPercent = CONTINUE_WATCHING_MAX_PROGRESS_PERCENT
+                    )
                 val subtitleState = activePlaybackSubtitleState
                 coroutineScope.launch {
-                    if (duration > 0 && progressPercent >= CONTINUE_WATCHING_MAX_PROGRESS_PERCENT) {
+                    if (!shouldStore) {
                         continueWatchingRepository.removeEntry(config, item)
                     } else {
                         val parentItem =
@@ -1415,6 +1455,14 @@ fun RootScreen(
                     }
 
                     override fun onPlayerError(error: PlaybackException) {
+                        AppDiagnostics.recordError(
+                            event = "playback_error",
+                            throwable = error,
+                            fields = mapOf(
+                                "mediaId" to (playbackEngine.player.currentMediaItem?.mediaId ?: "unknown"),
+                                "errorCode" to error.errorCode.toString()
+                            )
+                        )
                         if (attemptLiveReconnect()) {
                             return
                         }
@@ -1441,16 +1489,60 @@ fun RootScreen(
                         }
                         val mediaId = playbackEngine.player.currentMediaItem?.mediaId
                         if (mediaId != null) {
+                            val transientRetryCount = playbackPrimaryRetries[mediaId] ?: 0
+                            if (
+                                isTransientPlaybackError(error) &&
+                                    transientRetryCount < PLAYBACK_PRIMARY_RETRY_MAX
+                            ) {
+                                val nextRetryCount = transientRetryCount + 1
+                                playbackPrimaryRetries =
+                                    playbackPrimaryRetries + (mediaId to nextRetryCount)
+                                AppDiagnostics.recordWarning(
+                                    event = "playback_primary_retry",
+                                    fields = mapOf(
+                                        "mediaId" to mediaId,
+                                        "retry" to nextRetryCount.toString()
+                                    )
+                                )
+                                Toast.makeText(
+                                    context,
+                                    "Connection hiccup, retrying source ($nextRetryCount/$PLAYBACK_PRIMARY_RETRY_MAX)",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                coroutineScope.launch {
+                                    delay(PLAYBACK_PRIMARY_RETRY_DELAY_MS)
+                                    if (playbackEngine.player.currentMediaItem?.mediaId != mediaId) {
+                                        return@launch
+                                    }
+                                    playbackEngine.player.prepare()
+                                    playbackEngine.player.playWhenReady = true
+                                }
+                                return
+                            }
                             val candidates = activePlaybackQueue?.fallbackUris?.get(mediaId).orEmpty()
                             val attempt = playbackFallbackAttempts[mediaId] ?: 0
                             val nextAttempt = attempt + 1
                             if (nextAttempt < candidates.size) {
                                 playbackFallbackAttempts = playbackFallbackAttempts + (mediaId to nextAttempt)
+                                playbackPrimaryRetries = playbackPrimaryRetries + (mediaId to 0)
                                 val nextUri = candidates[nextAttempt]
+                                AppDiagnostics.recordWarning(
+                                    event = "playback_fallback_switch",
+                                    fields = mapOf(
+                                        "mediaId" to mediaId,
+                                        "fallbackAttempt" to nextAttempt.toString(),
+                                        "fallbackCount" to candidates.size.toString()
+                                    )
+                                )
                                 Timber.w(
                                         error,
                                         "Playback failed for $mediaId, retrying with fallback ${nextAttempt + 1}/${candidates.size}: $nextUri"
                                 )
+                                Toast.makeText(
+                                    context,
+                                    "Source unstable, switching to backup stream...",
+                                    Toast.LENGTH_SHORT
+                                ).show()
                                 val currentItem = playbackEngine.player.currentMediaItem
                                 if (currentItem != null) {
                                     playbackEngine.player.setMediaItem(
@@ -1465,10 +1557,15 @@ fun RootScreen(
                                     Timber.w("Current item is null during fallback retry")
                                 }
                             } else {
+                                AppDiagnostics.recordError(
+                                    event = "playback_fallback_exhausted",
+                                    throwable = error,
+                                    fields = mapOf("mediaId" to mediaId)
+                                )
                                 Timber.e(error, "Playback failed for $mediaId; no more fallbacks")
                                 Toast.makeText(
                                                 context,
-                                                "Playback failed. Use Next/Previous to continue.",
+                                                "Stream is unstable right now. Use Next/Previous to continue.",
                                                 Toast.LENGTH_LONG
                                 )
                                         .show()
@@ -1815,12 +1912,17 @@ fun RootScreen(
                 }
                 if (showSubtitleAppearanceDialog) {
                     SubtitleAppearanceDialog(
-                        initialSettings = settings.subtitleAppearance,
-                        onSave = { updated ->
+                        initialSettings = subtitleAppearancePreview ?: settings.subtitleAppearance,
+                        onPreview = { updated ->
+                            subtitleAppearancePreview = updated
+                        },
+                        onApply = { updated ->
+                            subtitleAppearancePreview = null
                             settingsViewModel.setSubtitleAppearance(updated)
+                            settingsViewModel.flushPendingSubtitleAppearance()
                         },
                         onDismiss = {
-                            settingsViewModel.flushPendingSubtitleAppearance()
+                            subtitleAppearancePreview = null
                             showSubtitleAppearanceDialog = false
                         }
                     )
@@ -1941,6 +2043,10 @@ fun RootScreen(
             )
         }
 
+        val effectivePlaybackSettings =
+            subtitleAppearancePreview?.let { preview ->
+                settings.copy(subtitleAppearance = preview)
+            } ?: settings
         PlayerScreen(
                 activePlaybackQueue = activePlaybackQueue,
                 activePlaybackTitle = activePlaybackTitle,
@@ -1948,7 +2054,7 @@ fun RootScreen(
                 activePlaybackItems = activePlaybackItems,
                 playbackEngine = playbackEngine,
                 subtitleRepository = subtitleRepository,
-                settings = settings,
+                settings = effectivePlaybackSettings,
                 onRequestOpenSubtitlesApiKey = { showApiKeyDialog = true },
                 onExitPlayback = {
                     savePlaybackProgress()
@@ -2583,6 +2689,36 @@ private fun errorIndicatesHevc(error: PlaybackException): Boolean {
     return false
 }
 
+private fun isTransientPlaybackError(error: PlaybackException): Boolean {
+    when (error.errorCode) {
+        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+        PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+        PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND,
+        PlaybackException.ERROR_CODE_TIMEOUT -> return true
+    }
+    val message = error.message?.lowercase().orEmpty()
+    if (
+        message.contains("timed out") ||
+            message.contains("connection reset") ||
+            message.contains("network")
+    ) {
+        return true
+    }
+    var cause = error.cause
+    while (cause != null) {
+        if (cause is java.io.IOException) {
+            return true
+        }
+        val className = cause::class.java.name
+        if (className.contains("HttpDataSourceException")) {
+            return true
+        }
+        cause = cause.cause
+    }
+    return false
+}
+
 private fun scaleTextSize(size: TextUnit, scale: Float): TextUnit {
     return if (scale == 1f) size else (size.value * scale).sp
 }
@@ -2619,6 +2755,8 @@ private const val LANDSCAPE_ASPECT_RATIO = 16f / 9f
 private const val NAV_ANIM_DURATION_MS = 180
 private const val LIVE_RECONNECT_MAX_ATTEMPTS = 3
 private const val LIVE_RECONNECT_DELAY_MS = 1_000L
+private const val PLAYBACK_PRIMARY_RETRY_MAX = 1
+private const val PLAYBACK_PRIMARY_RETRY_DELAY_MS = 650L
 private val seriesCardMetaLoadLimiter = Semaphore(permits = 2)
 private val CONTENT_HORIZONTAL_PADDING = 104.dp
 private val DETAIL_ROW_SPACING = 6.dp
@@ -3424,14 +3562,11 @@ private fun RowScope.PreviewPanel(
                 val context = LocalContext.current
                 val imageRequest =
                         remember(previewItem.imageUrl) {
-                            if (previewItem.imageUrl.isNullOrBlank()) {
-                                null
-                            } else {
-                                ImageRequest.Builder(context)
-                                        .data(previewItem.imageUrl)
-                                        .size(600)
-                                        .build()
-                            }
+                            buildTvImageRequest(
+                                context = context,
+                                imageUrl = previewItem.imageUrl,
+                                targetSizePx = 600
+                            )
                         }
                 if (imageRequest != null) {
                     AsyncImage(
@@ -3575,14 +3710,11 @@ private fun MovieInfoDialog(
                     val context = LocalContext.current
                     val imageRequest =
                             remember(item.imageUrl) {
-                                if (item.imageUrl.isNullOrBlank()) {
-                                    null
-                                } else {
-                                    ImageRequest.Builder(context)
-                                            .data(item.imageUrl)
-                                            .size(600)
-                                            .build()
-                                }
+                                buildTvImageRequest(
+                                    context = context,
+                                    imageUrl = item.imageUrl,
+                                    targetSizePx = 600
+                                )
                             }
                     if (imageRequest != null) {
                         AsyncImage(
@@ -4146,7 +4278,7 @@ private fun StaticContentList(
     ) {
         items(
                 count = items.size,
-                key = { index -> stableContentKey(items[index]) }
+                key = { index -> "${stableContentKey(items[index])}#$index" }
         ) { index ->
             val item = items[index]
             val requester =
@@ -4217,7 +4349,7 @@ private fun PagedContentList(
         items(
                 count = lazyItems.itemCount,
                 key = { index ->
-                    lazyItems[index]?.let(::stableContentKey) ?: "item-placeholder-$index"
+                    lazyItems[index]?.let { "${stableContentKey(it)}#$index" } ?: "item-placeholder-$index"
                 }
         ) { index ->
             val item = lazyItems[index]
@@ -4267,14 +4399,11 @@ private fun ContentListItem(
     val listThumbnailPx = remember(density) { with(density) { 52.dp.roundToPx() } }
     val imageRequest =
             remember(item.imageUrl, listThumbnailPx) {
-                if (item.imageUrl.isNullOrBlank()) {
-                    null
-                } else {
-                    ImageRequest.Builder(context)
-                            .data(item.imageUrl)
-                            .size(listThumbnailPx)
-                            .build()
-                }
+                buildTvImageRequest(
+                    context = context,
+                    imageUrl = item.imageUrl,
+                    targetSizePx = listThumbnailPx
+                )
             }
     LaunchedEffect(isFocused) {
         if (!isFocused) {
@@ -4484,11 +4613,11 @@ private fun ContentCard(
     val liveImageAlpha = 1f
     val imageRequest =
             remember(imageUrl) {
-                if (imageUrl.isNullOrBlank()) {
-                    null
-                } else {
-                    ImageRequest.Builder(context).data(imageUrl).size(600).build()
-                }
+                buildTvImageRequest(
+                    context = context,
+                    imageUrl = imageUrl,
+                    targetSizePx = 600
+                )
             }
     LaunchedEffect(isFocused, item?.id) {
         if (isFocused && item != null) {
@@ -4754,11 +4883,11 @@ private fun ContinueWatchingCard(
     val contentPadding = 2.dp
     val imageRequest =
             remember(imageUrl) {
-                if (imageUrl.isNullOrBlank()) {
-                    null
-                } else {
-                    ImageRequest.Builder(context).data(imageUrl).size(600).build()
-                }
+                buildTvImageRequest(
+                    context = context,
+                    imageUrl = imageUrl,
+                    targetSizePx = 600
+                )
             }
 
     LaunchedEffect(isFocused) {
@@ -5029,14 +5158,11 @@ private fun CategoryCard(
     val categoryThumbnailPx = remember(density) { with(density) { 54.dp.roundToPx() } }
     val imageRequest =
             remember(imageUrl, categoryThumbnailPx) {
-                if (imageUrl.isNullOrBlank()) {
-                    null
-                } else {
-                    ImageRequest.Builder(context)
-                            .data(imageUrl)
-                            .size(categoryThumbnailPx)
-                            .build()
-                }
+                buildTvImageRequest(
+                    context = context,
+                    imageUrl = imageUrl,
+                    targetSizePx = categoryThumbnailPx
+                )
             }
     LaunchedEffect(isFocused) {
         if (!isFocused) {
@@ -5799,7 +5925,7 @@ fun SectionScreen(
                         items(
                                 count = lazyItems.itemCount,
                                 key = { index ->
-                                    lazyItems[index]?.let(::stableContentKey) ?: "item-placeholder-$index"
+                                    lazyItems[index]?.let { "${stableContentKey(it)}#$index" } ?: "item-placeholder-$index"
                                 }
                         ) { index ->
                             val item = lazyItems[index]
@@ -6839,7 +6965,7 @@ fun FavoritesScreen(
                     ) {
                         items(
                                 count = sortedContent.size,
-                                key = { index -> stableContentKey(sortedContent[index]) }
+                                key = { index -> "${stableContentKey(sortedContent[index])}#$index" }
                         ) { index ->
                             val item = sortedContent[index]
                             val backDownTargetIndex =
@@ -7062,7 +7188,7 @@ fun FavoritesScreen(
                                 items(
                                         count = lazyItems.itemCount,
                                         key = { index ->
-                                            lazyItems[index]?.let(::stableContentKey)
+                                            lazyItems[index]?.let { "${stableContentKey(it)}#$index" }
                                                 ?: "fav-cat-item-placeholder-$index"
                                         }
                                 ) { index ->
@@ -7183,7 +7309,7 @@ fun FavoritesScreen(
                         ) {
                             items(
                                 count = sortedCategories.size,
-                                key = { index -> stableCategoryKey(sortedCategories[index]) }
+                                key = { index -> "${stableCategoryKey(sortedCategories[index])}#$index" }
                             ) { index ->
                                 val category = sortedCategories[index]
                                 val backDownTargetIndex =
@@ -7868,7 +7994,7 @@ fun CategorySectionScreen(
                                 items(
                                         count = lazyItems.itemCount,
                                         key = { index ->
-                                            lazyItems[index]?.let(::stableContentKey)
+                                            lazyItems[index]?.let { "${stableContentKey(it)}#$index" }
                                                 ?: "cat-item-placeholder-$index"
                                         }
                                 ) { index ->
@@ -8121,7 +8247,7 @@ fun CategorySectionScreen(
                     ) {
                         items(
                             count = filteredCategories.size,
-                            key = { index -> stableCategoryKey(filteredCategories[index]) }
+                            key = { index -> "${stableCategoryKey(filteredCategories[index])}#$index" }
                         ) { index ->
                             val category = filteredCategories[index]
                             val requester =
@@ -9169,14 +9295,11 @@ fun SeriesSeasonsScreen(
             val context = LocalContext.current
             val imageRequest =
                 remember(seriesItem.imageUrl) {
-                    if (seriesItem.imageUrl.isNullOrBlank()) {
-                        null
-                    } else {
-                        ImageRequest.Builder(context)
-                            .data(seriesItem.imageUrl)
-                            .size(600)
-                            .build()
-                    }
+                    buildTvImageRequest(
+                        context = context,
+                        imageUrl = seriesItem.imageUrl,
+                        targetSizePx = 600
+                    )
                 }
             Column(
                 modifier = Modifier.width(posterWidth),
@@ -9778,7 +9901,7 @@ fun SeriesSeasonsScreen(
                             ) {
                                 items(
                                     count = displayEpisodes.size,
-                                    key = { index -> stableContentKey(displayEpisodes[index]) }
+                                    key = { index -> "${stableContentKey(displayEpisodes[index])}#$index" }
                                 ) { index ->
                                     val item = displayEpisodes[index]
                                     val requester =
@@ -9893,11 +10016,11 @@ private fun SeriesEpisodeRow(
     val context = LocalContext.current
     val imageRequest =
             remember(item.imageUrl) {
-                if (item.imageUrl.isNullOrBlank()) {
-                    null
-                } else {
-                    ImageRequest.Builder(context).data(item.imageUrl).size(400).build()
-                }
+                buildTvImageRequest(
+                    context = context,
+                    imageUrl = item.imageUrl,
+                    targetSizePx = 400
+                )
             }
     LaunchedEffect(isFocused) {
         if (isFocused) {
@@ -10608,7 +10731,7 @@ fun SeriesEpisodesScreen(
                 items(
                         count = lazyItems.itemCount,
                         key = { index ->
-                            lazyItems[index]?.let(::stableContentKey) ?: "episode-placeholder-$index"
+                            lazyItems[index]?.let { "${stableContentKey(it)}#$index" } ?: "episode-placeholder-$index"
                         }
                 ) { index ->
                     val item = lazyItems[index]
