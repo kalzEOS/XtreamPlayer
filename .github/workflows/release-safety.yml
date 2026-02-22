@@ -1,0 +1,50 @@
+name: Release Safety Rails
+
+on:
+  release:
+    types: [published, edited]
+
+jobs:
+  validate-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Metadata
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          RELEASE_TITLE: ${{ github.event.release.name }}
+          RELEASE_NOTES: ${{ github.event.release.body }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+          TARGET_BRANCH: ${{ github.event.release.target_commitish }}
+        run: |
+          set -euo pipefail
+          title="${RELEASE_TITLE:-${TAG_NAME}}"
+          notes_file="$(mktemp)"
+          printf '%s\n' "${RELEASE_NOTES}" > "${notes_file}"
+          ./scripts/validate_release_metadata.sh \
+            "${TAG_NAME}" \
+            "${title}" \
+            "${notes_file}" \
+            "${IS_PRERELEASE}" \
+            "${TARGET_BRANCH}"
+
+      - name: Validate Release Assets
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          set -euo pipefail
+          version="${TAG_NAME#XtreamPlayerv}"
+          apk_count="$(jq '[.release.assets[] | select(.name | endswith(".apk"))] | length' "${GITHUB_EVENT_PATH}")"
+          if [[ "${apk_count}" -lt 1 ]]; then
+            echo "Release must include at least one APK asset."
+            exit 1
+          fi
+          bad_assets="$(jq -r '.release.assets[] | .name' "${GITHUB_EVENT_PATH}" | awk -v v="${version}" 'index($0, v)==0')"
+          if [[ -n "${bad_assets}" ]]; then
+            echo "Every release asset name must include version ${version}."
+            echo "${bad_assets}"
+            exit 1
+          fi

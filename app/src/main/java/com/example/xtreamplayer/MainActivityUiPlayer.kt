@@ -129,6 +129,7 @@ private const val LIVE_GUIDE_CATEGORY_BADGE_SIZE_DP = 42
 private const val LIVE_GUIDE_MIN_ROWS_VISIBLE = 6
 private const val LIVE_GUIDE_MAX_ROWS_VISIBLE = 10
 private const val NERD_STATS_REFRESH_INTERVAL_MS = 500L
+private const val SUBTITLE_OFFSET_PREVIEW_DEBOUNCE_MS = 700L
 private val LANGUAGE_PREFIX_REGEX = Regex("^\\s*[A-Z]{2,3}\\s*-\\s*")
 private val BRACKET_TEXT_REGEX = Regex("\\[[^\\]]*\\]")
 private val PAREN_TEXT_REGEX = Regex("\\([^\\)]*\\)")
@@ -614,6 +615,7 @@ internal fun PlayerOverlay(
 
     // Subtitle timing adjustment state
     var subtitleOffsetMs by remember { mutableLongStateOf(0L) }
+    var subtitleTimingSessionStartOffsetMs by remember { mutableLongStateOf(0L) }
     var showSubtitleTimingDialog by remember { mutableStateOf(false) }
     var offsetApplyJob by remember { mutableStateOf<Job?>(null) }
     val hasModalOpen =
@@ -1403,7 +1405,8 @@ internal fun PlayerOverlay(
 
     suspend fun writeOffsetSubtitleContent(
         subtitle: ActiveSubtitle,
-        adjustedContent: ByteArray
+        adjustedContent: ByteArray,
+        offsetMs: Long
     ): Uri? = withContext(Dispatchers.IO) {
         val fileName = subtitle.fileName ?: return@withContext null
         val extension = fileName.substringAfterLast('.', "").ifBlank { "srt" }
@@ -1411,7 +1414,11 @@ internal fun PlayerOverlay(
         val safeMediaKey = sanitizeSubtitlePathComponent(mediaId, "media")
         val safeBaseName = sanitizeSubtitlePathComponent(baseName, "subtitle")
         val dir = java.io.File(context.cacheDir, "subtitles/offset").also { it.mkdirs() }
-        val target = java.io.File(dir, "${safeMediaKey}_${safeBaseName}_offset.$extension")
+        val offsetToken = if (offsetMs >= 0L) "p$offsetMs" else "n${abs(offsetMs)}"
+        val target = java.io.File(
+            dir,
+            "${safeMediaKey}_${safeBaseName}_offset_$offsetToken.$extension"
+        )
         target.writeBytes(adjustedContent)
         Uri.fromFile(target)
     }
@@ -1425,7 +1432,7 @@ internal fun PlayerOverlay(
             if (offsetMs == 0L) {
                 subtitle.uri
             } else {
-                writeOffsetSubtitleContent(subtitle, adjustedContent) ?: subtitle.uri
+                writeOffsetSubtitleContent(subtitle, adjustedContent, offsetMs) ?: subtitle.uri
             }
         playbackEngine.addSubtitle(
             subtitleUri = subtitleUri,
@@ -1443,8 +1450,9 @@ internal fun PlayerOverlay(
         if (subtitle.originalContent == null || !isOffsetSupported(subtitle.fileName)) return
         if (newOffset == lastAppliedOffsetMs) return
         offsetApplyJob?.cancel()
+        offsetApplyJob = null
         offsetApplyJob = subtitleCoroutineScope.launch {
-            delay(2000)
+            delay(SUBTITLE_OFFSET_PREVIEW_DEBOUNCE_MS)
             applyOffsetToSubtitle(subtitle, newOffset)
         }
     }
@@ -1453,6 +1461,7 @@ internal fun PlayerOverlay(
         val subtitle = activeSubtitle ?: return
         if (subtitle.originalContent == null || !isOffsetSupported(subtitle.fileName)) return
         offsetApplyJob?.cancel()
+        offsetApplyJob = null
         offsetApplyJob = subtitleCoroutineScope.launch {
             applyOffsetToSubtitle(subtitle, newOffset)
         }
@@ -1777,6 +1786,7 @@ internal fun PlayerOverlay(
                     subtitle.copy(originalContent = loaded)
                 }
             activeSubtitle = withContent
+            subtitleTimingSessionStartOffsetMs = subtitleOffsetMs
             showSubtitleDialog = false
             showSubtitleOptionsDialog = false
             showSubtitleTimingDialog = true
@@ -1962,7 +1972,19 @@ internal fun PlayerOverlay(
                     subtitleOffsetMs = newOffset
                     scheduleOffsetApply(newOffset)
                 },
+                onCancel = {
+                    offsetApplyJob?.cancel()
+                    offsetApplyJob = null
+                    val restoreOffset = subtitleTimingSessionStartOffsetMs
+                    subtitleOffsetMs = restoreOffset
+                    showSubtitleTimingDialog = false
+                    if (restoreOffset != lastAppliedOffsetMs) {
+                        applyOffsetNow(restoreOffset)
+                    }
+                },
                 onDismiss = {
+                    offsetApplyJob?.cancel()
+                    offsetApplyJob = null
                     showSubtitleTimingDialog = false
                     if (subtitleOffsetMs != lastAppliedOffsetMs) {
                         applyOffsetNow(subtitleOffsetMs)

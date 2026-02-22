@@ -487,6 +487,27 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
             .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
             .build()
 
+        val alreadyConfigured =
+            currentItem.localConfiguration
+                ?.subtitleConfigurations
+                ?.any { existing ->
+                    existing.uri == subtitleUri &&
+                        existing.mimeType == mimeType &&
+                        existing.language == language
+                } == true
+        val shouldForceReplacement = subtitleUri.scheme == "file"
+        if (alreadyConfigured && !shouldForceReplacement) {
+            Timber.d("Subtitle already configured on current item; skipping media replacement")
+            val builder = player.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                .setPreferredTextLanguage(language)
+            player.trackSelectionParameters = builder.build()
+            return
+        }
+        if (alreadyConfigured && shouldForceReplacement) {
+            Timber.d("Subtitle file URI already configured; forcing media replacement to apply updates")
+        }
+
         val newItem = currentItem.buildUpon()
             .setSubtitleConfigurations(listOf(subtitleConfig))
             .build()

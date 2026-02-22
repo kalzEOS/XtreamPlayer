@@ -5,8 +5,10 @@ import androidx.paging.PagingConfig
 import com.example.xtreamplayer.Section
 import com.example.xtreamplayer.api.XtreamApi
 import com.example.xtreamplayer.auth.AuthConfig
+import com.example.xtreamplayer.observability.AppDiagnostics
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -40,6 +42,9 @@ class ContentRepository(
         const val BACKGROUND_THROTTLE_MS = 200L
         const val BOOST_PAGE_SIZE = 400
         const val LIVE_EPG_CACHE_TTL_MS = 20_000L
+        const val LIVE_EPG_STALE_CACHE_TTL_MS = 3 * 60_000L
+        const val LIVE_EPG_MAX_RETRIES = 2
+        const val LIVE_EPG_INITIAL_RETRY_BACKOFF_MS = 250L
         const val MAX_SECTION_INDEX_CACHE_KEYS = 4
         const val MAX_SECTION_INDEX_ITEMS_IN_MEMORY = 25_000
         const val MAX_TRANSIENT_SEARCH_INDEX_CACHE_KEYS = 3
@@ -171,6 +176,9 @@ class ContentRepository(
     private val seriesSeasonFullMutex = Mutex()
     private val seriesSeasonsMutex = Mutex()
     private val liveEpgMutex = Mutex()
+    private val liveEpgInFlightMutex = Mutex()
+    private val liveEpgInFlight =
+        mutableMapOf<String, CompletableDeferred<Result<LiveNowNextEpg?>>>()
     private val categoryThumbnailMutex = Mutex()
     private val categoryThumbnailLoadLimiter = Semaphore(permits = 3)
     private val categoryCache = object : LinkedHashMap<String, List<CategoryItem>>(100, 0.75f, true) {
@@ -548,14 +556,114 @@ class ContentRepository(
                 return Result.success(cached.data)
             }
         }
-        val result = api.fetchLiveNowNext(authConfig, streamId)
-        if (result.isSuccess) {
-            val data = result.getOrNull()
-            liveEpgMutex.withLock {
-                liveEpgCache[key] = LiveEpgCacheEntry(data = data, cachedAtMs = System.currentTimeMillis())
+        val (deferred, isRequestOwner) =
+            liveEpgInFlightMutex.withLock {
+                val existing = liveEpgInFlight[key]
+                if (existing != null) {
+                    existing to false
+                } else {
+                    val created = CompletableDeferred<Result<LiveNowNextEpg?>>()
+                    liveEpgInFlight[key] = created
+                    created to true
+                }
+            }
+        if (!isRequestOwner) {
+            return deferred.await()
+        }
+        try {
+            val result = try {
+                val networkResult = fetchLiveNowNextWithRetry(authConfig, streamId)
+                if (networkResult.isSuccess) {
+                    val data = networkResult.getOrNull()
+                    liveEpgMutex.withLock {
+                        liveEpgCache[key] =
+                            LiveEpgCacheEntry(data = data, cachedAtMs = System.currentTimeMillis())
+                    }
+                    networkResult
+                } else {
+                    val staleEntry = liveEpgMutex.withLock { liveEpgCache[key] }
+                    if (
+                        staleEntry != null &&
+                            now - staleEntry.cachedAtMs <= LIVE_EPG_STALE_CACHE_TTL_MS
+                    ) {
+                        val error = networkResult.exceptionOrNull()
+                        AppDiagnostics.recordWarning(
+                            event = "live_epg_served_stale",
+                            fields = mapOf(
+                                "streamId" to streamId,
+                                "error" to (error?.message ?: "unknown")
+                            )
+                        )
+                        Timber.w(
+                            error,
+                            "Live EPG request failed for stream=$streamId; serving stale cache"
+                        )
+                        // Keep UI responsive under weak providers by extending stale entry briefly.
+                        liveEpgMutex.withLock {
+                            liveEpgCache[key] = staleEntry.copy(cachedAtMs = System.currentTimeMillis())
+                        }
+                        Result.success(staleEntry.data)
+                    } else {
+                        AppDiagnostics.recordError(
+                            event = "live_epg_failed_no_cache",
+                            throwable = networkResult.exceptionOrNull(),
+                            fields = mapOf("streamId" to streamId)
+                        )
+                        networkResult
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                deferred.cancel(cancelled)
+                throw cancelled
+            } catch (error: Exception) {
+                AppDiagnostics.recordError(
+                    event = "live_epg_exception",
+                    throwable = error,
+                    fields = mapOf("streamId" to streamId)
+                )
+                Result.failure(error)
+            }
+            deferred.complete(result)
+            return result
+        } finally {
+            liveEpgInFlightMutex.withLock {
+                liveEpgInFlight.remove(key)
             }
         }
-        return result
+    }
+
+    private suspend fun fetchLiveNowNextWithRetry(
+        authConfig: AuthConfig,
+        streamId: String
+    ): Result<LiveNowNextEpg?> {
+        var attempt = 0
+        var backoffMs = LIVE_EPG_INITIAL_RETRY_BACKOFF_MS
+        var lastResult: Result<LiveNowNextEpg?> = Result.success(null)
+        while (attempt <= LIVE_EPG_MAX_RETRIES) {
+            val result = api.fetchLiveNowNext(authConfig, streamId)
+            if (result.isSuccess) {
+                return result
+            }
+            lastResult = result
+            if (attempt >= LIVE_EPG_MAX_RETRIES || !shouldRetryLiveEpgError(result.exceptionOrNull())) {
+                break
+            }
+            delay(backoffMs)
+            backoffMs = (backoffMs * 2).coerceAtMost(1_600L)
+            attempt++
+        }
+        return lastResult
+    }
+
+    private fun shouldRetryLiveEpgError(error: Throwable?): Boolean {
+        if (error == null) return false
+        if (error is java.io.IOException) return true
+        val message = error.message?.lowercase().orEmpty()
+        return message.contains("request failed: 5") ||
+            message.contains("request failed: 429") ||
+            message.contains("request failed: 408") ||
+            message.contains("timeout") ||
+            message.contains("temporar")
     }
 
     fun peekSeriesSeasonFullCache(

@@ -31,10 +31,12 @@ import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.PlayerControlView
 import androidx.media3.ui.PlayerView
 import com.example.xtreamplayer.R
+import com.example.xtreamplayer.observability.AppDiagnostics
 import com.example.xtreamplayer.settings.SubtitleAppearanceSettings
 import com.example.xtreamplayer.settings.applySubtitleAppearanceSettings
 import java.util.Locale
 import kotlin.math.roundToInt
+import timber.log.Timber
 import androidx.media3.ui.R as Media3UiR
 
 @UnstableApi
@@ -59,8 +61,16 @@ class XtreamPlayerView @JvmOverloads constructor(
     private var titleView: TextView? = null
     private var nowPlayingInfoView: TextView? = null
     private var topBarView: View? = null
+    private var positionTimeView: TextView? = null
+    private var durationTimeView: TextView? = null
     private var nowPlayingTickerLayoutListener: View.OnLayoutChangeListener? = null
     private var nowPlayingTickerAnimator: ValueAnimator? = null
+    private var focusAuditLoggedOnce = false
+    private val controllerProgressListener = object : PlayerControlView.ProgressUpdateListener {
+        override fun onProgressUpdate(position: Long, bufferedPosition: Long) {
+            updateBottomTimeLabels(position)
+        }
+    }
     var focusAccentColor: Int = "#4F8CFF".toColorInt()
         set(value) {
             if (field == value) return
@@ -231,6 +241,7 @@ class XtreamPlayerView @JvmOverloads constructor(
         bindSettingsView()
         bindTitleView()
         bindNowPlayingInfoView()
+        bindBottomTimeViews()
         applySubtitleAppearance()
         updateControlsForContentType()
         updateFocusOrder()
@@ -243,6 +254,8 @@ class XtreamPlayerView @JvmOverloads constructor(
         hideSeekHud()
         clearNowPlayingTickerLayoutListener()
         stopNowPlayingTickerAnimation()
+        (findViewById<View>(Media3UiR.id.exo_controller) as? PlayerControlView)
+            ?.setProgressUpdateListener(null)
         viewTreeObserver.removeOnPreDrawListener(topBarSyncListener)
         super.onDetachedFromWindow()
     }
@@ -721,6 +734,7 @@ class XtreamPlayerView @JvmOverloads constructor(
         findViewById<View>(R.id.exo_live_progress_line)?.visibility =
             if (isLive) View.VISIBLE else View.GONE
         bindPrevNextView()
+        updateBottomTimeLabels()
         updateFocusOrder()
         applyFocusChrome()
     }
@@ -736,6 +750,40 @@ class XtreamPlayerView @JvmOverloads constructor(
         val rightControls = navigableControls(rightControlOrderIds())
         wireHorizontalLane(transportControls + rightControls)
         wireVerticalFocusTargets(transportControls, rightControls)
+        runFocusMapAudit(transportControls, rightControls)
+    }
+
+    private fun runFocusMapAudit(transportControls: List<View>, rightControls: List<View>) {
+        if (!isDebuggableBuild()) return
+        val lane = transportControls + rightControls
+        val issues =
+            auditLinearFocusLane(
+                lane.map { view ->
+                    FocusLinkSnapshot(
+                        id = view.id,
+                        nextFocusLeftId = view.nextFocusLeftId,
+                        nextFocusRightId = view.nextFocusRightId
+                    )
+                }
+            )
+        if (issues.isEmpty()) {
+            if (!focusAuditLoggedOnce) {
+                focusAuditLoggedOnce = true
+                Timber.d("FocusAudit: lane validated (${lane.size} controls)")
+            }
+            return
+        }
+        issues.take(8).forEach { issue ->
+            Timber.w("FocusAudit: $issue")
+            AppDiagnostics.recordWarning(
+                event = "focus_map_issue",
+                fields = mapOf("detail" to issue)
+            )
+        }
+    }
+
+    private fun isDebuggableBuild(): Boolean {
+        return (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
     }
 
     private fun navigableControls(ids: List<Int>): List<View> {
@@ -1115,6 +1163,28 @@ class XtreamPlayerView @JvmOverloads constructor(
         }
     }
 
+    private fun bindBottomTimeViews() {
+        positionTimeView = positionTimeView
+            ?: findViewById<TextView>(Media3UiR.id.exo_position)
+        durationTimeView = durationTimeView
+            ?: findViewById<TextView>(Media3UiR.id.exo_duration)
+        (findViewById<View>(Media3UiR.id.exo_controller) as? PlayerControlView)
+            ?.setProgressUpdateListener(controllerProgressListener)
+        updateBottomTimeLabels()
+    }
+
+    private fun updateBottomTimeLabels(positionMs: Long? = null) {
+        if (isLiveContent) return
+        val posView = positionTimeView ?: return
+        val durView = durationTimeView ?: return
+        val currentPlayer = player ?: return
+        val durationMs = currentPlayer.duration
+        if (durationMs <= 0L) return
+        val resolvedPositionMs = (positionMs ?: currentPlayer.currentPosition).coerceIn(0L, durationMs)
+        posView.text = formatTimeMsAlwaysHms(resolvedPositionMs)
+        durView.text = formatTimeMsAlwaysHms(durationMs)
+    }
+
     private fun clearNowPlayingTickerLayoutListener() {
         val view = nowPlayingInfoView ?: return
         val listener = nowPlayingTickerLayoutListener ?: return
@@ -1326,4 +1396,12 @@ private fun formatTimeMs(ms: Long): String {
     } else {
         String.format(Locale.US, "%d:%02d", minutes, seconds)
     }
+}
+
+private fun formatTimeMsAlwaysHms(ms: Long): String {
+    val totalSeconds = ms / 1000
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
 }
