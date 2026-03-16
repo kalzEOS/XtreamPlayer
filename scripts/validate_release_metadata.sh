@@ -6,6 +6,7 @@ release_title="${2:-}"
 release_notes_file="${3:-}"
 is_prerelease="${4:-false}"
 target_branch="${5:-}"
+build_file="app/build.gradle.kts"
 
 if [[ -z "${tag_name}" ]]; then
   echo "Missing tag name"
@@ -22,6 +23,11 @@ if [[ ! -f "${release_notes_file}" ]]; then
   exit 1
 fi
 
+if [[ ! -f "${build_file}" ]]; then
+  echo "Build file does not exist: ${build_file}"
+  exit 1
+fi
+
 if [[ ! "${tag_name}" =~ ^XtreamPlayerv([0-9]+)\.([0-9]+)(\.([0-9]+))?(-rc[0-9]+)?$ ]]; then
   echo "Invalid tag format: ${tag_name}"
   echo "Expected: XtreamPlayervx.x or XtreamPlayervx.x.x (optional -rcN)"
@@ -33,6 +39,24 @@ expected_title="Xtream Player v${version}"
 if [[ "${release_title}" != "${expected_title}" ]]; then
   echo "Invalid release title: ${release_title}"
   echo "Expected: ${expected_title}"
+  exit 1
+fi
+
+app_version_name="$(sed -n 's/^val appVersionName = "\(.*\)"$/\1/p' "${build_file}" | head -n 1)"
+app_version_code="$(sed -n 's/^val appVersionCode = \([0-9][0-9]*\)$/\1/p' "${build_file}" | head -n 1)"
+
+if [[ -z "${app_version_name}" ]]; then
+  echo "Could not read appVersionName from ${build_file}"
+  exit 1
+fi
+
+if [[ -z "${app_version_code}" ]]; then
+  echo "Could not read appVersionCode from ${build_file}"
+  exit 1
+fi
+
+if [[ "${app_version_name}" != "${version}" ]]; then
+  echo "Version mismatch: tag ${version} but app/build.gradle.kts has ${app_version_name}"
   exit 1
 fi
 
