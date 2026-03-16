@@ -32,7 +32,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.ui.input.key.Key
@@ -45,11 +44,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.DialogProperties
-import androidx.media3.ui.CaptionStyleCompat
 import android.text.Layout
 import androidx.media3.common.text.Cue
 import androidx.media3.ui.SubtitleView
-import android.util.TypedValue
 import com.example.xtreamplayer.settings.SUBTITLE_BOTTOM_PADDING_MAX
 import com.example.xtreamplayer.settings.SUBTITLE_BOTTOM_PADDING_MIN
 import com.example.xtreamplayer.settings.SUBTITLE_TEXT_SIZE_MAX_SP
@@ -389,24 +386,7 @@ fun SubtitleAppearanceDialog(
                                 },
                                 update = { subtitleView ->
                                     subtitleView.setCues(sampleCues)
-                                    if (draft.customStyleEnabled) {
-                                        subtitleView.applySubtitleAppearanceSettings(draft)
-                                    } else {
-                                        subtitleView.setStyle(
-                                            CaptionStyleCompat(
-                                                Color.White.toArgb(),
-                                                Color(0x8C000000).toArgb(),
-                                                Color.Transparent.toArgb(),
-                                                CaptionStyleCompat.EDGE_TYPE_OUTLINE,
-                                                Color.Black.toArgb(),
-                                                null
-                                            )
-                                        )
-                                        subtitleView.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-                                        subtitleView.setApplyEmbeddedStyles(true)
-                                        subtitleView.setApplyEmbeddedFontSizes(true)
-                                        subtitleView.setBottomPaddingFraction(SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION)
-                                    }
+                                    subtitleView.applySubtitleAppearanceSettings(draft)
                                 }
                             )
                         }

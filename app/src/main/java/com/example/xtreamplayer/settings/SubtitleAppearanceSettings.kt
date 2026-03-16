@@ -26,6 +26,11 @@ data class SubtitleColorPreset(
     val color: Int
 )
 
+internal data class AppliedSubtitleAppearance(
+    val styleSettings: SubtitleAppearanceSettings,
+    val applyEmbeddedStyles: Boolean
+)
+
 enum class SubtitleEdgeStyle(
     val value: Int,
     val label: String
@@ -71,32 +76,39 @@ fun subtitleEdgeStyleLabel(edgeType: Int): String {
     return SubtitleEdgeStyle.fromValue(edgeType).label
 }
 
-fun SubtitleView.applySubtitleAppearanceSettings(settings: SubtitleAppearanceSettings) {
-    val normalized = settings.normalized()
+internal fun SubtitleAppearanceSettings.toAppliedSubtitleAppearance(): AppliedSubtitleAppearance {
+    val normalized = normalized()
     if (!normalized.customStyleEnabled) {
-        setUserDefaultStyle()
-        setUserDefaultTextSize()
-        setApplyEmbeddedStyles(true)
-        setApplyEmbeddedFontSizes(true)
-        setBottomPaddingFraction(SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION)
-        return
+        return AppliedSubtitleAppearance(
+            styleSettings = SubtitleAppearanceSettings(customStyleEnabled = true).normalized(),
+            applyEmbeddedStyles = true
+        )
     }
 
-    val alpha = (normalized.backgroundOpacityPercent * 255 / 100).coerceIn(0, 255)
+    return AppliedSubtitleAppearance(
+        styleSettings = normalized,
+        applyEmbeddedStyles = !normalized.overrideEmbeddedStyles
+    )
+}
+
+fun SubtitleView.applySubtitleAppearanceSettings(settings: SubtitleAppearanceSettings) {
+    val applied = settings.toAppliedSubtitleAppearance()
+    val styleSettings = applied.styleSettings
+
+    val alpha = (styleSettings.backgroundOpacityPercent * 255 / 100).coerceIn(0, 255)
     val backgroundColor = Color.argb(alpha, 0, 0, 0)
     val style = CaptionStyleCompat(
-        normalized.textColor,
+        styleSettings.textColor,
         backgroundColor,
         Color.TRANSPARENT,
-        normalized.edgeType,
+        styleSettings.edgeType,
         Color.BLACK,
         null
     )
 
     setStyle(style)
-    setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, normalized.textSizeSp)
-    setBottomPaddingFraction(normalized.bottomPaddingFraction)
-    val applyEmbeddedStyles = !normalized.overrideEmbeddedStyles
-    setApplyEmbeddedStyles(applyEmbeddedStyles)
-    setApplyEmbeddedFontSizes(applyEmbeddedStyles)
+    setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, styleSettings.textSizeSp)
+    setBottomPaddingFraction(styleSettings.bottomPaddingFraction)
+    setApplyEmbeddedStyles(applied.applyEmbeddedStyles)
+    setApplyEmbeddedFontSizes(applied.applyEmbeddedStyles)
 }

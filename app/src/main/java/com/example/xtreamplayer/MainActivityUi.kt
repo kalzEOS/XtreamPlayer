@@ -1912,7 +1912,7 @@ fun RootScreen(
                 }
                 if (showSubtitleAppearanceDialog) {
                     SubtitleAppearanceDialog(
-                        initialSettings = subtitleAppearancePreview ?: settings.subtitleAppearance,
+                        initialSettings = settings.subtitleAppearance,
                         onPreview = { updated ->
                             subtitleAppearancePreview = updated
                         },
