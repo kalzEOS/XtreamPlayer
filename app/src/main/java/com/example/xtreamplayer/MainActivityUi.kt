@@ -265,6 +265,15 @@ fun RootScreen(
         updateHttpClient: OkHttpClient
 ) {
     val context = LocalContext.current
+    val appRecoveryManager =
+        remember(context.applicationContext, contentRepository, updateHttpClient) {
+            AppRecoveryManager(
+                appContext = context.applicationContext,
+                contentRepository = contentRepository,
+                okHttpClient = updateHttpClient
+            )
+        }
+    val playbackRecoveryTracker = remember { PlaybackRecoveryTracker() }
     val appVersionName = remember {
         runCatching {
             val info = context.packageManager.getPackageInfo(context.packageName, 0)
@@ -321,6 +330,7 @@ fun RootScreen(
     var subtitleAppearancePreview by remember { mutableStateOf<SubtitleAppearanceSettings?>(null) }
     val showSubtitleCacheAutoClearDialogState = remember { mutableStateOf(false) }
     var showSubtitleCacheAutoClearDialog by showSubtitleCacheAutoClearDialogState
+    var showPlaybackRecoveryDialog by remember { mutableStateOf(false) }
     var showLocalFilesGuest by remember { mutableStateOf(false) }
     val cacheClearNonceState = remember { mutableIntStateOf(0) }
     var cacheClearNonce by cacheClearNonceState
@@ -337,6 +347,7 @@ fun RootScreen(
     var movieInfoLoadJob by remember { mutableStateOf<Job?>(null) }
     var playbackFallbackAttempts by playerViewModel.playbackFallbackAttempts
     var playbackPrimaryRetries by playerViewModel.playbackPrimaryRetries
+    var playbackRecoveryJob by remember { mutableStateOf<Job?>(null) }
     var liveReconnectAttempts by playerViewModel.liveReconnectAttempts
     var liveReconnectJob by playerViewModel.liveReconnectJob
     var pendingResume by playerViewModel.pendingResume
@@ -789,6 +800,14 @@ fun RootScreen(
         val intent = Intent(Intent.ACTION_VIEW)
             .setDataAndType(apkUri, "application/vnd.android.package-archive")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    }
+
+    fun openAppSettings() {
+        val intent = Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            "package:${context.packageName}".toUri()
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
     }
 
@@ -1403,6 +1422,54 @@ fun RootScreen(
         return true
     }
 
+    suspend fun recoverPlaybackIfAppStateWentStale(mediaId: String?): Boolean {
+        val nowMs = SystemClock.elapsedRealtime()
+        return when (playbackRecoveryTracker.recordFailure(mediaId, nowMs)) {
+            PlaybackRecoveryAction.NONE -> false
+            PlaybackRecoveryAction.SOFT_RECOVERY -> {
+                val playerBeforeRecovery = playbackEngine.player
+                val previousPlayWhenReady = playerBeforeRecovery.playWhenReady
+                val previousPositionMs = playerBeforeRecovery.currentPosition.coerceAtLeast(0L)
+                val previousIndex = playerBeforeRecovery.currentMediaItemIndex
+                playbackRecoveryTracker.markSoftRecoveryPerformed(nowMs)
+                Toast.makeText(
+                    context,
+                    "Playback got stuck. Recovering app state...",
+                    Toast.LENGTH_LONG
+                ).show()
+                appRecoveryManager.performSoftRecovery("repeated_transient_playback_failures")
+                playbackEngine.reset()
+                playerResetNonce++
+                pendingPlayerReset = false
+                val queue = activePlaybackQueue
+                if (queue != null && queue.items.isNotEmpty()) {
+                    val currentIndex =
+                        queue.items.indexOfFirst { it.mediaId == mediaId }
+                            .takeIf { it >= 0 }
+                            ?: previousIndex.takeIf { it >= 0 }
+                            ?: queue.startIndex
+                    val safeIndex = currentIndex.coerceIn(0, queue.items.lastIndex)
+                    playbackEngine.setQueue(queue.items, safeIndex)
+                    val recoveredItemType =
+                        queue.items.getOrNull(safeIndex)?.type ?: activePlaybackItem?.contentType
+                    if (recoveredItemType != ContentType.LIVE && previousPositionMs > 0L) {
+                        playbackEngine.player.seekTo(safeIndex, previousPositionMs)
+                    }
+                    playbackEngine.player.playWhenReady = previousPlayWhenReady
+                }
+                true
+            }
+            PlaybackRecoveryAction.PROCESS_RESTART -> {
+                AppDiagnostics.recordWarning(
+                    event = "app_recovery_dialog_shown",
+                    fields = mapOf("reason" to "stale_playback_state_persisted_after_soft_recovery")
+                )
+                showPlaybackRecoveryDialog = true
+                true
+            }
+        }
+    }
+
     val latestPlaybackSettingsController by rememberUpdatedState(playbackSettingsController)
 
     DisposableEffect(playbackEngine, playerResetNonce) {
@@ -1441,6 +1508,9 @@ fun RootScreen(
                     }
 
                     override fun onPlaybackStateChanged(playbackState: Int) {
+                        if (playbackState == Player.STATE_READY) {
+                            playbackRecoveryTracker.markPlaybackHealthy()
+                        }
                         if (playbackState == Player.STATE_READY && !playbackEngine.player.isPlaying
                         ) {
                             savePlaybackProgress()
@@ -1557,18 +1627,42 @@ fun RootScreen(
                                     Timber.w("Current item is null during fallback retry")
                                 }
                             } else {
-                                AppDiagnostics.recordError(
-                                    event = "playback_fallback_exhausted",
-                                    throwable = error,
-                                    fields = mapOf("mediaId" to mediaId)
-                                )
-                                Timber.e(error, "Playback failed for $mediaId; no more fallbacks")
-                                Toast.makeText(
-                                                context,
-                                                "Stream is unstable right now. Use Next/Previous to continue.",
-                                                Toast.LENGTH_LONG
-                                )
-                                        .show()
+                                if (isTransientPlaybackError(error)) {
+                                    if (playbackRecoveryJob?.isActive != true) {
+                                        playbackRecoveryJob =
+                                            coroutineScope.launch {
+                                                val recovered =
+                                                    recoverPlaybackIfAppStateWentStale(mediaId)
+                                                if (recovered) return@launch
+                                                AppDiagnostics.recordError(
+                                                    event = "playback_fallback_exhausted",
+                                                    throwable = error,
+                                                    fields = mapOf("mediaId" to mediaId)
+                                                )
+                                                Timber.e(
+                                                    error,
+                                                    "Playback failed for $mediaId; no more fallbacks"
+                                                )
+                                                Toast.makeText(
+                                                    context,
+                                                    "Stream is unstable right now. Use Next/Previous to continue.",
+                                                    Toast.LENGTH_LONG
+                                                ).show()
+                                            }
+                                    }
+                                } else {
+                                    AppDiagnostics.recordError(
+                                        event = "playback_fallback_exhausted",
+                                        throwable = error,
+                                        fields = mapOf("mediaId" to mediaId)
+                                    )
+                                    Timber.e(error, "Playback failed for $mediaId; no more fallbacks")
+                                    Toast.makeText(
+                                        context,
+                                        "Stream is unstable right now. Use Next/Previous to continue.",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
                             }
                         } else {
                             Timber.w(error, "Playback error with null mediaId")
@@ -1953,6 +2047,21 @@ fun RootScreen(
                         isDownloading = updateUiState.inProgress,
                         onUpdate = { startUpdateDownload(pendingRelease) },
                         onLater = { updateUiState = updateUiState.copy(showDialog = false) }
+                    )
+                }
+                if (showPlaybackRecoveryDialog) {
+                    PlaybackRecoveryDialog(
+                        onCancel = { showPlaybackRecoveryDialog = false },
+                        onRestartApp = {
+                            showPlaybackRecoveryDialog = false
+                            appRecoveryManager.restartApp(
+                                "user_requested_restart_after_stale_playback_dialog"
+                            )
+                        },
+                        onOpenAppSettings = {
+                            showPlaybackRecoveryDialog = false
+                            openAppSettings()
+                        }
                     )
                 }
                 }
@@ -10592,6 +10701,131 @@ private fun UpdatePromptDialog(
                 ) {
                     Text(
                         text = "Later",
+                        fontFamily = AppTheme.fontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaybackRecoveryDialog(
+    onCancel: () -> Unit,
+    onRestartApp: () -> Unit,
+    onOpenAppSettings: () -> Unit
+) {
+    val colors = AppTheme.colors
+    val shape = RoundedCornerShape(16.dp)
+    val restartFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        restartFocusRequester.requestFocus()
+    }
+
+    AppDialog(
+        onDismissRequest = onCancel,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth(0.50f)
+                .widthIn(min = 420.dp, max = 760.dp)
+                .clip(shape)
+                .background(colors.surface)
+                .border(1.dp, colors.borderStrong, shape)
+                .padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "Playback recovery needed",
+                color = colors.textPrimary,
+                fontSize = 22.sp,
+                fontFamily = AppTheme.fontFamily,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Playback failed repeatedly and the app could not recover automatically. Restart App usually fixes it.",
+                color = colors.textSecondary,
+                fontSize = 14.sp,
+                fontFamily = AppTheme.fontFamily,
+                lineHeight = 20.sp
+            )
+            Text(
+                text = "If it still stays stuck, open App Settings and press Force stop, then reopen the app.",
+                color = colors.textTertiary,
+                fontSize = 13.sp,
+                fontFamily = AppTheme.fontFamily,
+                lineHeight = 18.sp
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                FocusableButton(
+                    onClick = onRestartApp,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(52.dp)
+                        .focusRequester(restartFocusRequester),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = colors.accent,
+                        contentColor = colors.textOnAccent
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    focusBorderWidth = 1.dp,
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        text = "Restart App",
+                        fontFamily = AppTheme.fontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                FocusableButton(
+                    onClick = onOpenAppSettings,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(52.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = colors.surfaceAlt,
+                        contentColor = colors.textPrimary
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    focusBorderWidth = 1.dp,
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        text = "Open App Settings",
+                        fontFamily = AppTheme.fontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                FocusableButton(
+                    onClick = onCancel,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(52.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = colors.surfaceAlt,
+                        contentColor = colors.textPrimary
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    focusBorderWidth = 1.dp,
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        text = "Cancel",
                         fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 14.sp,
