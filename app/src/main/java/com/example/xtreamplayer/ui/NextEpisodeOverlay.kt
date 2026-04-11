@@ -4,10 +4,6 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,21 +15,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -46,21 +31,14 @@ fun NextEpisodeOverlay(
     countdownSeconds: Int,
     remainingSeconds: Int,
     controlsVisible: Boolean,
-    onPlayNext: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val colors = AppTheme.colors
-
     // Animated vertical offset - move up when controls are visible
-    val bottomOffset by animateDpAsState(
+    val bottomOffset = animateDpAsState(
         targetValue = if (controlsVisible) 100.dp else 24.dp,
         animationSpec = tween(durationMillis = 200),
         label = "nextEpisodeOffset"
-    )
-
-    val interactionSource = remember { MutableInteractionSource() }
-    val isFocused by interactionSource.collectIsFocusedAsState()
-    val focusRequester = remember { FocusRequester() }
+    ).value
 
     // Calculate progress (1.0 = full, 0.0 = empty)
     val progress = if (countdownSeconds > 0) {
@@ -75,27 +53,9 @@ fun NextEpisodeOverlay(
             .clip(RoundedCornerShape(12.dp))
             .background(Color.Black.copy(alpha = 0.85f))
             .border(
-                width = if (isFocused) 2.dp else 1.dp,
-                color = if (isFocused) colors.focus else colors.borderStrong,
+                width = 1.dp,
+                color = AppTheme.colors.borderStrong,
                 shape = RoundedCornerShape(12.dp)
-            )
-            .focusRequester(focusRequester)
-            .focusable(interactionSource = interactionSource)
-            .onKeyEvent { event ->
-                val isSelectKey = event.key == Key.Enter ||
-                        event.key == Key.NumPadEnter ||
-                        event.key == Key.DirectionCenter
-                if (event.type == KeyEventType.KeyUp && isSelectKey) {
-                    onPlayNext()
-                    true
-                } else {
-                    false
-                }
-            }
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onPlayNext
             )
             .padding(16.dp)
     ) {
@@ -105,8 +65,8 @@ fun NextEpisodeOverlay(
                 CircularProgressIndicator(
                     progress = { progress },
                     modifier = Modifier.size(48.dp),
-                    color = colors.accent,
-                    trackColor = colors.surface,
+                    color = AppTheme.colors.accent,
+                    trackColor = AppTheme.colors.surface,
                     strokeWidth = 3.dp
                 )
                 Text(
@@ -134,12 +94,13 @@ fun NextEpisodeOverlay(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                Text(
+                    text = "Press Back to dismiss",
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 11.sp,
+                    fontFamily = AppTheme.fontFamily
+                )
             }
         }
-    }
-
-    // Auto-request focus when overlay appears
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
     }
 }

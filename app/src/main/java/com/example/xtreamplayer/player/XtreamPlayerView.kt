@@ -491,11 +491,16 @@ class XtreamPlayerView @JvmOverloads constructor(
             if (isSelect && !controlsFullyVisible) {
                 if (!isLiveContent) {
                     player?.let { currentPlayer ->
-                        if (currentPlayer.isPlaying) {
+                        val shouldPause = currentPlayer.isPlaying || currentPlayer.playWhenReady
+                        if (shouldPause) {
                             currentPlayer.pause()
+                            setControllerShowTimeoutMs(0)
                         } else {
                             currentPlayer.play()
+                            setControllerShowTimeoutMs(defaultControllerTimeoutMs)
                         }
+                        showController()
+                        focusPlayPause()
                         suppressHiddenSelectKeyUp = true
                         return true
                     }
