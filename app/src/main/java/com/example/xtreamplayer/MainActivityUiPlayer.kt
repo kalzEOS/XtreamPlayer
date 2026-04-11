@@ -130,6 +130,7 @@ private const val LIVE_GUIDE_MIN_ROWS_VISIBLE = 6
 private const val LIVE_GUIDE_MAX_ROWS_VISIBLE = 10
 private const val NERD_STATS_REFRESH_INTERVAL_MS = 500L
 private const val SUBTITLE_OFFSET_PREVIEW_DEBOUNCE_MS = 700L
+private const val NEXT_EPISODE_COUNTDOWN_SECONDS = 15
 private val LANGUAGE_PREFIX_REGEX = Regex("^\\s*[A-Z]{2,3}\\s*-\\s*")
 private val BRACKET_TEXT_REGEX = Regex("\\[[^\\]]*\\]")
 private val PAREN_TEXT_REGEX = Regex("\\([^\\)]*\\)")
@@ -657,8 +658,10 @@ internal fun PlayerOverlay(
 
     // Next episode overlay state
     var showNextEpisodeOverlay by remember { mutableStateOf(false) }
-    var countdownRemaining by remember { mutableIntStateOf(15) }
+    var countdownRemaining by remember { mutableIntStateOf(NEXT_EPISODE_COUNTDOWN_SECONDS) }
     var shouldAutoPlayNext by remember { mutableStateOf(false) }
+    var nextEpisodePromptDismissed by remember { mutableStateOf(false) }
+    var nextEpisodeAdvanceTriggered by remember { mutableStateOf(false) }
     var liveNowNextEpg by remember { mutableStateOf<LiveNowNextEpg?>(null) }
     val lastGoodLiveEpgByStream = remember { mutableStateMapOf<String, LiveNowNextEpg>() }
     var liveEpgGeneration by remember { mutableIntStateOf(0) }
@@ -1310,16 +1313,36 @@ internal fun PlayerOverlay(
         }
     }
 
-    // Threshold from settings (converted to milliseconds)
-    val episodeEndThresholdMs = nextEpisodeThresholdSeconds * 1000L
+    // User-configured point where the app should leave the current episode.
+    val episodeSkipOffsetMs = nextEpisodeThresholdSeconds * 1000L
+    val nextEpisodeCountdownMs = NEXT_EPISODE_COUNTDOWN_SECONDS * 1000L
 
-    // Detect when episode is about to end (for series with auto-play enabled)
-    // Countdown is based on actual remaining video time
-    LaunchedEffect(player, autoPlayNextEnabled, currentContentType, hasNextEpisode) {
-        if (!autoPlayNextEnabled ||
-            currentContentType != ContentType.SERIES ||
-            !hasNextEpisode
-        ) {
+    val dismissNextEpisodePrompt: () -> Unit = {
+        nextEpisodePromptDismissed = true
+        shouldAutoPlayNext = false
+        showNextEpisodeOverlay = false
+    }
+
+    LaunchedEffect(mediaId, activePlaybackItem?.id, nextEpisodeTitle, currentContentType) {
+        showNextEpisodeOverlay = false
+        shouldAutoPlayNext = false
+        nextEpisodePromptDismissed = false
+        nextEpisodeAdvanceTriggered = false
+        countdownRemaining = NEXT_EPISODE_COUNTDOWN_SECONDS
+    }
+
+    // Detect when an episode is approaching the configured skip point.
+    // The fixed countdown ends at the skip point, not at the file's true end.
+    LaunchedEffect(
+        player,
+        autoPlayNextEnabled,
+        currentContentType,
+        hasNextEpisode,
+        nextEpisodeThresholdSeconds,
+        nextEpisodePromptDismissed,
+        nextEpisodeAdvanceTriggered
+    ) {
+        if (currentContentType != ContentType.SERIES || !hasNextEpisode) {
             showNextEpisodeOverlay = false
             shouldAutoPlayNext = false
             return@LaunchedEffect
@@ -1328,28 +1351,57 @@ internal fun PlayerOverlay(
         while (true) {
             val duration = player.duration
             val position = player.currentPosition
-            val isPlaying = player.isPlaying
 
-            if (duration > 0 && position > 0) {
-                val remainingMs = duration - position
+            if (duration > 0 && position >= 0) {
+                val remainingMs = (duration - position).coerceAtLeast(0L)
+                val overlayEnabled = nextEpisodeCountdownMs > 0L
+                val promptStartRemainingMs = episodeSkipOffsetMs + nextEpisodeCountdownMs
+                val withinPromptWindow =
+                    overlayEnabled && remainingMs > episodeSkipOffsetMs && remainingMs <= promptStartRemainingMs
+                val displayedRemainingSeconds = (remainingMs / 1000L).toInt().coerceAtLeast(0)
+                val displayedSkipOffsetSeconds = nextEpisodeThresholdSeconds.coerceAtLeast(0)
+                val remainingSeconds =
+                    (displayedRemainingSeconds - displayedSkipOffsetSeconds)
+                        .toInt()
+                        .coerceIn(0, NEXT_EPISODE_COUNTDOWN_SECONDS)
 
-                val overlayEnabled = episodeEndThresholdMs > 0
-                if (overlayEnabled && remainingMs <= episodeEndThresholdMs && remainingMs > 0) {
+                if (withinPromptWindow && !nextEpisodePromptDismissed) {
                     showNextEpisodeOverlay = true
-                    shouldAutoPlayNext = true
-                    // Countdown based on actual remaining time (capped at 30 seconds)
-                    countdownRemaining = (remainingMs / 1000).toInt().coerceIn(0, 30)
+                    countdownRemaining = remainingSeconds
+                    if (autoPlayNextEnabled) {
+                        shouldAutoPlayNext = true
+                    }
                 } else {
                     showNextEpisodeOverlay = false
-                    shouldAutoPlayNext = false
+                    countdownRemaining = remainingSeconds
+                    if (nextEpisodePromptDismissed || remainingMs > promptStartRemainingMs || !autoPlayNextEnabled) {
+                        shouldAutoPlayNext = false
+                    }
                 }
+
+                if (
+                    autoPlayNextEnabled &&
+                    shouldAutoPlayNext &&
+                    !nextEpisodePromptDismissed &&
+                    !nextEpisodeAdvanceTriggered &&
+                    player.playWhenReady &&
+                    remainingMs <= episodeSkipOffsetMs
+                ) {
+                    nextEpisodeAdvanceTriggered = true
+                    showNextEpisodeOverlay = false
+                    shouldAutoPlayNext = false
+                    onPlayNextEpisode()
+                }
+            } else {
+                showNextEpisodeOverlay = false
+                shouldAutoPlayNext = false
             }
 
             delay(500) // Check every 500ms for responsiveness
         }
     }
 
-    DisposableEffect(player) {
+    DisposableEffect(player, currentContentType) {
         val listener =
                 object : Player.Listener {
                     override fun onTrackSelectionParametersChanged(
@@ -1363,18 +1415,46 @@ internal fun PlayerOverlay(
                         playbackEngine.applyAccessibilityAudioPreference()
                     }
 
+                    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                        if (currentContentType != ContentType.LIVE) {
+                            val view = playerView ?: return
+                            val keepVisible =
+                                player.playbackState == Player.STATE_READY && !playWhenReady
+                            view.setControllerShowTimeoutMs(
+                                if (keepVisible) 0 else view.defaultControllerTimeoutMs
+                            )
+                            if (keepVisible) {
+                                view.showController()
+                                view.focusPlayPause()
+                            }
+                        }
+                    }
+
                     override fun onPlaybackStateChanged(playbackState: Int) {
-                        // Auto-play next episode when current one ends
+                        if (currentContentType != ContentType.LIVE) {
+                            val view = playerView
+                            val keepVisible =
+                                playbackState == Player.STATE_READY && !player.playWhenReady
+                            if (view != null) {
+                                view.setControllerShowTimeoutMs(
+                                    if (keepVisible) 0 else view.defaultControllerTimeoutMs
+                                )
+                                if (keepVisible) {
+                                    view.showController()
+                                    view.focusPlayPause()
+                                }
+                            }
+                        }
+                        // Fallback for streams that reach ended before the polling loop catches the
+                        // final skip point.
                         val canAutoPlay =
-                                autoPlayNextEnabled &&
-                                        currentContentType == ContentType.SERIES &&
-                                        hasNextEpisode
-                        val autoPlayAtEnd =
-                                episodeEndThresholdMs == 0L && playbackState == Player.STATE_ENDED
-                        if (playbackState == Player.STATE_ENDED &&
-                                        canAutoPlay &&
-                                        (shouldAutoPlayNext || autoPlayAtEnd)
-                        ) {
+                            autoPlayNextEnabled &&
+                                currentContentType == ContentType.SERIES &&
+                                hasNextEpisode &&
+                                !nextEpisodePromptDismissed &&
+                                !nextEpisodeAdvanceTriggered
+                        if (playbackState == Player.STATE_ENDED && canAutoPlay) {
+                            nextEpisodeAdvanceTriggered = true
                             shouldAutoPlayNext = false
                             showNextEpisodeOverlay = false
                             onPlayNextEpisode()
@@ -1656,9 +1736,14 @@ internal fun PlayerOverlay(
         }
     }
 
-    LaunchedEffect(title) {
-        if (currentContentType == ContentType.LIVE) {
-            playerView?.showController()
+    LaunchedEffect(playerView, currentContentType, mediaId, title) {
+        val view = playerView ?: return@LaunchedEffect
+        view.post {
+            view.setControllerShowTimeoutMs(view.defaultControllerTimeoutMs)
+            view.showController()
+            if (currentContentType != ContentType.LIVE) {
+                view.focusPlayPause()
+            }
         }
     }
 
@@ -1711,6 +1796,7 @@ internal fun PlayerOverlay(
 
     BackHandler(enabled = true) {
         when {
+            showNextEpisodeOverlay -> dismissNextEpisodePrompt()
             showLiveGuide -> closeLiveGuide()
             showSubtitleTimingDialog -> showSubtitleTimingDialog = false
             showSubtitleTrackDialog -> showSubtitleTrackDialog = false
@@ -1905,6 +1991,10 @@ internal fun PlayerOverlay(
                             if (event.keyCode == KeyEvent.KEYCODE_BACK ||
                                             event.keyCode == KeyEvent.KEYCODE_ESCAPE
                             ) {
+                                if (showNextEpisodeOverlay) {
+                                    dismissNextEpisodePrompt()
+                                    return@setOnKeyListener true
+                                }
                                 if (showLiveGuide) {
                                     closeLiveGuide()
                                     return@setOnKeyListener true
@@ -1943,13 +2033,9 @@ internal fun PlayerOverlay(
         if (showNextEpisodeOverlay && nextEpisodeTitle != null) {
             NextEpisodeOverlay(
                 nextEpisodeTitle = nextEpisodeTitle,
-                countdownSeconds = (episodeEndThresholdMs / 1000).toInt(),
+                countdownSeconds = NEXT_EPISODE_COUNTDOWN_SECONDS,
                 remainingSeconds = countdownRemaining,
                 controlsVisible = controlsVisible,
-                onPlayNext = {
-                    showNextEpisodeOverlay = false
-                    onPlayNextEpisode()
-                },
                 modifier = Modifier.align(Alignment.BottomEnd)
             )
         }

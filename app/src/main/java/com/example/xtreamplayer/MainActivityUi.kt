@@ -2174,7 +2174,10 @@ fun RootScreen(
                     activePlaybackSubtitleState = null
                     resumePositionMs = null
                 },
-                onPlayNextEpisode = { playbackEngine.player.seekToNextMediaItem() },
+                onPlayNextEpisode = {
+                    playbackEngine.player.seekToNextMediaItem()
+                    playbackEngine.player.playWhenReady = true
+                },
                 onMatchFrameRateChange = { enabled ->
                     playbackEngine.applySettings(settings.copy(matchFrameRateEnabled = enabled))
                     settingsViewModel.setMatchFrameRateEnabled(enabled)

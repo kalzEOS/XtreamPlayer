@@ -74,7 +74,7 @@ fun NextEpisodeThresholdDialog(
                 )
 
                 Text(
-                    text = "Show the 'Up Next' overlay this many seconds before the episode ends.",
+                    text = "Set how many seconds before the end the next episode should start. A fixed 15-second countdown appears before that jump point.",
                     color = colors.textSecondary,
                     fontSize = 12.sp,
                     fontFamily = AppTheme.fontFamily
