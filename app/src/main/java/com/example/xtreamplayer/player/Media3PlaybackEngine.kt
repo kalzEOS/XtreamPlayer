@@ -15,16 +15,30 @@ import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.example.xtreamplayer.PlaybackQueueItem
 import com.example.xtreamplayer.settings.SettingsState
+import okhttp3.OkHttpClient
 import timber.log.Timber
 
 @OptIn(UnstableApi::class)
-class Media3PlaybackEngine(context: Context) : PlaybackEngine {
+class Media3PlaybackEngine(
+    context: Context,
+    httpClient: OkHttpClient
+) : PlaybackEngine {
     private val appContext = context.applicationContext
+    private val playbackDataSourceFactory =
+        DefaultDataSource.Factory(
+            appContext,
+            OkHttpDataSource.Factory(httpClient)
+                .setUserAgent(PLAYBACK_USER_AGENT)
+        )
+    private val mediaSourceFactory = DefaultMediaSourceFactory(playbackDataSourceFactory)
     private val renderersFactory = DefaultRenderersFactory(appContext)
         .setEnableDecoderFallback(true)
         .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
@@ -185,6 +199,7 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
     companion object {
         private const val MAX_BOOST_DB = 12f
         private const val MAX_TRACK_CHANGES_WITHOUT_SUBTITLE_SELECTION = 6
+        private const val PLAYBACK_USER_AGENT = "XtreamPlayer"
     }
 
     private fun clearSubtitleTrackSelectionListener(targetPlayer: Player) {
@@ -197,6 +212,7 @@ class Media3PlaybackEngine(context: Context) : PlaybackEngine {
     private fun buildPlayer(loadControl: DefaultLoadControl): ExoPlayer {
         return ExoPlayer.Builder(appContext, renderersFactory)
             .setLoadControl(loadControl)
+            .setMediaSourceFactory(mediaSourceFactory)
             .setSeekBackIncrementMs(SEEK_BACK_INCREMENT_MS)
             .setSeekForwardIncrementMs(SEEK_FORWARD_INCREMENT_MS)
             .build()

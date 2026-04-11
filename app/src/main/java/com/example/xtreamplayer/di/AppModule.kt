@@ -76,8 +76,9 @@ object AppModule {
     @Provides
     @Singleton
     fun provideMedia3PlaybackEngine(
-        @ApplicationContext context: Context
-    ): Media3PlaybackEngine = Media3PlaybackEngine(context)
+        @ApplicationContext context: Context,
+        client: OkHttpClient
+    ): Media3PlaybackEngine = Media3PlaybackEngine(context, client)
 
     @Provides
     @Singleton

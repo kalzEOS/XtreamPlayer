@@ -3,8 +3,8 @@ import java.util.Properties
 import org.gradle.api.provider.Property
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
-val appVersionCode = 135
-val appVersionName = "3.3.9"
+val appVersionCode = 136
+val appVersionName = "3.4"
 
 plugins {
     alias(libs.plugins.android.application)
@@ -108,6 +108,7 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.exoplayer.hls)
+    implementation(libs.androidx.media3.datasource.okhttp)
     implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.paging.runtime)
     implementation(libs.androidx.paging.compose)
