@@ -20,6 +20,8 @@ class SettingsRepository(private val context: Context) {
     val settings: Flow<SettingsState> = context.dataStore.data.map { prefs ->
         val autoPlay = prefs[Keys.AUTO_PLAY_NEXT] ?: true
         val nextEpisodeThreshold = prefs[Keys.NEXT_EPISODE_THRESHOLD] ?: 45
+        val vodBufferEnabled = prefs[Keys.VOD_BUFFER_ENABLED] ?: false
+        val vodBufferSeconds = (prefs[Keys.VOD_BUFFER_SECONDS] ?: 45).coerceIn(5, 300)
         val subtitles = prefs[Keys.SUBTITLES_ENABLED] ?: true
         val subtitleAppearance =
             SubtitleAppearanceSettings(
@@ -53,6 +55,8 @@ class SettingsRepository(private val context: Context) {
         SettingsState(
             autoPlayNext = autoPlay,
             nextEpisodeThresholdSeconds = nextEpisodeThreshold,
+            vodBufferEnabled = vodBufferEnabled,
+            vodBufferSeconds = vodBufferSeconds,
             subtitlesEnabled = subtitles,
             subtitleAppearance = subtitleAppearance,
             subtitleCacheAutoClearIntervalMs = subtitleCacheAutoClearIntervalMs,
@@ -130,6 +134,18 @@ class SettingsRepository(private val context: Context) {
     suspend fun setNextEpisodeThreshold(seconds: Int) {
         context.dataStore.edit { prefs ->
             prefs[Keys.NEXT_EPISODE_THRESHOLD] = seconds.coerceIn(0, 300)
+        }
+    }
+
+    suspend fun setVodBufferEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.VOD_BUFFER_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setVodBufferSeconds(seconds: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.VOD_BUFFER_SECONDS] = seconds.coerceIn(5, 300)
         }
     }
 
@@ -289,6 +305,8 @@ class SettingsRepository(private val context: Context) {
     private object Keys {
         val AUTO_PLAY_NEXT = booleanPreferencesKey("auto_play_next")
         val NEXT_EPISODE_THRESHOLD = intPreferencesKey("next_episode_threshold")
+        val VOD_BUFFER_ENABLED = booleanPreferencesKey("vod_buffer_enabled")
+        val VOD_BUFFER_SECONDS = intPreferencesKey("vod_buffer_seconds")
         val SUBTITLES_ENABLED = booleanPreferencesKey("subtitles_enabled")
         val SUBTITLE_CUSTOM_STYLE_ENABLED = booleanPreferencesKey("subtitle_custom_style_enabled")
         val SUBTITLE_TEXT_SIZE_SP = floatPreferencesKey("subtitle_text_size_sp")

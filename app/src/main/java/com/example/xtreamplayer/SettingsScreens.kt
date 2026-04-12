@@ -46,6 +46,7 @@ import com.example.xtreamplayer.auth.AuthConfig
 import com.example.xtreamplayer.settings.SettingsState
 import com.example.xtreamplayer.settings.subtitleAppearanceLabel
 import com.example.xtreamplayer.settings.subtitleAutoClearLabel
+import com.example.xtreamplayer.settings.vodBufferLabel
 import com.example.xtreamplayer.ui.theme.AppFont
 import com.example.xtreamplayer.ui.theme.AppTheme
 import com.example.xtreamplayer.settings.uiScaleDisplayPercent
@@ -62,6 +63,8 @@ fun SettingsScreen(
     onMoveLeft: () -> Unit,
     onToggleAutoPlay: () -> Unit,
     onOpenNextEpisodeThreshold: () -> Unit,
+    onToggleVodBuffer: () -> Unit,
+    onOpenVodBuffer: () -> Unit,
     onOpenSubtitleAppearance: () -> Unit,
     onOpenSubtitleCacheAutoClear: () -> Unit,
     onToggleSubtitles: () -> Unit,
@@ -81,11 +84,14 @@ fun SettingsScreen(
     val colors = AppTheme.colors
     val apiKeyLabel = if (settings.openSubtitlesApiKey.isNotBlank()) "Configured" else "Not set"
     val thresholdLabel = "${settings.nextEpisodeThresholdSeconds}s"
+    val vodBufferValueLabel = vodBufferLabel(settings.vodBufferSeconds)
     val subtitleAppearance = subtitleAppearanceLabel(settings.subtitleAppearance)
     val subtitleCacheAutoClear = subtitleAutoClearLabel(settings.subtitleCacheAutoClearIntervalMs)
     val playbackActions = listOf(
         SettingsAction("Auto-play next", flagLabel(settings.autoPlayNext), onToggleAutoPlay),
         SettingsAction("Next episode prompt", thresholdLabel, onOpenNextEpisodeThreshold),
+        SettingsAction("VOD buffer", flagLabel(settings.vodBufferEnabled), onToggleVodBuffer),
+        SettingsAction("VOD buffer length", vodBufferValueLabel, onOpenVodBuffer),
         SettingsAction("Subtitles", flagLabel(settings.subtitlesEnabled), onToggleSubtitles),
         SettingsAction("Subtitle appearance", subtitleAppearance, onOpenSubtitleAppearance),
         SettingsAction("Auto clear subtitle cache", subtitleCacheAutoClear, onOpenSubtitleCacheAutoClear),

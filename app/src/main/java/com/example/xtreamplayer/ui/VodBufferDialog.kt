@@ -1,0 +1,213 @@
+package com.example.xtreamplayer.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
+import com.example.xtreamplayer.ui.theme.AppTheme
+
+@Composable
+fun VodBufferDialog(
+    currentSeconds: Int,
+    onSecondsChange: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val colors = AppTheme.colors
+    val focusBorderWidth = 1.dp
+    val maxSeconds = 300
+    val minSeconds = 5
+    var localSeconds by remember { mutableIntStateOf(currentSeconds.coerceIn(minSeconds, maxSeconds)) }
+    val closeFocusRequester = remember { FocusRequester() }
+    val minusFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(currentSeconds) {
+        localSeconds = currentSeconds.coerceIn(minSeconds, maxSeconds)
+    }
+
+    LaunchedEffect(Unit) {
+        minusFocusRequester.requestFocus()
+    }
+
+    AppDialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.45f)
+                .clip(RoundedCornerShape(12.dp))
+                .background(colors.background)
+                .border(1.dp, colors.borderStrong, RoundedCornerShape(12.dp))
+                .padding(24.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "VOD Buffer Length",
+                    color = colors.textPrimary,
+                    fontSize = 20.sp,
+                    fontFamily = AppTheme.fontFamily,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Text(
+                    text = "Choose how many seconds of video the player should try to buffer ahead for VOD playback.",
+                    color = colors.textSecondary,
+                    fontSize = 12.sp,
+                    fontFamily = AppTheme.fontFamily
+                )
+
+                Text(
+                    text = "Higher values can delay startup, make seeking feel heavier, and use more memory or network.",
+                    color = colors.textTertiary,
+                    fontSize = 11.sp,
+                    fontFamily = AppTheme.fontFamily
+                )
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    FocusableButton(
+                        onClick = {
+                            val newSeconds = (localSeconds - 10).coerceAtLeast(minSeconds)
+                            localSeconds = newSeconds
+                            onSecondsChange(newSeconds)
+                        },
+                        enabled = localSeconds > minSeconds,
+                        colors = ButtonDefaults.buttonColors(containerColor = colors.accentMutedAlt),
+                        focusBorderWidth = focusBorderWidth,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.focusRequester(minusFocusRequester)
+                    ) {
+                        Text("-10", color = colors.textPrimary, fontSize = 14.sp)
+                    }
+
+                    FocusableButton(
+                        onClick = {
+                            val newSeconds = (localSeconds - 1).coerceAtLeast(minSeconds)
+                            localSeconds = newSeconds
+                            onSecondsChange(newSeconds)
+                        },
+                        enabled = localSeconds > minSeconds,
+                        colors = ButtonDefaults.buttonColors(containerColor = colors.accentMutedAlt),
+                        focusBorderWidth = focusBorderWidth,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("-1", color = colors.textPrimary, fontSize = 14.sp)
+                    }
+
+                    Text(
+                        text = "${localSeconds}s",
+                        color = colors.textPrimary,
+                        fontSize = 24.sp,
+                        fontFamily = AppTheme.fontFamily,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f),
+                        textAlign = TextAlign.Center
+                    )
+
+                    FocusableButton(
+                        onClick = {
+                            val newSeconds = (localSeconds + 1).coerceAtMost(maxSeconds)
+                            localSeconds = newSeconds
+                            onSecondsChange(newSeconds)
+                        },
+                        enabled = localSeconds < maxSeconds,
+                        colors = ButtonDefaults.buttonColors(containerColor = colors.accentMutedAlt),
+                        focusBorderWidth = focusBorderWidth,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("+1", color = colors.textPrimary, fontSize = 14.sp)
+                    }
+
+                    FocusableButton(
+                        onClick = {
+                            val newSeconds = (localSeconds + 10).coerceAtMost(maxSeconds)
+                            localSeconds = newSeconds
+                            onSecondsChange(newSeconds)
+                        },
+                        enabled = localSeconds < maxSeconds,
+                        colors = ButtonDefaults.buttonColors(containerColor = colors.accentMutedAlt),
+                        focusBorderWidth = focusBorderWidth,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("+10", color = colors.textPrimary, fontSize = 14.sp)
+                    }
+                }
+
+                Text(
+                    text = "Quick presets:",
+                    color = colors.textSecondary,
+                    fontSize = 12.sp,
+                    fontFamily = AppTheme.fontFamily
+                )
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    listOf(
+                        15 to "15s",
+                        30 to "30s",
+                        60 to "1m",
+                        90 to "1.5m"
+                    ).forEach { (seconds, label) ->
+                        FocusableButton(
+                            onClick = {
+                                localSeconds = seconds
+                                onSecondsChange(seconds)
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (localSeconds == seconds) colors.accent else colors.accentMutedAlt
+                            ),
+                            focusBorderWidth = focusBorderWidth,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (localSeconds == seconds) colors.background else colors.textPrimary,
+                                fontSize = 14.sp,
+                                fontWeight = if (localSeconds == seconds) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                DialogCloseButton(
+                    focusRequester = closeFocusRequester,
+                    onDismiss = onDismiss,
+                    label = "Done"
+                )
+            }
+        }
+    }
+}

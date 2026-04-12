@@ -44,6 +44,8 @@ fun subtitleAutoClearLabel(intervalMs: Long): String {
 data class SettingsState(
     val autoPlayNext: Boolean = true,
     val nextEpisodeThresholdSeconds: Int = 45,
+    val vodBufferEnabled: Boolean = false,
+    val vodBufferSeconds: Int = 45,
     val subtitlesEnabled: Boolean = true,
     val subtitleAppearance: SubtitleAppearanceSettings = SubtitleAppearanceSettings(),
     val subtitleCacheAutoClearIntervalMs: Long = SubtitleCacheAutoClearOption.THIRTY_DAYS.intervalMs,
@@ -59,3 +61,5 @@ data class SettingsState(
     val openSubtitlesApiKey: String = "",
     val openSubtitlesUserAgent: String = ""
 )
+
+fun vodBufferLabel(seconds: Int): String = "${seconds.coerceIn(5, 300)}s"
