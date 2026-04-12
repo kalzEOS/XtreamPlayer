@@ -231,7 +231,6 @@ class XtreamPlayerView @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        suppressControllerScrim()
         bindResizeModeView()
         bindBackButtonView()
         bindSubtitleDownloadView()
@@ -269,10 +268,6 @@ class XtreamPlayerView @JvmOverloads constructor(
 
         topBar.visibility = background.visibility
         topBar.alpha = background.alpha
-    }
-
-    private fun suppressControllerScrim() {
-        findViewById<View>(Media3UiR.id.exo_controls_background)?.setBackgroundColor(Color.TRANSPARENT)
     }
 
     private fun applySubtitleAppearance() {
