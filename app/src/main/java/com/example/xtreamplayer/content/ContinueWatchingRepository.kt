@@ -62,14 +62,19 @@ class ContinueWatchingRepository(private val context: Context) {
                 )
 
             val shouldSkipWrite =
-                existingEntry != null &&
-                    abs(existingEntry.positionMs - positionMs) < MIN_SAVE_DELTA_MS &&
-                    existingEntry.durationMs == durationMs &&
-                    existingEntry.parentItem?.id == parentItem?.id &&
-                    existingEntry.subtitleFileName == resolvedSubtitlePersistence.subtitleFileName &&
-                    existingEntry.subtitleLanguage == resolvedSubtitlePersistence.subtitleLanguage &&
-                    existingEntry.subtitleLabel == resolvedSubtitlePersistence.subtitleLabel &&
-                    existingEntry.subtitleOffsetMs == resolvedSubtitlePersistence.subtitleOffsetMs
+                shouldSkipContinueWatchingWrite(
+                    existingEntry = existingEntry,
+                    targetKey = key,
+                    item = item,
+                    positionMs = positionMs,
+                    durationMs = durationMs,
+                    parentItem = parentItem,
+                    subtitleFileName = resolvedSubtitlePersistence.subtitleFileName,
+                    subtitleLanguage = resolvedSubtitlePersistence.subtitleLanguage,
+                    subtitleLabel = resolvedSubtitlePersistence.subtitleLabel,
+                    subtitleOffsetMs = resolvedSubtitlePersistence.subtitleOffsetMs,
+                    minSaveDeltaMs = MIN_SAVE_DELTA_MS
+                )
             if (shouldSkipWrite) {
                 return@edit
             }
@@ -350,4 +355,48 @@ class ContinueWatchingRepository(private val context: Context) {
         const val MAX_PROGRESS_PERCENT = 98
         const val MIN_SAVE_DELTA_MS = 30_000L
     }
+}
+
+internal fun shouldSkipContinueWatchingWrite(
+    existingEntry: ContinueWatchingEntry?,
+    targetKey: String,
+    item: ContentItem,
+    positionMs: Long,
+    durationMs: Long,
+    parentItem: ContentItem?,
+    subtitleFileName: String?,
+    subtitleLanguage: String?,
+    subtitleLabel: String?,
+    subtitleOffsetMs: Long,
+    minSaveDeltaMs: Long
+): Boolean {
+    if (existingEntry == null) {
+        return false
+    }
+    return abs(existingEntry.positionMs - positionMs) < minSaveDeltaMs &&
+        existingEntry.key == targetKey &&
+        hasSamePersistedContinueWatchingItem(existingEntry.item, item) &&
+        existingEntry.durationMs == durationMs &&
+        hasSamePersistedContinueWatchingItem(existingEntry.parentItem, parentItem) &&
+        existingEntry.subtitleFileName == subtitleFileName &&
+        existingEntry.subtitleLanguage == subtitleLanguage &&
+        existingEntry.subtitleLabel == subtitleLabel &&
+        existingEntry.subtitleOffsetMs == subtitleOffsetMs
+}
+
+private fun hasSamePersistedContinueWatchingItem(
+    existing: ContentItem?,
+    incoming: ContentItem?
+): Boolean {
+    if (existing == null || incoming == null) {
+        return existing == incoming
+    }
+    return existing.id == incoming.id &&
+        existing.title == incoming.title &&
+        existing.subtitle == incoming.subtitle &&
+        existing.imageUrl == incoming.imageUrl &&
+        existing.section == incoming.section &&
+        existing.contentType == incoming.contentType &&
+        existing.streamId == incoming.streamId &&
+        existing.containerExtension == incoming.containerExtension
 }

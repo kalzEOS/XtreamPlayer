@@ -1,10 +1,47 @@
 package com.example.xtreamplayer.content
 
-import android.util.LruCache
+import androidx.collection.LruCache
 
 object SearchNormalizer {
     private val diacriticsRegex = Regex("\\p{Mn}+")
     private val nonAlnumRegex = Regex("[^\\p{L}\\p{N}]+")
+    private val languagePrefixCodes = setOf(
+        "en", "eng",
+        "es", "spa",
+        "fr", "fre", "fra",
+        "de", "ger", "deu",
+        "it", "ita",
+        "pt", "por",
+        "ru", "rus",
+        "ja", "jpn",
+        "ko", "kor",
+        "zh", "chi", "zho",
+        "ar", "ara",
+        "hi", "hin",
+        "tr", "tur",
+        "nl", "dut", "nld",
+        "pl", "pol",
+        "sv", "swe",
+        "no", "nor",
+        "da", "dan",
+        "fi", "fin",
+        "cs", "cze", "ces",
+        "el", "gre", "ell",
+        "he", "heb",
+        "th", "tha",
+        "vi", "vie",
+        "id", "ind",
+        "ms", "may", "msa",
+        "ro", "rum", "ron",
+        "hu", "hun",
+        "uk", "ukr",
+        "bg", "bul",
+        "hr", "hrv",
+        "sr", "srp",
+        "sk", "slo", "slk",
+        "ca", "cat",
+        "fa", "per", "fas"
+    )
     private const val TITLE_CACHE_MAX_ENTRIES = 75_000
     private const val PREWARM_MAX_INSERTS = 5_000
     private val titleCache = LruCache<String, String>(TITLE_CACHE_MAX_ENTRIES)
@@ -24,7 +61,7 @@ object SearchNormalizer {
             if (inserted >= insertBudget) return@forEach
             if (title.isBlank()) return@forEach
             if (titleCache.get(title) == null) {
-                val normalized = normalize(title)
+                val normalized = normalizeTitleValue(title)
                 titleCache.put(title, normalized)
                 inserted++
             }
@@ -32,12 +69,12 @@ object SearchNormalizer {
     }
 
     fun normalizeQuery(raw: String): String {
-        return normalize(raw)
+        return normalizeQueryValue(raw)
     }
 
     fun normalizeTitle(raw: String): String {
         titleCache.get(raw)?.let { return it }
-        val normalized = normalize(raw)
+        val normalized = normalizeTitleValue(raw)
         titleCache.put(raw, normalized)
         return normalized
     }
@@ -57,8 +94,16 @@ object SearchNormalizer {
         return tokens.all { normalizedTitle.contains(it) }
     }
 
+    private fun normalizeQueryValue(raw: String): String {
+        return normalize(stripLanguagePrefix(raw))
+    }
+
+    private fun normalizeTitleValue(raw: String): String {
+        return normalize(raw)
+    }
+
     private fun normalize(raw: String): String {
-        val trimmed = stripLanguagePrefix(raw).trim()
+        val trimmed = raw.trim()
         if (trimmed.isEmpty()) {
             return trimmed
         }
@@ -82,9 +127,26 @@ object SearchNormalizer {
         if (separatorIndex <= 0) {
             return trimmed
         }
+        if (separatorIndex >= trimmed.lastIndex) {
+            return trimmed
+        }
+        val separator = trimmed[separatorIndex]
+        val hasValidDelimiterFormat =
+            when (separator) {
+                '|' -> trimmed[separatorIndex - 1].isWhitespace() && trimmed[separatorIndex + 1].isWhitespace()
+                '-', ':' -> true
+                else -> false
+            }
+        if (!hasValidDelimiterFormat) {
+            return trimmed
+        }
         val prefix = trimmed.substring(0, separatorIndex).trim()
         val compactPrefix = prefix.replace(" ", "")
-        val isLanguagePrefix = compactPrefix.length in 2..3 && compactPrefix.all { it.isLetter() }
+        val normalizedPrefix = compactPrefix.lowercase()
+        val isLanguagePrefix =
+            compactPrefix.length in 2..3 &&
+                compactPrefix.all { it.isLetter() } &&
+                normalizedPrefix in languagePrefixCodes
         if (!isLanguagePrefix) {
             return trimmed
         }

@@ -34,7 +34,15 @@ class LocalPlaybackResumeRepository(private val context: Context) {
             val raw = prefs[Keys.LOCAL_PLAYBACK_RESUME_ENTRIES] ?: "[]"
             val entries = parseEntries(raw).toMutableList()
             val existing = entries.firstOrNull { it.mediaId == mediaId }
-            if (existing != null && abs(existing.positionMs - positionMs) < MIN_SAVE_DELTA_MS) {
+            if (
+                shouldSkipLocalResumeWrite(
+                    existing = existing,
+                    title = title,
+                    positionMs = positionMs,
+                    durationMs = durationMs,
+                    minSaveDeltaMs = MIN_SAVE_DELTA_MS
+                )
+            ) {
                 return@edit
             }
             entries.removeAll { it.mediaId == mediaId }
@@ -105,6 +113,21 @@ class LocalPlaybackResumeRepository(private val context: Context) {
         const val MAX_ENTRIES = 500
         const val MIN_SAVE_DELTA_MS = 8_000L
     }
+}
+
+internal fun shouldSkipLocalResumeWrite(
+    existing: LocalPlaybackResumeEntry?,
+    title: String,
+    positionMs: Long,
+    durationMs: Long,
+    minSaveDeltaMs: Long
+): Boolean {
+    if (existing == null) {
+        return false
+    }
+    return abs(existing.positionMs - positionMs) < minSaveDeltaMs &&
+        existing.title == title &&
+        existing.durationMs == durationMs
 }
 
 data class LocalPlaybackResumeEntry(
