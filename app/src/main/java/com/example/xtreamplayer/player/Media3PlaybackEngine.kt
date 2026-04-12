@@ -53,12 +53,12 @@ class Media3PlaybackEngine(
                 updateLoudnessEnhancer(audioSessionId)
             }
         }
-    var player: ExoPlayer = buildPlayer(buildLoadControl(bufferProfile))
+    private var lastSettings: SettingsState = SettingsState()
+    var player: ExoPlayer = buildPlayer(buildLoadControl(bufferProfile, lastSettings))
     private var currentMedia: Uri? = null
     private var loudnessEnhancer: LoudnessEnhancer? = null
     private var loudnessSessionId: Int = C.AUDIO_SESSION_ID_UNSET
     private var boostDb: Float = 0f
-    private var lastSettings: SettingsState = SettingsState()
     private var hasAppliedSettings = false
     private var appliedFrameRateStrategy: Int = C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
     private var subtitleTrackSelectionListener: Player.Listener? = null
@@ -127,6 +127,15 @@ class Media3PlaybackEngine(
                 )
             player.trackSelectionParameters = builder.build()
         }
+
+        if (
+            previousSettings.vodBufferEnabled != settings.vodBufferEnabled ||
+                previousSettings.vodBufferSeconds != settings.vodBufferSeconds
+        ) {
+            if (bufferProfile == BufferProfile.VOD) {
+                rebuildPlayerPreservingState()
+            }
+        }
     }
 
     fun release() {
@@ -146,7 +155,7 @@ class Media3PlaybackEngine(
         loudnessEnhancer = null
         loudnessSessionId = C.AUDIO_SESSION_ID_UNSET
         currentMedia = null
-        player = buildPlayer(buildLoadControl(bufferProfile))
+        player = buildPlayer(buildLoadControl(bufferProfile, lastSettings))
         updateLoudnessEnhancer(player.audioSessionId)
         applySettings(lastSettings)
         setAudioBoostDb(boostDb)
@@ -246,10 +255,13 @@ class Media3PlaybackEngine(
         loudnessEnhancer = null
         loudnessSessionId = C.AUDIO_SESSION_ID_UNSET
 
-        player = buildPlayer(buildLoadControl(bufferProfile))
+        player = buildPlayer(buildLoadControl(bufferProfile, lastSettings))
         player.trackSelectionParameters = trackParameters
         updateLoudnessEnhancer(player.audioSessionId)
         setAudioBoostDb(boostDb)
+        appliedFrameRateStrategy = C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
+        hasAppliedSettings = false
+        applySettings(lastSettings)
 
         if (mediaItems.isNotEmpty()) {
             val safeIndex = currentIndex.coerceAtLeast(0)
@@ -1000,15 +1012,45 @@ enum class BufferProfile(
 private const val SEEK_BACK_INCREMENT_MS = 15_000L
 private const val SEEK_FORWARD_INCREMENT_MS = 30_000L
 
+private data class BufferConfig(
+    val minBufferMs: Int,
+    val maxBufferMs: Int,
+    val bufferForPlaybackMs: Int,
+    val bufferForPlaybackAfterRebufferMs: Int
+)
+
 @OptIn(UnstableApi::class)
-private fun buildLoadControl(profile: BufferProfile): DefaultLoadControl {
+private fun buildLoadControl(profile: BufferProfile, settings: SettingsState): DefaultLoadControl {
+    val bufferConfig = resolveBufferConfig(profile, settings)
     return DefaultLoadControl.Builder()
         .setBufferDurationsMs(
-            profile.minBufferMs,
-            profile.maxBufferMs,
-            profile.bufferForPlaybackMs,
-            profile.bufferForPlaybackAfterRebufferMs
+            bufferConfig.minBufferMs,
+            bufferConfig.maxBufferMs,
+            bufferConfig.bufferForPlaybackMs,
+            bufferConfig.bufferForPlaybackAfterRebufferMs
         )
         .setPrioritizeTimeOverSizeThresholds(true)
         .build()
+}
+
+private fun resolveBufferConfig(profile: BufferProfile, settings: SettingsState): BufferConfig {
+    if (profile != BufferProfile.VOD || !settings.vodBufferEnabled) {
+        return BufferConfig(
+            minBufferMs = profile.minBufferMs,
+            maxBufferMs = profile.maxBufferMs,
+            bufferForPlaybackMs = profile.bufferForPlaybackMs,
+            bufferForPlaybackAfterRebufferMs = profile.bufferForPlaybackAfterRebufferMs
+        )
+    }
+
+    val targetBufferMs = settings.vodBufferSeconds.coerceIn(5, 300) * 1_000
+    val minBufferMs = (targetBufferMs / 2).coerceAtLeast(5_000).coerceAtMost(targetBufferMs)
+    val startupBufferMs = (targetBufferMs / 12).coerceIn(1_500, 6_000)
+    val rebufferMs = (targetBufferMs / 8).coerceIn(startupBufferMs, 8_000)
+    return BufferConfig(
+        minBufferMs = minBufferMs,
+        maxBufferMs = targetBufferMs,
+        bufferForPlaybackMs = startupBufferMs,
+        bufferForPlaybackAfterRebufferMs = rebufferMs
+    )
 }

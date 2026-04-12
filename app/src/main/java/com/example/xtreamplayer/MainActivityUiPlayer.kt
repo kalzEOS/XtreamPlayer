@@ -662,6 +662,8 @@ internal fun PlayerOverlay(
     var shouldAutoPlayNext by remember { mutableStateOf(false) }
     var nextEpisodePromptDismissed by remember { mutableStateOf(false) }
     var nextEpisodeAdvanceTriggered by remember { mutableStateOf(false) }
+    var hasStartedCurrentVodPlayback by remember { mutableStateOf(false) }
+    var showVodStartupIndicator by remember { mutableStateOf(false) }
     var liveNowNextEpg by remember { mutableStateOf<LiveNowNextEpg?>(null) }
     val lastGoodLiveEpgByStream = remember { mutableStateMapOf<String, LiveNowNextEpg>() }
     var liveEpgGeneration by remember { mutableIntStateOf(0) }
@@ -1331,6 +1333,17 @@ internal fun PlayerOverlay(
         countdownRemaining = NEXT_EPISODE_COUNTDOWN_SECONDS
     }
 
+    LaunchedEffect(mediaId, activePlaybackItem?.id, currentContentType) {
+        if (currentContentType == ContentType.LIVE) {
+            hasStartedCurrentVodPlayback = false
+            showVodStartupIndicator = false
+        } else {
+            hasStartedCurrentVodPlayback = false
+            showVodStartupIndicator =
+                player.playbackState == Player.STATE_IDLE || player.playbackState == Player.STATE_BUFFERING
+        }
+    }
+
     // Detect when an episode is approaching the configured skip point.
     // The fixed countdown ends at the skip point, not at the file's true end.
     LaunchedEffect(
@@ -1415,6 +1428,10 @@ internal fun PlayerOverlay(
                         playbackEngine.applyAccessibilityAudioPreference()
                     }
 
+                    override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                        showVodStartupIndicator = false
+                    }
+
                     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                         if (currentContentType != ContentType.LIVE) {
                             val view = playerView ?: return
@@ -1431,6 +1448,25 @@ internal fun PlayerOverlay(
                     }
 
                     override fun onPlaybackStateChanged(playbackState: Int) {
+                        if (currentContentType != ContentType.LIVE) {
+                            when (playbackState) {
+                                Player.STATE_READY -> {
+                                    hasStartedCurrentVodPlayback = true
+                                    showVodStartupIndicator = false
+                                }
+
+                                Player.STATE_BUFFERING,
+                                Player.STATE_IDLE -> {
+                                    if (!hasStartedCurrentVodPlayback) {
+                                        showVodStartupIndicator = true
+                                    }
+                                }
+
+                                Player.STATE_ENDED -> {
+                                    showVodStartupIndicator = false
+                                }
+                            }
+                        }
                         if (currentContentType != ContentType.LIVE) {
                             val view = playerView
                             val keepVisible =
@@ -2038,6 +2074,36 @@ internal fun PlayerOverlay(
                 controlsVisible = controlsVisible,
                 modifier = Modifier.align(Alignment.BottomEnd)
             )
+        }
+
+        if (currentContentType != ContentType.LIVE && showVodStartupIndicator) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .border(1.dp, AppTheme.colors.borderStrong, RoundedCornerShape(14.dp))
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.width(28.dp).height(28.dp),
+                        color = AppTheme.colors.accent,
+                        strokeWidth = 3.dp
+                    )
+                    Text(
+                        text = "Loading video...",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontFamily = AppTheme.fontFamily,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
         }
 
         if (showNerdStats) {

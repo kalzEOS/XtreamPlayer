@@ -178,6 +178,7 @@ import com.example.xtreamplayer.ui.FontScaleDialog
 import com.example.xtreamplayer.ui.ThemeSelectionDialog
 import com.example.xtreamplayer.ui.UiScaleDialog
 import com.example.xtreamplayer.ui.VideoResolutionDialog
+import com.example.xtreamplayer.ui.VodBufferDialog
 import com.example.xtreamplayer.ui.buildTvImageRequest
 import com.example.xtreamplayer.ui.rememberDebouncedSearchState
 import com.example.xtreamplayer.ui.components.AppBackground
@@ -325,6 +326,8 @@ fun RootScreen(
     var showFontScaleDialog by showFontScaleDialogState
     val showNextEpisodeThresholdDialogState = remember { mutableStateOf(false) }
     var showNextEpisodeThresholdDialog by showNextEpisodeThresholdDialogState
+    val showVodBufferDialogState = remember { mutableStateOf(false) }
+    var showVodBufferDialog by showVodBufferDialogState
     val showSubtitleAppearanceDialogState = remember { mutableStateOf(false) }
     var showSubtitleAppearanceDialog by showSubtitleAppearanceDialogState
     var subtitleAppearancePreview by remember { mutableStateOf<SubtitleAppearanceSettings?>(null) }
@@ -997,6 +1000,7 @@ fun RootScreen(
                     !showUiScaleDialog &&
                     !showFontScaleDialog &&
                     !showNextEpisodeThresholdDialog &&
+                    !showVodBufferDialog &&
                     !showSubtitleAppearanceDialog &&
                     !showSubtitleCacheAutoClearDialog &&
                     !showApiKeyDialog &&
@@ -1898,6 +1902,7 @@ fun RootScreen(
                         showUiScaleDialogState = showUiScaleDialogState,
                         showFontScaleDialogState = showFontScaleDialogState,
                         showNextEpisodeThresholdDialogState = showNextEpisodeThresholdDialogState,
+                        showVodBufferDialogState = showVodBufferDialogState,
                         showSubtitleAppearanceDialogState = showSubtitleAppearanceDialogState,
                         showSubtitleCacheAutoClearDialogState = showSubtitleCacheAutoClearDialogState,
                         showApiKeyDialogState = showApiKeyDialogState,
@@ -1995,6 +2000,13 @@ fun RootScreen(
                         currentSeconds = settings.nextEpisodeThresholdSeconds,
                         onSecondsChange = { settingsViewModel.setNextEpisodeThreshold(it) },
                         onDismiss = { showNextEpisodeThresholdDialog = false }
+                    )
+                }
+                if (showVodBufferDialog) {
+                    VodBufferDialog(
+                        currentSeconds = settings.vodBufferSeconds,
+                        onSecondsChange = { settingsViewModel.setVodBufferSeconds(it) },
+                        onDismiss = { showVodBufferDialog = false }
                     )
                 }
                 if (showSubtitleCacheAutoClearDialog) {

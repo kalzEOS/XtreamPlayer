@@ -43,6 +43,18 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun toggleVodBufferEnabled() {
+        viewModelScope.launch {
+            repository.setVodBufferEnabled(!settings.value.vodBufferEnabled)
+        }
+    }
+
+    fun setVodBufferSeconds(seconds: Int) {
+        viewModelScope.launch {
+            repository.setVodBufferSeconds(seconds)
+        }
+    }
+
     fun toggleSubtitles() {
         viewModelScope.launch {
             repository.setSubtitlesEnabled(!settings.value.subtitlesEnabled)
