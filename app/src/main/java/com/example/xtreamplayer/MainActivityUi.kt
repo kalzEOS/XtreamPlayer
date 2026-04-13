@@ -331,13 +331,8 @@ private fun RootScreenContent(
     var showManageLists by showManageListsState
     val showAppearanceState = remember { mutableStateOf(false) }
     var showAppearance by showAppearanceState
-    var focusAppearanceOnSettingsReturn by remember { mutableStateOf(false) }
-    var focusManageListsOnSettingsReturn by remember { mutableStateOf(false) }
-    var wasShowingAppearance by remember { mutableStateOf(false) }
-    var wasShowingManageLists by remember { mutableStateOf(false) }
     var updateUiState by updateViewModel.updateUiState
     var updateCheckJob by updateViewModel.updateCheckJob
-    var startupUpdateCheckEnabled by updateViewModel.startupUpdateCheckEnabled
     var startupUpdateCheckHandled by updateViewModel.startupUpdateCheckHandled
     val showApiKeyDialogState = remember { mutableStateOf(false) }
     var showApiKeyDialog by showApiKeyDialogState
@@ -388,139 +383,45 @@ private fun RootScreenContent(
     var lastExitBackPressElapsedMs by remember { mutableLongStateOf(0L) }
     val resumeFocusRequester = remember { FocusRequester() }
 
-    var startupDeferredReady by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        withFrameNanos {}
-        delay(STARTUP_DEFER_NON_CRITICAL_MS)
-        startupDeferredReady = true
-    }
-
-    // Progressive sync coordinator
-    LaunchedEffect(settings.subtitleCacheAutoClearIntervalMs, startupDeferredReady) {
-        if (!startupDeferredReady) {
-            return@LaunchedEffect
-        }
-        val intervalMs = settings.subtitleCacheAutoClearIntervalMs
-        if (intervalMs <= 0L) {
-            return@LaunchedEffect
-        }
-
-        while (true) {
-            if (activePlaybackQueue != null) {
-                delay(SUBTITLE_AUTO_CLEAR_CHECK_INTERVAL_MS)
-                continue
-            }
-            val nowMs = System.currentTimeMillis()
-            val lastRunMs = settingsRepository.subtitleCacheAutoClearLastRunMs()
-            if (lastRunMs <= 0L) {
-                settingsRepository.setSubtitleCacheAutoClearLastRunMs(nowMs)
-            } else if (nowMs - lastRunMs >= intervalMs) {
-                val removed = withContext(Dispatchers.IO) {
-                    subtitleRepository.clearCacheAndCount()
-                }
-                settingsRepository.setSubtitleCacheAutoClearLastRunMs(nowMs)
-                if (removed > 0) {
-                    Timber.d("Auto-cleared subtitle cache files: $removed")
-                }
-            }
-            delay(SUBTITLE_AUTO_CLEAR_CHECK_INTERVAL_MS)
-        }
-    }
-    var progressiveSyncCoordinator by
+    val startupDeferredReadyState = remember { mutableStateOf(false) }
+    val progressiveSyncCoordinatorState =
             remember { mutableStateOf<com.example.xtreamplayer.content.ProgressiveSyncCoordinator?>(null) }
+    var progressiveSyncCoordinator by progressiveSyncCoordinatorState
     val emptySyncStateFlow =
             remember { kotlinx.coroutines.flow.MutableStateFlow(com.example.xtreamplayer.content.ProgressiveSyncState()) }
-    val syncCoordinatorAccountKey =
-            authState.activeConfig?.let { config ->
-                "${config.baseUrl}|${config.username}|${config.listName}|${config.password}"
-            }
-    LaunchedEffect(syncCoordinatorAccountKey, startupDeferredReady) {
-        if (!startupDeferredReady) {
-            return@LaunchedEffect
-        }
-        val previousCoordinator = progressiveSyncCoordinator
-        if (previousCoordinator != null) {
-            withContext(NonCancellable) {
-                previousCoordinator.dispose()
-            }
-            progressiveSyncCoordinator = null
-        }
-        progressiveSyncCoordinator =
-                authState.activeConfig?.let { config ->
-                    com.example.xtreamplayer.content.ProgressiveSyncCoordinator(
-                            contentRepository = contentRepository,
-                            settingsRepository = settingsRepository,
-                            authConfig = config
-                    )
-                }
-    }
     val syncState by
             (progressiveSyncCoordinator?.syncState ?: emptySyncStateFlow)
                     .collectAsStateWithLifecycle()
-    val latestProgressiveSyncCoordinator by rememberUpdatedState(progressiveSyncCoordinator)
-
-    DisposableEffect(Unit) {
-        onDispose {
-            latestProgressiveSyncCoordinator?.disposeAsync()
-        }
-    }
-
-    // Auto-start fast start sync on first login
-    LaunchedEffect(authState.activeConfig, progressiveSyncCoordinator, startupDeferredReady) {
-        if (!startupDeferredReady) {
-            return@LaunchedEffect
-        }
-        val coordinator = progressiveSyncCoordinator ?: return@LaunchedEffect
-        if (authState.activeConfig != null) {
-            val config = authState.activeConfig ?: return@LaunchedEffect
-            val syncAccountKey = "${config.baseUrl}|${config.username}|${config.listName}"
-            val savedState = settingsRepository.loadSyncState(syncAccountKey)
-            val hasFullIndex = contentRepository.hasFullIndex(config)
-            val hasSearchIndex = contentRepository.hasSearchIndex(config)
-            val hasAnySearchIndex = contentRepository.hasAnySearchIndex(config)
-
-            val effectiveState =
-                    savedState
-                            ?: if (hasFullIndex) {
-                                com.example.xtreamplayer.content.ProgressiveSyncState(
-                                        phase = com.example.xtreamplayer.content.SyncPhase.COMPLETE,
-                                        fastStartReady = true,
-                                        fullIndexComplete = true,
-                                        lastSyncTimestamp = System.currentTimeMillis()
-                                )
-                            } else {
-                                null
-                            }
-
-            if (effectiveState != null) {
-                coordinator.restoreState(effectiveState)
-            }
-
-            if (!hasFullIndex && (!hasAnySearchIndex || savedState == null || !savedState.fastStartReady)) {
-                coordinator.startFastStartSync()
-            } else if (savedState?.phase == com.example.xtreamplayer.content.SyncPhase.BACKGROUND_FULL &&
-                            savedState.isPaused.not() &&
-                            savedState.fullIndexComplete.not()
-            ) {
-                coordinator.resumeBackgroundSync()
-            }
-        }
-    }
-
-    // Auto-start background sync after fast start completes
-    LaunchedEffect(syncState.fastStartReady, startupDeferredReady) {
-        if (!startupDeferredReady) {
-            return@LaunchedEffect
-        }
-        val coordinator = progressiveSyncCoordinator ?: return@LaunchedEffect
-        if (syncState.fastStartReady && !syncState.fullIndexComplete) {
-            kotlinx.coroutines.delay(2000) // 2 second grace period
-            coordinator.startBackgroundFullSync()
-        }
-    }
-
+    val startupUpdateCheckEnabledState = updateViewModel.startupUpdateCheckEnabled
+    val focusAppearanceOnSettingsReturnState = remember { mutableStateOf(false) }
+    val focusManageListsOnSettingsReturnState = remember { mutableStateOf(false) }
+    val wasShowingAppearanceState = remember { mutableStateOf(false) }
+    val wasShowingManageListsState = remember { mutableStateOf(false) }
     val focusToContentTriggerState = remember { mutableIntStateOf(0) }
     var focusToContentTrigger by focusToContentTriggerState
+    SettingsAndSyncHost(
+        context = context,
+        coroutineScope = coroutineScope,
+        settings = settings,
+        settingsRepository = settingsRepository,
+        contentRepository = contentRepository,
+        subtitleRepository = subtitleRepository,
+        authState = authState,
+        activePlaybackQueue = activePlaybackQueue,
+        selectedSectionState = browseViewModel.selectedSection,
+        showManageListsState = showManageListsState,
+        showAppearanceState = showAppearanceState,
+        focusToContentTriggerState = focusToContentTriggerState,
+        focusAppearanceOnSettingsReturnState = focusAppearanceOnSettingsReturnState,
+        focusManageListsOnSettingsReturnState = focusManageListsOnSettingsReturnState,
+        wasShowingAppearanceState = wasShowingAppearanceState,
+        wasShowingManageListsState = wasShowingManageListsState,
+        startupDeferredReadyState = startupDeferredReadyState,
+        startupUpdateCheckEnabledState = startupUpdateCheckEnabledState,
+        progressiveSyncCoordinatorState = progressiveSyncCoordinatorState,
+        syncState = syncState,
+        setProgressiveSyncCoordinatorState = { progressiveSyncCoordinator = it }
+    )
     val moveFocusToNavState = remember { mutableStateOf(false) }
     var moveFocusToNav by moveFocusToNavState
 
@@ -606,83 +507,8 @@ private fun RootScreenContent(
         return false
     }
 
-    LaunchedEffect(focusToContentTrigger) {
-        if (focusToContentTrigger > 0) {
-            Timber.d("FocusDebug: Requesting content focus for trigger=$focusToContentTrigger")
-            val useDeterministicContentEntry =
-                    selectedSection == Section.SETTINGS || selectedSection == Section.CATEGORIES
-            if (useDeterministicContentEntry &&
-                            requestFocusWithFrames(
-                                    requester = contentItemFocusRequester,
-                                    label = "content-deterministic",
-                                    frameRetries = 1
-                            )
-            ) {
-                return@LaunchedEffect
-            }
-            // Fast directional handoff with a single-frame fallback.
-            if (focusManager.moveFocus(FocusDirection.Right)) {
-                return@LaunchedEffect
-            }
-            withFrameNanos {}
-            if (focusManager.moveFocus(FocusDirection.Right)) {
-                return@LaunchedEffect
-            }
-            val requesters = listOf(contentItemFocusRequester)
-            requesters.forEach { requester ->
-                if (requestFocusWithFrames(requester, "content", frameRetries = 1)) {
-                    return@LaunchedEffect
-                }
-            }
-        }
-    }
-
-    LaunchedEffect(moveFocusToNav) {
-        if (moveFocusToNav) {
-            val requester =
-                    when (selectedSection) {
-                        Section.ALL -> allNavItemFocusRequester
-                        Section.CONTINUE_WATCHING -> continueWatchingNavItemFocusRequester
-                        Section.FAVORITES -> favoritesNavItemFocusRequester
-                        Section.MOVIES -> moviesNavItemFocusRequester
-                        Section.SERIES -> seriesNavItemFocusRequester
-                        Section.LIVE -> liveNavItemFocusRequester
-                        Section.CATEGORIES -> categoriesNavItemFocusRequester
-                        Section.LOCAL_FILES -> localFilesNavItemFocusRequester
-                        Section.SETTINGS -> settingsNavItemFocusRequester
-                    }
-            requestFocusWithFrames(requester, "nav")
-            moveFocusToNav = false
-        }
-    }
-
-    LaunchedEffect(showAppearance, selectedSection) {
-        if (wasShowingAppearance && !showAppearance && selectedSection == Section.SETTINGS) {
-            focusAppearanceOnSettingsReturn = true
-            requestFocusWithFrames(contentItemFocusRequester, "settings-back")
-            focusAppearanceOnSettingsReturn = false
-        }
-        wasShowingAppearance = showAppearance
-    }
-
-    LaunchedEffect(showManageLists, selectedSection) {
-        if (wasShowingManageLists && !showManageLists && selectedSection == Section.SETTINGS) {
-            focusManageListsOnSettingsReturn = true
-            requestFocusWithFrames(contentItemFocusRequester, "settings-manage-lists-back")
-            focusManageListsOnSettingsReturn = false
-        }
-        wasShowingManageLists = showManageLists
-    }
-
     LaunchedEffect(settings.autoSignIn, settings.rememberLogin, savedConfig) {
         authViewModel.tryAutoSignIn(settings)
-    }
-
-    LaunchedEffect(startupDeferredReady) {
-        if (!startupDeferredReady) {
-            return@LaunchedEffect
-        }
-        startupUpdateCheckEnabled = settingsRepository.isStartupUpdateCheckEnabled()
     }
 
     LaunchedEffect(authState.activeConfig) {
@@ -945,24 +771,6 @@ private fun RootScreenContent(
         }
     }
 
-    LaunchedEffect(selectedSection) {
-        if (selectedSection != Section.SETTINGS) {
-            showManageLists = false
-        }
-    }
-
-    LaunchedEffect(showManageLists) {
-        if (showManageLists) {
-            focusToContentTrigger++
-        }
-    }
-
-    LaunchedEffect(showAppearance) {
-        if (showAppearance) {
-            focusToContentTrigger++
-        }
-    }
-
     LaunchedEffect(activePlaybackQueue) {
         val queue = activePlaybackQueue
         playbackFallbackAttempts = queue?.fallbackUris?.mapValues { 0 } ?: emptyMap()
@@ -997,8 +805,6 @@ private fun RootScreenContent(
         }
     }
 
-    BackHandler(enabled = showManageLists) { showManageLists = false }
-    BackHandler(enabled = showAppearance) { showAppearance = false }
     val shouldHandleRootBackForExit =
             activePlaybackQueue == null &&
                     !showManageLists &&
@@ -1732,7 +1538,6 @@ private fun RootScreenContent(
         if (showAuthLoading) {
             AuthLoadingScreen()
         } else if (authState.isSignedIn) {
-            val colors = AppTheme.colors
             val context = LocalContext.current
             val versionLabel = remember(context) { "v${appVersionName(context)}" }
             val quickSearchReady by produceState(
@@ -1748,243 +1553,136 @@ private fun RootScreenContent(
                     contentRepository.hasAnySearchIndex(config)
                 }
             }
-            Column(modifier = Modifier.fillMaxSize()) {
-                Box(
-                        modifier =
-                                Modifier.fillMaxWidth()
-                                        .height(72.dp)
-                                        .padding(start = 20.dp, end = 20.dp, top = 12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().align(Alignment.Center),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        MenuButton(
-                                expanded = navExpanded,
-                                onToggle = {
-                                    navExpanded = !navExpanded
-                                    // Focus stays on menu button - user navigates manually
-                                },
-                                onMoveRight = { focusToContentTrigger++ }
-                        )
-                        Spacer(modifier = Modifier.weight(1f))
-                        Text(
-                                text = versionLabel,
-                                color = colors.textSecondary,
-                                fontSize = 12.sp,
-                                fontFamily = settings.appFont.fontFamily,
-                                modifier = Modifier
-                                        .padding(end = 12.dp, bottom = 2.dp)
-                        )
-                    }
+            val isLegacySyncActive = sectionSyncStates.values.any { it.isActive }
+            RootNavigationHost(
+                settings = settings,
+                isPlaybackActive = activePlaybackQueue != null,
+                isLegacySyncActive = isLegacySyncActive,
+                syncState = syncState,
+                progressiveSyncCoordinator = progressiveSyncCoordinator,
+                quickSearchReady = quickSearchReady,
+                coroutineScope = coroutineScope,
+                headerContent = {
+                    MenuButton(
+                        expanded = navExpanded,
+                        onToggle = {
+                            navExpanded = !navExpanded
+                            // Focus stays on menu button - user navigates manually
+                        },
+                        onMoveRight = { focusToContentTrigger++ }
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        text = versionLabel,
+                        color = AppTheme.colors.textSecondary,
+                        fontSize = 12.sp,
+                        fontFamily = settings.appFont.fontFamily,
+                        modifier = Modifier.padding(end = 12.dp, bottom = 2.dp)
+                    )
                     TopCenterClock(
                         clockFormat = settings.clockFormat,
                         fontFamily = settings.appFont.fontFamily,
-                        modifier = Modifier.align(Alignment.Center)
+                        modifier = Modifier.align(Alignment.CenterVertically)
                     )
                 }
-
-                val isPlaybackActiveLocal = activePlaybackQueue != null
-                val isProgressiveSyncActive =
-                    syncState.phase == com.example.xtreamplayer.content.SyncPhase.FAST_START ||
-                        syncState.phase == com.example.xtreamplayer.content.SyncPhase.BACKGROUND_FULL ||
-                        syncState.phase == com.example.xtreamplayer.content.SyncPhase.ON_DEMAND_BOOST ||
-                        syncState.phase == com.example.xtreamplayer.content.SyncPhase.PAUSED
-                val isLegacySyncActive = sectionSyncStates.values.any { it.isActive }
-                val shouldShowSyncUi =
-                    !isPlaybackActiveLocal && (isProgressiveSyncActive || isLegacySyncActive)
-
-                // Progressive sync status indicators
-                if (shouldShowSyncUi) {
-                    Box(
-                        modifier =
-                            Modifier.fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.align(Alignment.TopEnd),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            // Fast Search Ready indicator (only while sync is active)
-                            if (quickSearchReady) {
-                                Row(
-                                    modifier =
-                                        Modifier.background(
-                                                colors.success,
-                                                RoundedCornerShape(4.dp)
-                                            )
-                                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = null,
-                                        tint = colors.textOnAccent,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        "Quick Search Ready",
-                                        fontSize = 12.sp,
-                                        color = colors.textOnAccent,
-                                        fontFamily = AppTheme.fontFamily
-                                    )
-                                }
-                            }
-
-                            // Background/boost syncing indicator
-                            if (isProgressiveSyncActive) {
-                                Row(
-                                    modifier =
-                                        Modifier.background(
-                                                colors.surfaceAlt,
-                                                RoundedCornerShape(4.dp)
-                                            )
-                                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                                            .clickable {
-                                                coroutineScope.launch {
-                                                    if (syncState.isPaused) {
-                                                        progressiveSyncCoordinator?.resumeBackgroundSync()
-                                                    } else {
-                                                        progressiveSyncCoordinator?.pauseBackgroundSync()
-                                                    }
-                                                }
-                                            },
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    androidx.compose.material3.CircularProgressIndicator(
-                                        modifier = Modifier.size(14.dp),
-                                        strokeWidth = 2.dp,
-                                        color = colors.textPrimary
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    val currentSection = syncState.currentSection
-                                    val progress =
-                                        currentSection?.let { syncState.sectionProgress[it] }
-                                    val text =
-                                        if (syncState.isPaused) {
-                                            "Sync paused"
-                                        } else if (currentSection != null && progress != null) {
-                                            "Syncing ${currentSection.name.lowercase()}... (${progress.itemsIndexed} items)"
-                                        } else {
-                                            "Syncing library..."
-                                        }
-                                    Text(
-                                        text,
-                                        fontSize = 11.sp,
-                                        color = colors.textPrimary,
-                                        fontFamily = AppTheme.fontFamily
-                                    )
-                                    Spacer(Modifier.width(12.dp))
-                                    Text(
-                                        text = if (syncState.isPaused) "Resume" else "Pause",
-                                        fontSize = 11.sp,
-                                        color = colors.accent,
-                                        fontFamily = AppTheme.fontFamily
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
+            ) {
                 // Removed extra long sync banner; top-right pill is the only sync indicator.
 
                 BrowseScreen(
-                        context = context,
-                        coroutineScope = coroutineScope,
-                        authState = authState,
-                        savedConfig = savedConfig,
-                        activeConfig = activeConfig,
-                        settings = settings,
-                        settingsViewModel = settingsViewModel,
-                        appVersionName = appVersionName,
-                        selectedSectionState = browseViewModel.selectedSection,
-                        navExpandedState = browseViewModel.navExpanded,
-                        moveFocusToNavState = moveFocusToNavState,
-                        focusToContentTriggerState = focusToContentTriggerState,
-                        showManageListsState = showManageListsState,
-                        showAppearanceState = showAppearanceState,
-                        focusAppearanceOnSettingsReturn = focusAppearanceOnSettingsReturn,
-                        focusManageListsOnSettingsReturn = focusManageListsOnSettingsReturn,
-                        showThemeDialogState = showThemeDialogState,
-                        showFontDialogState = showFontDialogState,
-                        showUiScaleDialogState = showUiScaleDialogState,
-                        showFontScaleDialogState = showFontScaleDialogState,
-                        showNextEpisodeThresholdDialogState = showNextEpisodeThresholdDialogState,
-                        showVodBufferDialogState = showVodBufferDialogState,
-                        showSubtitleAppearanceDialogState = showSubtitleAppearanceDialogState,
-                        showSubtitleCacheAutoClearDialogState = showSubtitleCacheAutoClearDialogState,
-                        showApiKeyDialogState = showApiKeyDialogState,
-                        cacheClearNonceState = cacheClearNonceState,
-                        contentRepository = contentRepository,
-                        favoritesRepository = favoritesRepository,
-                        continueWatchingRepository = continueWatchingRepository,
-                        subtitleRepository = subtitleRepository,
-                        playbackEngine = playbackEngine,
-                        progressiveSyncCoordinator = progressiveSyncCoordinator,
-                        syncState = syncState,
-                        storagePermissionLauncher = storagePermissionLauncher,
-                        localFiles = localFiles,
-                        allNavItemFocusRequester = allNavItemFocusRequester,
-                        continueWatchingNavItemFocusRequester = continueWatchingNavItemFocusRequester,
-                        favoritesNavItemFocusRequester = favoritesNavItemFocusRequester,
-                        moviesNavItemFocusRequester = moviesNavItemFocusRequester,
-                        seriesNavItemFocusRequester = seriesNavItemFocusRequester,
-                        liveNavItemFocusRequester = liveNavItemFocusRequester,
-                        categoriesNavItemFocusRequester = categoriesNavItemFocusRequester,
-                        localFilesNavItemFocusRequester = localFilesNavItemFocusRequester,
-                        settingsNavItemFocusRequester = settingsNavItemFocusRequester,
-                        contentItemFocusRequester = contentItemFocusRequester,
-                        resumeFocusId = resumeFocusId,
-                        resumeFocusRequester = resumeFocusRequester,
-                        isPlaybackActive = activePlaybackQueue != null,
-                        onItemFocused = handleItemFocused,
-                        onPlay = handlePlayItem,
-                        onPlayWithPosition = handlePlayItemWithPosition,
-                        onPlayContinueWatching = { item, position, parent ->
-                            activePlaybackSeriesParent = parent
-                            handlePlayItemWithPosition(item, position)
-                        },
-                        onPlayWithPositionAndQueue = handlePlayItemWithPositionAndQueue,
-                        onMovieInfo = openMovieInfo,
-                        onMovieInfoContinueWatching = openMovieInfoFromContinueWatching,
-                        onPlayLocalFile = handlePlayLocalFile,
-                        localResumePositionMsForUri = { uri ->
-                            localResumeByMediaId[localMediaIdForUri(uri)]?.positionMs?.takeIf { it > 0 }
-                        },
-                        onToggleFavorite = handleToggleFavorite,
-                        onToggleCategoryFavorite = handleToggleCategoryFavorite,
-                        onSeriesPlaybackStart = { activePlaybackSeriesParent = it },
-                        onTriggerSectionSync = { section, config ->
-                            triggerSectionSync(section, config)
-                        },
-                        onEditList = {
-                            coroutineScope.launch {
-                                contentRepository.clearCache()
-                                contentRepository.clearDiskCache()
-                            }
-                            authViewModel.enterEditMode()
-                        },
-                        onSignOutKeepSaved = {
-                            coroutineScope.launch {
-                                contentRepository.clearCache()
-                                contentRepository.clearDiskCache()
-                            }
-                            authViewModel.signOut(keepSaved = true)
-                        },
-                        onSignOutForget = {
-                            coroutineScope.launch {
-                                contentRepository.clearCache()
-                                contentRepository.clearDiskCache()
-                            }
-                            authViewModel.signOut(keepSaved = false)
-                        },
-                        onToggleCheckUpdatesOnStartup = settingsViewModel::toggleCheckUpdatesOnStartup,
-                        onCheckForUpdates = { checkForUpdates(UpdateCheckSource.MANUAL) },
-                        hasStoragePermission = ::hasStoragePermission,
-                        scanMediaStoreMedia = ::scanMediaStoreMedia,
-                        getRequiredMediaPermissions = ::getRequiredMediaPermissions
+                    context = context,
+                    coroutineScope = coroutineScope,
+                    authState = authState,
+                    savedConfig = savedConfig,
+                    activeConfig = activeConfig,
+                    settings = settings,
+                    settingsViewModel = settingsViewModel,
+                    appVersionName = appVersionName,
+                    selectedSectionState = browseViewModel.selectedSection,
+                    navExpandedState = browseViewModel.navExpanded,
+                    moveFocusToNavState = moveFocusToNavState,
+                    focusToContentTriggerState = focusToContentTriggerState,
+                    showManageListsState = showManageListsState,
+                    showAppearanceState = showAppearanceState,
+                    focusAppearanceOnSettingsReturn = focusAppearanceOnSettingsReturnState.value,
+                    focusManageListsOnSettingsReturn = focusManageListsOnSettingsReturnState.value,
+                    showThemeDialogState = showThemeDialogState,
+                    showFontDialogState = showFontDialogState,
+                    showUiScaleDialogState = showUiScaleDialogState,
+                    showFontScaleDialogState = showFontScaleDialogState,
+                    showNextEpisodeThresholdDialogState = showNextEpisodeThresholdDialogState,
+                    showVodBufferDialogState = showVodBufferDialogState,
+                    showSubtitleAppearanceDialogState = showSubtitleAppearanceDialogState,
+                    showSubtitleCacheAutoClearDialogState = showSubtitleCacheAutoClearDialogState,
+                    showApiKeyDialogState = showApiKeyDialogState,
+                    cacheClearNonceState = cacheClearNonceState,
+                    contentRepository = contentRepository,
+                    favoritesRepository = favoritesRepository,
+                    continueWatchingRepository = continueWatchingRepository,
+                    subtitleRepository = subtitleRepository,
+                    playbackEngine = playbackEngine,
+                    progressiveSyncCoordinator = progressiveSyncCoordinator,
+                    syncState = syncState,
+                    storagePermissionLauncher = storagePermissionLauncher,
+                    localFiles = localFiles,
+                    allNavItemFocusRequester = allNavItemFocusRequester,
+                    continueWatchingNavItemFocusRequester = continueWatchingNavItemFocusRequester,
+                    favoritesNavItemFocusRequester = favoritesNavItemFocusRequester,
+                    moviesNavItemFocusRequester = moviesNavItemFocusRequester,
+                    seriesNavItemFocusRequester = seriesNavItemFocusRequester,
+                    liveNavItemFocusRequester = liveNavItemFocusRequester,
+                    categoriesNavItemFocusRequester = categoriesNavItemFocusRequester,
+                    localFilesNavItemFocusRequester = localFilesNavItemFocusRequester,
+                    settingsNavItemFocusRequester = settingsNavItemFocusRequester,
+                    contentItemFocusRequester = contentItemFocusRequester,
+                    resumeFocusId = resumeFocusId,
+                    resumeFocusRequester = resumeFocusRequester,
+                    isPlaybackActive = activePlaybackQueue != null,
+                    onItemFocused = handleItemFocused,
+                    onPlay = handlePlayItem,
+                    onPlayWithPosition = handlePlayItemWithPosition,
+                    onPlayContinueWatching = { item, position, parent ->
+                        activePlaybackSeriesParent = parent
+                        handlePlayItemWithPosition(item, position)
+                    },
+                    onPlayWithPositionAndQueue = handlePlayItemWithPositionAndQueue,
+                    onMovieInfo = openMovieInfo,
+                    onMovieInfoContinueWatching = openMovieInfoFromContinueWatching,
+                    onPlayLocalFile = handlePlayLocalFile,
+                    localResumePositionMsForUri = { uri ->
+                        localResumeByMediaId[localMediaIdForUri(uri)]?.positionMs?.takeIf { it > 0 }
+                    },
+                    onToggleFavorite = handleToggleFavorite,
+                    onToggleCategoryFavorite = handleToggleCategoryFavorite,
+                    onSeriesPlaybackStart = { activePlaybackSeriesParent = it },
+                    onTriggerSectionSync = { section, config ->
+                        triggerSectionSync(section, config)
+                    },
+                    onEditList = {
+                        coroutineScope.launch {
+                            contentRepository.clearCache()
+                            contentRepository.clearDiskCache()
+                        }
+                        authViewModel.enterEditMode()
+                    },
+                    onSignOutKeepSaved = {
+                        coroutineScope.launch {
+                            contentRepository.clearCache()
+                            contentRepository.clearDiskCache()
+                        }
+                        authViewModel.signOut(keepSaved = true)
+                    },
+                    onSignOutForget = {
+                        coroutineScope.launch {
+                            contentRepository.clearCache()
+                            contentRepository.clearDiskCache()
+                        }
+                        authViewModel.signOut(keepSaved = false)
+                    },
+                    onToggleCheckUpdatesOnStartup = settingsViewModel::toggleCheckUpdatesOnStartup,
+                    onCheckForUpdates = { checkForUpdates(UpdateCheckSource.MANUAL) },
+                    hasStoragePermission = ::hasStoragePermission,
+                    scanMediaStoreMedia = ::scanMediaStoreMedia,
+                    getRequiredMediaPermissions = ::getRequiredMediaPermissions
                 )
 
                 RootDialogsHost(
@@ -2086,104 +1784,101 @@ private fun RootScreenContent(
             }
         }
 
-        val effectivePlaybackSettings =
-            subtitleAppearancePreview?.let { preview ->
-                settings.copy(subtitleAppearance = preview)
-            } ?: settings
-        PlayerScreen(
-                activePlaybackQueue = activePlaybackQueue,
-                activePlaybackTitle = activePlaybackTitle,
-                activePlaybackItem = activePlaybackItem,
-                activePlaybackItems = activePlaybackItems,
-                playbackEngine = playbackEngine,
-                subtitleRepository = subtitleRepository,
-                settings = effectivePlaybackSettings,
-                onRequestOpenSubtitlesApiKey = { showApiKeyDialog = true },
-                onExitPlayback = {
-                    savePlaybackProgress()
-                    activePlaybackQueue = null
-                    activePlaybackTitle = null
-                    activePlaybackItem = null
-                    activePlaybackSeriesParent = null
-                    activePlaybackSubtitleState = null
-                    resumePositionMs = null
-                },
-                onPlayNextEpisode = {
-                    playbackEngine.player.seekToNextMediaItem()
-                    playbackEngine.player.playWhenReady = true
-                },
-                onMatchFrameRateChange = { enabled ->
-                    playbackEngine.applySettings(settings.copy(matchFrameRateEnabled = enabled))
-                    settingsViewModel.setMatchFrameRateEnabled(enabled)
-                },
-                onLiveChannelSwitch = switchLiveChannel,
-                onLiveGuideChannelSelect = { item, channels ->
-                    handlePlayItem(item, channels)
-                },
-                continueWatchingSubtitleState = activePlaybackSubtitleState,
-                onSubtitleStateChanged = { state ->
-                    activePlaybackSubtitleState = state
-                },
-                loadLiveNowNext = loadLiveNowNext@{ item ->
-                    val config = authState.activeConfig ?: return@loadLiveNowNext Result.success(null)
-                    if (item.contentType != ContentType.LIVE) {
-                        return@loadLiveNowNext Result.success(null)
-                    }
-                    contentRepository.loadLiveNowNext(
-                        streamId = item.streamId,
-                        authConfig = config
-                    )
-                },
-                loadLiveCategories = loadLiveCategories@{
-                    val config = authState.activeConfig
-                            ?: return@loadLiveCategories Result.success(emptyList())
-                    runCatching { contentRepository.loadCategories(ContentType.LIVE, config) }
-                },
-                loadLiveCategoryChannels = loadLiveCategoryChannels@{ category ->
-                    val config = authState.activeConfig
-                            ?: return@loadLiveCategoryChannels Result.success(emptyList())
-                    runCatching {
-                        val items = mutableListOf<ContentItem>()
-                        var page = 0
-                        val limit = 200
-                        var retryFirstPageWithRefresh = false
-                        while (true) {
-                            val pageData =
-                                    contentRepository.loadCategoryPage(
-                                            type = ContentType.LIVE,
-                                            categoryId = category.id,
-                                            page = page,
-                                            limit = limit,
-                                            authConfig = config,
-                                            forceRefresh = retryFirstPageWithRefresh
-                                    )
-                            if (page == 0 && pageData.items.isEmpty() && !retryFirstPageWithRefresh) {
-                                // Keep search/navigation responsive by reading cache first, then do
-                                // one forced refresh only if page 0 is empty.
-                                retryFirstPageWithRefresh = true
-                                continue
-                            }
-                            retryFirstPageWithRefresh = false
-                            if (pageData.items.isEmpty()) break
-                            items += pageData.items.filter { it.contentType == ContentType.LIVE }
-                            if (pageData.endReached) break
-                            page += 1
-                            if (page >= 100) break
-                        }
-                        items.distinctBy { it.id }
-                    }
-                },
-                loadLiveCategoryThumbnail = loadLiveCategoryThumbnail@{ category ->
-                    val config = authState.activeConfig
-                            ?: return@loadLiveCategoryThumbnail Result.success(null)
-                    runCatching {
-                        contentRepository.categoryThumbnail(
+        PlayerHost(
+            activePlaybackQueue = activePlaybackQueue,
+            activePlaybackTitle = activePlaybackTitle,
+            activePlaybackItem = activePlaybackItem,
+            activePlaybackItems = activePlaybackItems,
+            continueWatchingSubtitleState = activePlaybackSubtitleState,
+            playbackEngine = playbackEngine,
+            subtitleRepository = subtitleRepository,
+            settings = settings,
+            subtitleAppearancePreview = subtitleAppearancePreview,
+            onRequestOpenSubtitlesApiKey = { showApiKeyDialog = true },
+            onExitPlayback = {
+                savePlaybackProgress()
+                activePlaybackQueue = null
+                activePlaybackTitle = null
+                activePlaybackItem = null
+                activePlaybackSeriesParent = null
+                activePlaybackSubtitleState = null
+                resumePositionMs = null
+            },
+            onPlayNextEpisode = {
+                playbackEngine.player.seekToNextMediaItem()
+                playbackEngine.player.playWhenReady = true
+            },
+            onMatchFrameRateChange = { enabled ->
+                playbackEngine.applySettings(settings.copy(matchFrameRateEnabled = enabled))
+                settingsViewModel.setMatchFrameRateEnabled(enabled)
+            },
+            onLiveChannelSwitch = switchLiveChannel,
+            onLiveGuideChannelSelect = { item, channels ->
+                handlePlayItem(item, channels)
+            },
+            onSubtitleStateChanged = { state ->
+                activePlaybackSubtitleState = state
+            },
+            loadLiveNowNext = loadLiveNowNext@{ item ->
+                val config = authState.activeConfig ?: return@loadLiveNowNext Result.success(null)
+                if (item.contentType != ContentType.LIVE) {
+                    return@loadLiveNowNext Result.success(null)
+                }
+                contentRepository.loadLiveNowNext(
+                    streamId = item.streamId,
+                    authConfig = config
+                )
+            },
+            loadLiveCategories = loadLiveCategories@{
+                val config = authState.activeConfig
+                    ?: return@loadLiveCategories Result.success(emptyList())
+                runCatching { contentRepository.loadCategories(ContentType.LIVE, config) }
+            },
+            loadLiveCategoryChannels = loadLiveCategoryChannels@{ category ->
+                val config = authState.activeConfig
+                    ?: return@loadLiveCategoryChannels Result.success(emptyList())
+                runCatching {
+                    val items = mutableListOf<ContentItem>()
+                    var page = 0
+                    val limit = 200
+                    var retryFirstPageWithRefresh = false
+                    while (true) {
+                        val pageData =
+                            contentRepository.loadCategoryPage(
                                 type = ContentType.LIVE,
                                 categoryId = category.id,
-                                authConfig = config
-                        )
+                                page = page,
+                                limit = limit,
+                                authConfig = config,
+                                forceRefresh = retryFirstPageWithRefresh
+                            )
+                        if (page == 0 && pageData.items.isEmpty() && !retryFirstPageWithRefresh) {
+                            // Keep search/navigation responsive by reading cache first, then do
+                            // one forced refresh only if page 0 is empty.
+                            retryFirstPageWithRefresh = true
+                            continue
+                        }
+                        retryFirstPageWithRefresh = false
+                        if (pageData.items.isEmpty()) break
+                        items += pageData.items.filter { it.contentType == ContentType.LIVE }
+                        if (pageData.endReached) break
+                        page += 1
+                        if (page >= 100) break
                     }
+                    items.distinctBy { it.id }
                 }
+            },
+            loadLiveCategoryThumbnail = loadLiveCategoryThumbnail@{ category ->
+                val config = authState.activeConfig
+                    ?: return@loadLiveCategoryThumbnail Result.success(null)
+                runCatching {
+                    contentRepository.categoryThumbnail(
+                        type = ContentType.LIVE,
+                        categoryId = category.id,
+                        authConfig = config
+                    )
+                }
+            }
         )
 
         if (movieInfoItem != null) {
@@ -10505,144 +10200,6 @@ private fun PlotDialog(
                         fontSize = 14.sp,
                         fontFamily = AppTheme.fontFamily,
                         fontWeight = FontWeight.SemiBold
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun UpdatePromptDialog(
-    release: UpdateRelease,
-    isDownloading: Boolean,
-    onUpdate: () -> Unit,
-    onLater: () -> Unit
-) {
-    val colors = AppTheme.colors
-    val shape = RoundedCornerShape(16.dp)
-    val updateFocusRequester = remember { FocusRequester() }
-    val laterFocusRequester = remember { FocusRequester() }
-
-    LaunchedEffect(isDownloading) {
-        if (!isDownloading) {
-            updateFocusRequester.requestFocus()
-        }
-    }
-    AppDialog(
-        onDismissRequest = onLater,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Column(
-            modifier = Modifier
-                // Keep this dialog narrower so it feels centered on large TV screens.
-                // Follow-up tune to keep the popup visually compact on wide displays.
-                .fillMaxWidth(0.40f)
-                .widthIn(min = 360.dp, max = 680.dp)
-                .clip(shape)
-                .background(colors.surface)
-                .border(1.dp, colors.borderStrong, shape)
-                .padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Text(
-                text = "Update available",
-                color = colors.textPrimary,
-                fontSize = 22.sp,
-                fontFamily = AppTheme.fontFamily,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = "Version ${release.versionName} is ready to install.",
-                color = colors.textSecondary,
-                fontSize = 14.sp,
-                fontFamily = AppTheme.fontFamily
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            if (isDownloading) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(colors.backgroundAlt)
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "Downloading update...",
-                        color = colors.textSecondary,
-                        fontSize = 13.sp,
-                        fontFamily = AppTheme.fontFamily
-                    )
-                    LinearProgressIndicator(
-                        progress = { 0.35f },
-                        modifier = Modifier.fillMaxWidth(),
-                        color = colors.accent,
-                        trackColor = colors.surfaceAlt
-                    )
-                }
-            } else {
-                Text(
-                    text = "Install now or choose Later.",
-                    color = colors.textTertiary,
-                    fontSize = 13.sp,
-                    fontFamily = AppTheme.fontFamily
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                FocusableButton(
-                    onClick = onUpdate,
-                    enabled = !isDownloading,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(52.dp)
-                        .focusRequester(updateFocusRequester),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = colors.accent,
-                        contentColor = colors.textOnAccent,
-                        disabledContainerColor = colors.surfaceAlt,
-                        disabledContentColor = colors.textTertiary
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    focusBorderWidth = 1.dp,
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
-                ) {
-                    Text(
-                        text = if (isDownloading) "Updating..." else "Update now",
-                        fontFamily = AppTheme.fontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 14.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                FocusableButton(
-                    onClick = onLater,
-                    enabled = !isDownloading,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(52.dp)
-                        .focusRequester(laterFocusRequester),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = colors.surfaceAlt,
-                        contentColor = colors.textPrimary,
-                        disabledContainerColor = colors.surfaceAlt,
-                        disabledContentColor = colors.textTertiary
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    focusBorderWidth = 1.dp,
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
-                ) {
-                    Text(
-                        text = "Later",
-                        fontFamily = AppTheme.fontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 14.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }

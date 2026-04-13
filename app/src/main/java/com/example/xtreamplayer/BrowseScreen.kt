@@ -329,6 +329,28 @@ internal fun BrowseScreen(
         focusToContentTrigger++
     }
 
+    LaunchedEffect(moveFocusToNav) {
+        if (!moveFocusToNav) return@LaunchedEffect
+        val requester =
+            when (selectedSection) {
+                Section.ALL -> allNavItemFocusRequester
+                Section.CONTINUE_WATCHING -> continueWatchingNavItemFocusRequester
+                Section.FAVORITES -> favoritesNavItemFocusRequester
+                Section.MOVIES -> moviesNavItemFocusRequester
+                Section.SERIES -> seriesNavItemFocusRequester
+                Section.LIVE -> liveNavItemFocusRequester
+                Section.CATEGORIES -> categoriesNavItemFocusRequester
+                Section.LOCAL_FILES -> localFilesNavItemFocusRequester
+                Section.SETTINGS -> settingsNavItemFocusRequester
+            }
+        val focusedNow = runCatching { requester.requestFocus() }.getOrDefault(false)
+        if (!focusedNow) {
+            withFrameNanos {}
+            runCatching { requester.requestFocus() }
+        }
+        moveFocusToNav = false
+    }
+
 Row(modifier = Modifier.fillMaxSize()) {
     BrowseSideNavRail(
         selectedSection = selectedSection,
