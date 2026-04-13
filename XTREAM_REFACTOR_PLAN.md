@@ -62,7 +62,7 @@ Acceptance criteria:
 
 Suggested boundaries:
 - `[ ]` live content
-- `[ ]` VOD content
+- `[x]` VOD content
 - `[ ]` series/episode content
 - `[ ]` search/indexing
 - `[ ]` sync/cache maintenance

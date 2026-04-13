@@ -28,6 +28,7 @@ class ContentRepository(
 ) {
     private val seriesContentRepository = SeriesContentRepository(api, contentCache)
     private val liveContentRepository = LiveContentRepository(api)
+    private val vodContentRepository = VodContentRepository(api, contentCache)
     private val searchIndexRepository = SearchIndexRepository(contentCache)
     private companion object {
         const val DEFAULT_PAGE_SIZE = 24
@@ -77,11 +78,6 @@ class ContentRepository(
                 return size > 200
             }
         }
-    private val movieInfoCache = object : LinkedHashMap<String, MovieInfo>(100, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MovieInfo>): Boolean {
-            return size > 100
-        }
-    }
     private val seriesInfoCache = object : LinkedHashMap<String, SeriesInfo>(100, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, SeriesInfo>): Boolean {
             return size > 100
@@ -117,7 +113,6 @@ class ContentRepository(
     private val memoryCacheMutex = Mutex()
     private val seriesEpisodesMutex = Mutex()
     private val seriesSeasonCountMutex = Mutex()
-    private val movieInfoMutex = Mutex()
     private val seriesInfoMutex = Mutex()
     private val seriesSeasonFullMutex = Mutex()
     private val seriesSeasonsMutex = Mutex()
@@ -391,24 +386,7 @@ class ContentRepository(
         item: ContentItem,
         authConfig: AuthConfig
     ): MovieInfo? {
-        if (item.contentType != ContentType.MOVIES) {
-            return null
-        }
-        val vodId = item.streamId.ifBlank { item.id }
-        val key = "vod-info-${accountKey(authConfig)}-$vodId"
-        movieInfoMutex.withLock {
-            movieInfoCache[key]?.let { return it }
-        }
-        val cached = contentCache.readVodInfo(vodId, authConfig)
-        if (cached != null) {
-            movieInfoMutex.withLock { movieInfoCache[key] = cached }
-            return cached
-        }
-        val result = api.fetchVodInfo(authConfig, vodId)
-        val info = result.getOrElse { throw it }
-        contentCache.writeVodInfo(vodId, authConfig, info)
-        movieInfoMutex.withLock { movieInfoCache[key] = info }
-        return info
+        return vodContentRepository.loadMovieInfo(item, authConfig)
     }
 
     suspend fun loadSeriesInfo(
@@ -1022,7 +1000,7 @@ class ContentRepository(
                         }
                         mutableListOf()
                     } else {
-                        loadSectionIndex(section, authConfig)?.toMutableList() ?: mutableListOf()
+                        searchIndexRepository.loadSectionIndex(section, authConfig)?.toMutableList() ?: mutableListOf()
                     }
 
                 suspend fun saveProgressCheckpoint(lastPage: Int) {
@@ -1209,7 +1187,7 @@ class ContentRepository(
             val checkpoint = contentCache.readSectionSyncCheckpoint(section, authConfig)
             val startPage = checkpoint?.lastPageSynced?.plus(1) ?: 0
 
-            val existingItems = loadSectionIndex(section, authConfig)?.toMutableList() ?: mutableListOf()
+            val existingItems = searchIndexRepository.loadSectionIndex(section, authConfig)?.toMutableList() ?: mutableListOf()
 
             Timber.d("On-demand boost: $section fetching pages $startPage-${startPage + targetPages - 1}")
 
@@ -1361,6 +1339,7 @@ class ContentRepository(
         validationCacheMutex.withLock { validationCache.clear() }
         SearchNormalizer.clearCache()
         searchIndexRepository.clearCache()
+        vodContentRepository.clearCache()
         seriesContentRepository.clearCache()
         liveContentRepository.clearCache()
     }
