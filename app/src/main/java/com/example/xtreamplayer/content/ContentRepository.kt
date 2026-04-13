@@ -1855,18 +1855,6 @@ class ContentRepository(
         return raw.coerceIn(0.05f, 0.95f)
     }
 
-    private fun accountKey(authConfig: AuthConfig): String {
-        return "${authConfig.baseUrl}|${authConfig.username}|${authConfig.listName}"
-    }
-
-    private fun indexKey(section: Section, authConfig: AuthConfig): String {
-        return "${section.name}|${authConfig.baseUrl}|${authConfig.username}|${authConfig.listName}"
-    }
-
-    private fun seasonCountKey(seriesId: String, authConfig: AuthConfig): String {
-        return "seasons|${authConfig.baseUrl}|${authConfig.username}|${authConfig.listName}|$seriesId"
-    }
-
     suspend fun clearCache() {
         memoryCacheMutex.withLock { memoryCache.clear() }
         categoryLock.withLock { categoryCache.clear() }
@@ -1936,10 +1924,6 @@ class ContentRepository(
             categoryThumbnailCache[key] = imageUrl
         }
         return imageUrl
-    }
-
-    private fun cacheKey(sectionKey: String, page: Int, limit: Int): String {
-        return "$sectionKey-$page-$limit"
     }
 
     private suspend fun <K, V> readCache(
