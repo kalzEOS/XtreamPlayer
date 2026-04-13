@@ -275,6 +275,23 @@ class ContentRepository(
         return searchIndexRepository.hasAnySearchIndex(authConfig)
     }
 
+    private suspend fun loadSectionPage(
+        section: Section,
+        page: Int,
+        limit: Int,
+        authConfig: AuthConfig
+    ): ContentPage {
+        return searchContentRepository.loadSectionPage(section, page, limit, authConfig)
+    }
+
+    private suspend fun loadMixedPage(
+        page: Int,
+        limit: Int,
+        authConfig: AuthConfig
+    ): ContentPage {
+        return searchContentRepository.loadMixedPage(page, limit, authConfig)
+    }
+
     suspend fun loadSeriesEpisodePage(
         seriesId: String,
         page: Int,
@@ -910,7 +927,6 @@ class ContentRepository(
 
     suspend fun clearCache() {
         memoryCacheMutex.withLock { memoryCache.clear() }
-        validationCacheMutex.withLock { validationCache.clear() }
         SearchNormalizer.clearCache()
         searchIndexRepository.clearCache()
         searchContentRepository.clearCache()

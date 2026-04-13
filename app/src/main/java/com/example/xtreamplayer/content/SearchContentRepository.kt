@@ -104,7 +104,7 @@ internal class SearchContentRepository(
         memoryCacheMutex.withLock { memoryCache.clear() }
     }
 
-    private suspend fun loadSectionPage(
+    internal suspend fun loadSectionPage(
         section: Section,
         page: Int,
         limit: Int,
@@ -200,7 +200,7 @@ internal class SearchContentRepository(
         }
     }
 
-    private suspend fun loadMixedPage(
+    internal suspend fun loadMixedPage(
         page: Int,
         limit: Int,
         authConfig: AuthConfig
