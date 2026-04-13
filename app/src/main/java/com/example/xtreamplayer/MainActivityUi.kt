@@ -759,10 +759,15 @@ private fun RootScreenContent(
                         requestFocusWithFrames(
                                 requester = resumeFocusRequester,
                                 label = "resume-content",
-                                frameRetries = 6
+                                frameRetries = 10
                         )
                 if (!resumeFocused) {
-                    browseViewModel.focusToContentTrigger.intValue++
+                    delay(120)
+                    requestFocusWithFrames(
+                        requester = resumeFocusRequester,
+                        label = "resume-content",
+                        frameRetries = 8
+                    )
                 }
             } else {
                 browseViewModel.focusToContentTrigger.intValue++

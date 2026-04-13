@@ -147,6 +147,23 @@ class ContentRepository(
         )
     }
 
+    private suspend fun loadSectionPage(
+        section: Section,
+        page: Int,
+        limit: Int,
+        authConfig: AuthConfig
+    ): ContentPage {
+        return searchContentRepository.loadSectionPage(section, page, limit, authConfig)
+    }
+
+    private suspend fun loadMixedPage(
+        page: Int,
+        limit: Int,
+        authConfig: AuthConfig
+    ): ContentPage {
+        return searchContentRepository.loadMixedPage(page, limit, authConfig)
+    }
+
     fun categorySearchPager(
         type: ContentType,
         categoryId: String,
@@ -273,23 +290,6 @@ class ContentRepository(
 
     suspend fun hasAnySearchIndex(authConfig: AuthConfig): Boolean {
         return searchIndexRepository.hasAnySearchIndex(authConfig)
-    }
-
-    private suspend fun loadSectionPage(
-        section: Section,
-        page: Int,
-        limit: Int,
-        authConfig: AuthConfig
-    ): ContentPage {
-        return searchContentRepository.loadSectionPage(section, page, limit, authConfig)
-    }
-
-    private suspend fun loadMixedPage(
-        page: Int,
-        limit: Int,
-        authConfig: AuthConfig
-    ): ContentPage {
-        return searchContentRepository.loadMixedPage(page, limit, authConfig)
     }
 
     suspend fun loadSeriesEpisodePage(
