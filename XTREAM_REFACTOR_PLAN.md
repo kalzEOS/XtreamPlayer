@@ -34,7 +34,7 @@ Acceptance criteria:
 
 ## Phase 2: Move root state into view models
 
-- `[ ]` Identify the state that currently belongs to the screen, not the component tree.
+- `[x]` Identify the state that currently belongs to the screen, not the component tree.
 - `[x]` Identify the state that currently belongs to the screen, not the component tree.
 - `[x]` Add `UiState` data classes for major sections instead of many `mutableStateOf` fields.
 - `[x]` Migrate state into `StateFlow` or `MutableStateFlow` where appropriate.
