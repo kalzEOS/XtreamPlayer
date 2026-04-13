@@ -36,18 +36,18 @@ Acceptance criteria:
 
 - `[ ]` Identify the state that currently belongs to the screen, not the component tree.
 - `[x]` Identify the state that currently belongs to the screen, not the component tree.
-- `[ ]` Add `UiState` data classes for major sections instead of many `mutableStateOf` fields.
+- `[x]` Add `UiState` data classes for major sections instead of many `mutableStateOf` fields.
 - `[ ]` Migrate state into `StateFlow` or `MutableStateFlow` where appropriate.
-- `[ ]` Keep Compose state only for ephemeral UI details that are truly local.
-- `[ ]` Migrate browse, update, and playback orchestration first.
+- `[x]` Keep Compose state only for ephemeral UI details that are truly local.
+- `[x]` Migrate browse, update, and playback orchestration first.
 
 Suggested targets:
-- `[ ]` `selectedSection`
-- `[ ]` `navExpanded`
-- `[ ]` update dialog state
-- `[ ]` startup update check flags
-- `[ ]` sync progress and sync pause state
-- `[ ]` player retry / recovery state
+- `[x]` `selectedSection`
+- `[x]` `navExpanded`
+- `[x]` update dialog state
+- `[x]` startup update check flags
+- `[x]` sync progress and sync pause state
+- `[x]` player retry / recovery state
 
 Acceptance criteria:
 - Screen state can be reasoned about from a small number of immutable state objects.
