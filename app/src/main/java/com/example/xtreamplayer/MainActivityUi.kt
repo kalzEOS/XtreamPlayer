@@ -318,26 +318,17 @@ private fun RootScreenContent(
     var showManageLists by showManageListsState
     val showAppearanceState = browseViewModel.showAppearance
     var showAppearance by showAppearanceState
-    val showApiKeyDialogState = remember { mutableStateOf(false) }
-    var showApiKeyDialog by showApiKeyDialogState
-    val showThemeDialogState = remember { mutableStateOf(false) }
-    var showThemeDialog by showThemeDialogState
-    val showFontDialogState = remember { mutableStateOf(false) }
-    var showFontDialog by showFontDialogState
-    val showUiScaleDialogState = remember { mutableStateOf(false) }
-    var showUiScaleDialog by showUiScaleDialogState
-    val showFontScaleDialogState = remember { mutableStateOf(false) }
-    var showFontScaleDialog by showFontScaleDialogState
-    val showNextEpisodeThresholdDialogState = remember { mutableStateOf(false) }
-    var showNextEpisodeThresholdDialog by showNextEpisodeThresholdDialogState
-    val showVodBufferDialogState = remember { mutableStateOf(false) }
-    var showVodBufferDialog by showVodBufferDialogState
-    val showSubtitleAppearanceDialogState = remember { mutableStateOf(false) }
-    var showSubtitleAppearanceDialog by showSubtitleAppearanceDialogState
-    val subtitleAppearancePreviewState = remember { mutableStateOf<SubtitleAppearanceSettings?>(null) }
-    var subtitleAppearancePreview by subtitleAppearancePreviewState
-    val showSubtitleCacheAutoClearDialogState = remember { mutableStateOf(false) }
-    var showSubtitleCacheAutoClearDialog by showSubtitleCacheAutoClearDialogState
+    val rootDialogsUiState = remember { RootDialogsUiState() }
+    var showApiKeyDialog by rootDialogsUiState.showApiKeyDialog
+    var showThemeDialog by rootDialogsUiState.showThemeDialog
+    var showFontDialog by rootDialogsUiState.showFontDialog
+    var showUiScaleDialog by rootDialogsUiState.showUiScaleDialog
+    var showFontScaleDialog by rootDialogsUiState.showFontScaleDialog
+    var showNextEpisodeThresholdDialog by rootDialogsUiState.showNextEpisodeThresholdDialog
+    var showVodBufferDialog by rootDialogsUiState.showVodBufferDialog
+    var showSubtitleAppearanceDialog by rootDialogsUiState.showSubtitleAppearanceDialog
+    var subtitleAppearancePreview by rootDialogsUiState.subtitleAppearancePreview
+    var showSubtitleCacheAutoClearDialog by rootDialogsUiState.showSubtitleCacheAutoClearDialog
     var showLocalFilesGuest by browseViewModel.showLocalFilesGuest
     var cacheClearNonce by browseViewModel.cacheClearNonce
     var activePlaybackQueue by playerViewModel.activePlaybackQueue
@@ -1585,15 +1576,7 @@ private fun RootScreenContent(
                     showAppearanceState = showAppearanceState,
                     focusAppearanceOnSettingsReturn = focusAppearanceOnSettingsReturnState.value,
                     focusManageListsOnSettingsReturn = focusManageListsOnSettingsReturnState.value,
-                    showThemeDialogState = showThemeDialogState,
-                    showFontDialogState = showFontDialogState,
-                    showUiScaleDialogState = showUiScaleDialogState,
-                    showFontScaleDialogState = showFontScaleDialogState,
-                    showNextEpisodeThresholdDialogState = showNextEpisodeThresholdDialogState,
-                    showVodBufferDialogState = showVodBufferDialogState,
-                    showSubtitleAppearanceDialogState = showSubtitleAppearanceDialogState,
-                    showSubtitleCacheAutoClearDialogState = showSubtitleCacheAutoClearDialogState,
-                    showApiKeyDialogState = showApiKeyDialogState,
+                    dialogsState = rootDialogsUiState,
                     cacheClearNonceState = browseViewModel.cacheClearNonce,
                     contentRepository = contentRepository,
                     favoritesRepository = favoritesRepository,
@@ -1670,16 +1653,7 @@ private fun RootScreenContent(
                     settings = settings,
                     settingsViewModel = settingsViewModel,
                     appRecoveryManager = appRecoveryManager,
-                    showThemeDialogState = showThemeDialogState,
-                    showFontDialogState = showFontDialogState,
-                    showUiScaleDialogState = showUiScaleDialogState,
-                    showFontScaleDialogState = showFontScaleDialogState,
-                    showNextEpisodeThresholdDialogState = showNextEpisodeThresholdDialogState,
-                    showVodBufferDialogState = showVodBufferDialogState,
-                    showSubtitleAppearanceDialogState = showSubtitleAppearanceDialogState,
-                    subtitleAppearancePreviewState = subtitleAppearancePreviewState,
-                    showSubtitleCacheAutoClearDialogState = showSubtitleCacheAutoClearDialogState,
-                    showApiKeyDialogState = showApiKeyDialogState,
+                    dialogsState = rootDialogsUiState,
                     showPlaybackRecoveryDialogState = playerViewModel.showPlaybackRecoveryDialog
                 )
 

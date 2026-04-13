@@ -11,7 +11,6 @@ import androidx.compose.runtime.setValue
 import androidx.core.net.toUri
 import com.example.xtreamplayer.settings.SettingsState
 import com.example.xtreamplayer.settings.SettingsViewModel
-import com.example.xtreamplayer.settings.SubtitleAppearanceSettings
 import com.example.xtreamplayer.ui.ApiKeyInputDialog
 import com.example.xtreamplayer.ui.FontScaleDialog
 import com.example.xtreamplayer.ui.FontSelectionDialog
@@ -28,28 +27,19 @@ internal fun RootDialogsHost(
     settings: SettingsState,
     settingsViewModel: SettingsViewModel,
     appRecoveryManager: AppRecoveryManager,
-    showThemeDialogState: MutableState<Boolean>,
-    showFontDialogState: MutableState<Boolean>,
-    showUiScaleDialogState: MutableState<Boolean>,
-    showFontScaleDialogState: MutableState<Boolean>,
-    showNextEpisodeThresholdDialogState: MutableState<Boolean>,
-    showVodBufferDialogState: MutableState<Boolean>,
-    showSubtitleAppearanceDialogState: MutableState<Boolean>,
-    subtitleAppearancePreviewState: MutableState<SubtitleAppearanceSettings?>,
-    showSubtitleCacheAutoClearDialogState: MutableState<Boolean>,
-    showApiKeyDialogState: MutableState<Boolean>,
+    dialogsState: RootDialogsUiState,
     showPlaybackRecoveryDialogState: MutableState<Boolean>
 ) {
-    var showThemeDialog by showThemeDialogState
-    var showFontDialog by showFontDialogState
-    var showUiScaleDialog by showUiScaleDialogState
-    var showFontScaleDialog by showFontScaleDialogState
-    var showNextEpisodeThresholdDialog by showNextEpisodeThresholdDialogState
-    var showVodBufferDialog by showVodBufferDialogState
-    var showSubtitleAppearanceDialog by showSubtitleAppearanceDialogState
-    var subtitleAppearancePreview by subtitleAppearancePreviewState
-    var showSubtitleCacheAutoClearDialog by showSubtitleCacheAutoClearDialogState
-    var showApiKeyDialog by showApiKeyDialogState
+    var showThemeDialog by dialogsState.showThemeDialog
+    var showFontDialog by dialogsState.showFontDialog
+    var showUiScaleDialog by dialogsState.showUiScaleDialog
+    var showFontScaleDialog by dialogsState.showFontScaleDialog
+    var showNextEpisodeThresholdDialog by dialogsState.showNextEpisodeThresholdDialog
+    var showVodBufferDialog by dialogsState.showVodBufferDialog
+    var showSubtitleAppearanceDialog by dialogsState.showSubtitleAppearanceDialog
+    var subtitleAppearancePreview by dialogsState.subtitleAppearancePreview
+    var showSubtitleCacheAutoClearDialog by dialogsState.showSubtitleCacheAutoClearDialog
+    var showApiKeyDialog by dialogsState.showApiKeyDialog
     var showPlaybackRecoveryDialog by showPlaybackRecoveryDialogState
 
     if (showThemeDialog) {
