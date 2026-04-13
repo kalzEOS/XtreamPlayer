@@ -233,19 +233,6 @@ data class UpdateUiState(
     val pendingRelease: UpdateRelease? = null
 )
 
-private data class SectionSyncState(
-    val progress: Float = 0f,
-    val itemsIndexed: Int = 0,
-    val isActive: Boolean = false
-)
-
-private data class LibrarySyncRequest(
-    val config: AuthConfig,
-    val reason: String,
-    val force: Boolean,
-    val sectionsToSync: List<Section>?
-)
-
 private const val LOCAL_MEDIA_ID_PREFIX = "local:"
 private const val RESUME_MIN_WATCH_MS = 30_000L
 private const val CONTINUE_WATCHING_MAX_PROGRESS_PERCENT = 98L
@@ -328,9 +315,9 @@ private fun RootScreenContent(
     var selectedSection by browseViewModel.selectedSection
     var navExpanded by browseViewModel.navExpanded
     var updateUiState by updateViewModel.updateUiState
-    val showManageListsState = remember { mutableStateOf(false) }
+    val showManageListsState = browseViewModel.showManageLists
     var showManageLists by showManageListsState
-    val showAppearanceState = remember { mutableStateOf(false) }
+    val showAppearanceState = browseViewModel.showAppearance
     var showAppearance by showAppearanceState
     val showApiKeyDialogState = remember { mutableStateOf(false) }
     var showApiKeyDialog by showApiKeyDialogState
@@ -354,9 +341,8 @@ private fun RootScreenContent(
     var showSubtitleCacheAutoClearDialog by showSubtitleCacheAutoClearDialogState
     val showPlaybackRecoveryDialogState = remember { mutableStateOf(false) }
     var showPlaybackRecoveryDialog by showPlaybackRecoveryDialogState
-    var showLocalFilesGuest by remember { mutableStateOf(false) }
-    val cacheClearNonceState = remember { mutableIntStateOf(0) }
-    var cacheClearNonce by cacheClearNonceState
+    var showLocalFilesGuest by browseViewModel.showLocalFilesGuest
+    var cacheClearNonce by browseViewModel.cacheClearNonce
     var activePlaybackQueue by playerViewModel.activePlaybackQueue
     var activePlaybackTitle by playerViewModel.activePlaybackTitle
     var activePlaybackItem by playerViewModel.activePlaybackItem
@@ -391,12 +377,10 @@ private fun RootScreenContent(
     val syncState by
             (progressiveSyncCoordinator?.syncState ?: emptySyncStateFlow)
                     .collectAsStateWithLifecycle()
-    val focusAppearanceOnSettingsReturnState = remember { mutableStateOf(false) }
-    val focusManageListsOnSettingsReturnState = remember { mutableStateOf(false) }
-    val wasShowingAppearanceState = remember { mutableStateOf(false) }
-    val wasShowingManageListsState = remember { mutableStateOf(false) }
-    val focusToContentTriggerState = remember { mutableIntStateOf(0) }
-    var focusToContentTrigger by focusToContentTriggerState
+    val focusAppearanceOnSettingsReturnState = browseViewModel.focusAppearanceOnSettingsReturn
+    val focusManageListsOnSettingsReturnState = browseViewModel.focusManageListsOnSettingsReturn
+    val wasShowingAppearanceState = browseViewModel.wasShowingAppearance
+    val wasShowingManageListsState = browseViewModel.wasShowingManageLists
     SettingsAndSyncHost(
         context = context,
         coroutineScope = coroutineScope,
@@ -409,7 +393,7 @@ private fun RootScreenContent(
         selectedSectionState = browseViewModel.selectedSection,
         showManageListsState = showManageListsState,
         showAppearanceState = showAppearanceState,
-        focusToContentTriggerState = focusToContentTriggerState,
+        focusToContentTriggerState = browseViewModel.focusToContentTrigger,
         focusAppearanceOnSettingsReturnState = focusAppearanceOnSettingsReturnState,
         focusManageListsOnSettingsReturnState = focusManageListsOnSettingsReturnState,
         wasShowingAppearanceState = wasShowingAppearanceState,
@@ -420,8 +404,6 @@ private fun RootScreenContent(
         syncState = syncState,
         setProgressiveSyncCoordinatorState = { progressiveSyncCoordinator = it }
     )
-    val moveFocusToNavState = remember { mutableStateOf(false) }
-    var moveFocusToNav by moveFocusToNavState
 
     val allNavItemFocusRequester = remember { FocusRequester() }
     val continueWatchingNavItemFocusRequester = remember { FocusRequester() }
@@ -523,22 +505,19 @@ private fun RootScreenContent(
 
     val activeConfig = authState.activeConfig
     val accountKey = activeConfig?.let { "${it.baseUrl}|${it.username}|${it.listName}" }
-    var lastRefreshedAccountKey by remember { mutableStateOf<String?>(null) }
-    var isRefreshing by remember { mutableStateOf(false) }
-    var refreshJob by remember { mutableStateOf<Job?>(null) }
-    var refreshToken by remember { mutableIntStateOf(0) }
-    var hasCacheForAccount by remember { mutableStateOf<Boolean?>(null) }
-    var hasSearchIndex by remember { mutableStateOf<Boolean?>(null) }
-    val sectionSyncStates = remember {
-        mutableStateMapOf<Section, SectionSyncState>()
-    }
-    var librarySyncJob by remember { mutableStateOf<Job?>(null) }
-    var librarySyncToken by remember { mutableIntStateOf(0) }
-    var pendingLibrarySync by remember { mutableStateOf<LibrarySyncRequest?>(null) }
-    var lastLibrarySyncRequest by remember { mutableStateOf<LibrarySyncRequest?>(null) }
-
-    // Track which sections have been synced
-    var syncedSections by remember { mutableStateOf(setOf<Section>()) }
+    val rootSyncUiState = remember { RootSyncUiState() }
+    var lastRefreshedAccountKey by rootSyncUiState.lastRefreshedAccountKey
+    var isRefreshing by rootSyncUiState.isRefreshing
+    var refreshJob by rootSyncUiState.refreshJob
+    var refreshToken by rootSyncUiState.refreshToken
+    var hasCacheForAccount by rootSyncUiState.hasCacheForAccount
+    var hasSearchIndex by rootSyncUiState.hasSearchIndex
+    val sectionSyncStates = rootSyncUiState.sectionSyncStates
+    var librarySyncJob by rootSyncUiState.librarySyncJob
+    var librarySyncToken by rootSyncUiState.librarySyncToken
+    var pendingLibrarySync by rootSyncUiState.pendingLibrarySync
+    var lastLibrarySyncRequest by rootSyncUiState.lastLibrarySyncRequest
+    var syncedSections by rootSyncUiState.syncedSections
 
     val isLibrarySyncing = sectionSyncStates.values.any { it.isActive }
 
@@ -750,7 +729,7 @@ private fun RootScreenContent(
     LaunchedEffect(authState.isSignedIn) {
         if (authState.isSignedIn) {
             navExpanded = true
-            moveFocusToNav = true
+            browseViewModel.moveFocusToNav.value = true
             selectedSection = Section.ALL
             showManageLists = false
         } else {
@@ -795,10 +774,10 @@ private fun RootScreenContent(
                                 frameRetries = 6
                         )
                 if (!resumeFocused) {
-                    focusToContentTrigger++
+                    browseViewModel.focusToContentTrigger.intValue++
                 }
             } else {
-                focusToContentTrigger++
+                browseViewModel.focusToContentTrigger.intValue++
             }
         }
     }
@@ -1573,7 +1552,7 @@ private fun RootScreenContent(
                             navExpanded = !navExpanded
                             // Focus stays on menu button - user navigates manually
                         },
-                        onMoveRight = { focusToContentTrigger++ }
+                    onMoveRight = { browseViewModel.focusToContentTrigger.intValue++ }
                     )
                     Spacer(modifier = Modifier.weight(1f))
                     Text(
@@ -1603,8 +1582,8 @@ private fun RootScreenContent(
                     appVersionName = appVersionName,
                     selectedSectionState = browseViewModel.selectedSection,
                     navExpandedState = browseViewModel.navExpanded,
-                    moveFocusToNavState = moveFocusToNavState,
-                    focusToContentTriggerState = focusToContentTriggerState,
+                    moveFocusToNavState = browseViewModel.moveFocusToNav,
+                    focusToContentTriggerState = browseViewModel.focusToContentTrigger,
                     showManageListsState = showManageListsState,
                     showAppearanceState = showAppearanceState,
                     focusAppearanceOnSettingsReturn = focusAppearanceOnSettingsReturnState.value,
@@ -1618,7 +1597,7 @@ private fun RootScreenContent(
                     showSubtitleAppearanceDialogState = showSubtitleAppearanceDialogState,
                     showSubtitleCacheAutoClearDialogState = showSubtitleCacheAutoClearDialogState,
                     showApiKeyDialogState = showApiKeyDialogState,
-                    cacheClearNonceState = cacheClearNonceState,
+                    cacheClearNonceState = browseViewModel.cacheClearNonce,
                     contentRepository = contentRepository,
                     favoritesRepository = favoritesRepository,
                     continueWatchingRepository = continueWatchingRepository,
@@ -1782,7 +1761,7 @@ private fun RootScreenContent(
                         },
                         onOpenLocalFiles = {
                             showLocalFilesGuest = true
-                            focusToContentTrigger++
+                            browseViewModel.focusToContentTrigger.intValue++
                         }
                 )
             }
