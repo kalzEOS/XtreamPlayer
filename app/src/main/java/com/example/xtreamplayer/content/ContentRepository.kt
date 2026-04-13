@@ -27,6 +27,7 @@ class ContentRepository(
     private val contentCache: ContentCache
 ) {
     private val seriesContentRepository = SeriesContentRepository(api, contentCache)
+    private val liveContentRepository = LiveContentRepository(api)
     private companion object {
         const val DEFAULT_PAGE_SIZE = 24
         const val DEFAULT_PREFETCH_DISTANCE = 6
@@ -482,114 +483,7 @@ class ContentRepository(
         streamId: String,
         authConfig: AuthConfig
     ): Result<LiveNowNextEpg?> {
-        if (streamId.isBlank()) {
-            return Result.success(null)
-        }
-        val key = "live-epg-${accountKey(authConfig)}-$streamId"
-        val now = System.currentTimeMillis()
-        liveEpgMutex.withLock {
-            val cached = liveEpgCache[key]
-            if (cached != null && now - cached.cachedAtMs <= LIVE_EPG_CACHE_TTL_MS) {
-                return Result.success(cached.data)
-            }
-        }
-        val (deferred, isRequestOwner) =
-            liveEpgInFlightMutex.withLock {
-                val existing = liveEpgInFlight[key]
-                if (existing != null) {
-                    existing to false
-                } else {
-                    val created = CompletableDeferred<Result<LiveNowNextEpg?>>()
-                    liveEpgInFlight[key] = created
-                    created to true
-                }
-            }
-        if (!isRequestOwner) {
-            return deferred.await()
-        }
-        try {
-            val result = try {
-                val networkResult = fetchLiveNowNextWithRetry(authConfig, streamId)
-                if (networkResult.isSuccess) {
-                    val data = networkResult.getOrNull()
-                    liveEpgMutex.withLock {
-                        liveEpgCache[key] =
-                            LiveEpgCacheEntry(data = data, cachedAtMs = System.currentTimeMillis())
-                    }
-                    networkResult
-                } else {
-                    val staleEntry = liveEpgMutex.withLock { liveEpgCache[key] }
-                    if (
-                        staleEntry != null &&
-                            now - staleEntry.cachedAtMs <= LIVE_EPG_STALE_CACHE_TTL_MS
-                    ) {
-                        val error = networkResult.exceptionOrNull()
-                        AppDiagnostics.recordWarning(
-                            event = "live_epg_served_stale",
-                            fields = mapOf(
-                                "streamId" to streamId,
-                                "error" to (error?.message ?: "unknown")
-                            )
-                        )
-                        Timber.w(
-                            error,
-                            "Live EPG request failed for stream=$streamId; serving stale cache"
-                        )
-                        // Keep UI responsive under weak providers by extending stale entry briefly.
-                        liveEpgMutex.withLock {
-                            liveEpgCache[key] = staleEntry.copy(cachedAtMs = System.currentTimeMillis())
-                        }
-                        Result.success(staleEntry.data)
-                    } else {
-                        AppDiagnostics.recordError(
-                            event = "live_epg_failed_no_cache",
-                            throwable = networkResult.exceptionOrNull(),
-                            fields = mapOf("streamId" to streamId)
-                        )
-                        networkResult
-                    }
-                }
-            } catch (cancelled: CancellationException) {
-                deferred.cancel(cancelled)
-                throw cancelled
-            } catch (error: Exception) {
-                AppDiagnostics.recordError(
-                    event = "live_epg_exception",
-                    throwable = error,
-                    fields = mapOf("streamId" to streamId)
-                )
-                Result.failure(error)
-            }
-            deferred.complete(result)
-            return result
-        } finally {
-            liveEpgInFlightMutex.withLock {
-                liveEpgInFlight.remove(key)
-            }
-        }
-    }
-
-    private suspend fun fetchLiveNowNextWithRetry(
-        authConfig: AuthConfig,
-        streamId: String
-    ): Result<LiveNowNextEpg?> {
-        var attempt = 0
-        var backoffMs = LIVE_EPG_INITIAL_RETRY_BACKOFF_MS
-        var lastResult: Result<LiveNowNextEpg?> = Result.success(null)
-        while (attempt <= LIVE_EPG_MAX_RETRIES) {
-            val result = api.fetchLiveNowNext(authConfig, streamId)
-            if (result.isSuccess) {
-                return result
-            }
-            lastResult = result
-            if (attempt >= LIVE_EPG_MAX_RETRIES || !shouldRetryLiveEpgError(result.exceptionOrNull())) {
-                break
-            }
-            delay(backoffMs)
-            backoffMs = (backoffMs * 2).coerceAtMost(1_600L)
-            attempt++
-        }
-        return lastResult
+        return liveContentRepository.loadLiveNowNext(streamId, authConfig)
     }
 
     fun peekSeriesSeasonFullCache(
@@ -1714,10 +1608,10 @@ class ContentRepository(
         transientSearchIndexMutex.withLock { transientSearchIndexCache.clear() }
         activeLargeSearchIndexMutex.withLock { activeLargeSearchIndex = null }
         searchReadinessMutex.withLock { searchReadinessCache.clear() }
-        seriesContentRepository.clearCache()
-        liveEpgMutex.withLock { liveEpgCache.clear() }
         validationCacheMutex.withLock { validationCache.clear() }
         SearchNormalizer.clearCache()
+        seriesContentRepository.clearCache()
+        liveContentRepository.clearCache()
     }
 
     suspend fun clearDiskCache() {
