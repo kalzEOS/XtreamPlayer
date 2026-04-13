@@ -29,6 +29,7 @@ class ContentRepository(
     private val seriesContentRepository = SeriesContentRepository(api, contentCache)
     private val liveContentRepository = LiveContentRepository(api)
     private val vodContentRepository = VodContentRepository(api, contentCache)
+    private val syncMaintenanceRepository = SyncMaintenanceRepository(contentCache)
     private val searchIndexRepository = SearchIndexRepository(contentCache)
     private companion object {
         const val DEFAULT_PAGE_SIZE = 24
@@ -128,15 +129,6 @@ class ContentRepository(
         }
     }
 
-    // Cache for checkpoint validation results to avoid repeated file reads
-    // Key: section+authConfig+timestamp, Value: validation result
-    private data class ValidationCacheEntry(val isValid: Boolean, val cachedAt: Long)
-    private val validationCache = object : LinkedHashMap<String, ValidationCacheEntry>(50, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ValidationCacheEntry>): Boolean {
-            return size > 50
-        }
-    }
-    private val validationCacheMutex = Mutex()
     private class SyncPausedException : Exception()
 
     fun pager(section: Section, authConfig: AuthConfig): Pager<Int, ContentItem> {
@@ -1238,98 +1230,11 @@ class ContentRepository(
         section: Section,
         config: AuthConfig
     ): SectionSyncCheckpoint? {
-        return contentCache.readSectionSyncCheckpoint(section, config)
+        return syncMaintenanceRepository.getSectionSyncCheckpoint(section, config)
     }
 
     suspend fun hasFullIndex(authConfig: AuthConfig): Boolean {
-        val sections = listOf(Section.MOVIES, Section.SERIES, Section.LIVE)
-        return sections.all { section ->
-            validateCheckpoint(section, authConfig)
-        }
-    }
-
-    /**
-     * Validate checkpoint against actual cached data
-     * Checks for staleness, item count accuracy, and isComplete flag validity
-     * Uses caching to avoid repeated file reads during search paging
-     */
-    private suspend fun validateCheckpoint(
-        section: Section,
-        authConfig: AuthConfig
-    ): Boolean {
-        val checkpoint = contentCache.readSectionSyncCheckpoint(section, authConfig) ?: return false
-
-        // Not marked complete? Then not valid for search
-        if (!checkpoint.isComplete) return false
-
-        // Check validation cache first (avoids repeated file reads during search)
-        val cacheKey = "${section.name}|${authConfig.baseUrl}|${authConfig.username}|${checkpoint.timestamp}"
-        val cachedValidation = validationCacheMutex.withLock { validationCache[cacheKey] }
-        if (cachedValidation != null) {
-            val cacheAge = System.currentTimeMillis() - cachedValidation.cachedAt
-            if (cacheAge < 120_000) {
-                return cachedValidation.isValid
-            }
-        }
-
-        // Perform full validation
-        val isValid = performFullValidation(section, authConfig, checkpoint)
-
-        // Cache the result
-        validationCacheMutex.withLock {
-            validationCache[cacheKey] = ValidationCacheEntry(isValid, System.currentTimeMillis())
-        }
-
-        return isValid
-    }
-
-    private suspend fun performFullValidation(
-        section: Section,
-        authConfig: AuthConfig,
-        checkpoint: SectionSyncCheckpoint
-    ): Boolean {
-        // Check staleness (>7 days old)
-        val ageMs = System.currentTimeMillis() - checkpoint.timestamp
-        val staleDays = ageMs / (24 * 60 * 60 * 1000L)
-        if (staleDays > 7) {
-            Timber.w("Checkpoint for $section is stale (${staleDays}d old)")
-            // Mark checkpoint as invalid to trigger resync
-            contentCache.writeSectionSyncCheckpoint(
-                section, authConfig,
-                lastPage = 0,
-                itemsIndexed = 0,
-                isComplete = false
-            )
-            return false
-        }
-
-        // Verify actual cached items match checkpoint claim
-        val cachedItems = contentCache.readSectionIndex(section, authConfig)
-        if (cachedItems == null) {
-            Timber.w("Checkpoint claims complete for $section but no index file exists")
-            contentCache.writeSectionSyncCheckpoint(
-                section, authConfig,
-                lastPage = 0,
-                itemsIndexed = 0,
-                isComplete = false
-            )
-            return false
-        }
-
-        // Allow 10% margin for minor discrepancies (some items might be filtered)
-        val minExpected = (checkpoint.itemsIndexed * 0.9).toInt()
-        if (cachedItems.size < minExpected) {
-            Timber.w("Checkpoint mismatch for $section: claims ${checkpoint.itemsIndexed} but index has ${cachedItems.size}")
-            contentCache.writeSectionSyncCheckpoint(
-                section, authConfig,
-                lastPage = 0,
-                itemsIndexed = 0,
-                isComplete = false
-            )
-            return false
-        }
-
-        return true
+        return syncMaintenanceRepository.hasFullIndex(authConfig)
     }
 
     suspend fun clearCache() {
@@ -1339,6 +1244,7 @@ class ContentRepository(
         validationCacheMutex.withLock { validationCache.clear() }
         SearchNormalizer.clearCache()
         searchIndexRepository.clearCache()
+        syncMaintenanceRepository.clearCache()
         vodContentRepository.clearCache()
         seriesContentRepository.clearCache()
         liveContentRepository.clearCache()

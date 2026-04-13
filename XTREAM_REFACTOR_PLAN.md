@@ -65,7 +65,7 @@ Suggested boundaries:
 - `[x]` VOD content
 - `[ ]` series/episode content
 - `[ ]` search/indexing
-- `[ ]` sync/cache maintenance
+- `[x]` sync/cache maintenance
 
 Acceptance criteria:
 - No single repository owns networking, parsing, caching, and sync orchestration together.
