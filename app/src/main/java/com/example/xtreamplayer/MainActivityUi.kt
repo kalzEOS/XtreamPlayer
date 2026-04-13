@@ -313,7 +313,8 @@ private fun RootScreenContent(
 
     var selectedSection by browseViewModel.selectedSection
     var navExpanded by browseViewModel.navExpanded
-    var updateUiState by updateViewModel.updateUiState
+    val updateUiStateFlow = updateViewModel.updateUiState
+    val updateUiState by updateUiStateFlow.collectAsStateWithLifecycle()
     val showManageListsState = browseViewModel.showManageLists
     var showManageLists by showManageListsState
     val showAppearanceState = browseViewModel.showAppearance
@@ -666,7 +667,7 @@ private fun RootScreenContent(
                 }
                 return@launch
             }
-            updateUiState = updateUiState.copy(
+            updateUiStateFlow.value = updateUiStateFlow.value.copy(
                 pendingRelease = latest,
                 showDialog = true
             )
@@ -674,13 +675,13 @@ private fun RootScreenContent(
     }
 
     fun startUpdateDownload(release: UpdateRelease) {
-        if (updateUiState.inProgress) return
-        updateUiState = updateUiState.copy(inProgress = true)
+        if (updateUiStateFlow.value.inProgress) return
+        updateUiStateFlow.value = updateUiStateFlow.value.copy(inProgress = true)
         coroutineScope.launch {
             val apkUri = runCatching {
                 downloadUpdateApk(context, release, updateHttpClient)
             }.getOrNull()
-            updateUiState = updateUiState.copy(inProgress = false)
+            updateUiStateFlow.value = updateUiStateFlow.value.copy(inProgress = false)
             if (apkUri == null) {
                 Toast.makeText(context, "Update download failed", Toast.LENGTH_SHORT).show()
                 return@launch
@@ -688,7 +689,7 @@ private fun RootScreenContent(
             if (!ensureInstallPermission()) {
                 return@launch
             }
-            updateUiState = updateUiState.copy(showDialog = false)
+            updateUiStateFlow.value = updateUiStateFlow.value.copy(showDialog = false)
             launchApkInstall(apkUri)
         }
     }

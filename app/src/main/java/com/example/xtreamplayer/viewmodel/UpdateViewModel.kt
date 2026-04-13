@@ -6,11 +6,12 @@ import com.example.xtreamplayer.UpdateUiState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
 
 @HiltViewModel
 class UpdateViewModel @Inject constructor() : ViewModel() {
-    val updateUiState = mutableStateOf(UpdateUiState())
-    val updateCheckJob = mutableStateOf<Job?>(null)
-    val startupUpdateCheckEnabled = mutableStateOf<Boolean?>(null)
-    val startupUpdateCheckHandled = mutableStateOf(false)
+    val updateUiState = MutableStateFlow(UpdateUiState())
+    val updateCheckJob = MutableStateFlow<Job?>(null)
+    val startupUpdateCheckEnabled = MutableStateFlow<Boolean?>(null)
+    val startupUpdateCheckHandled = MutableStateFlow(false)
 }

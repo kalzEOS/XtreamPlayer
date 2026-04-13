@@ -36,6 +36,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.xtreamplayer.update.UpdateRelease
 import com.example.xtreamplayer.update.compareVersions
 import com.example.xtreamplayer.update.downloadUpdateApk
@@ -64,10 +65,10 @@ internal fun RootUpdateHost(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    var updateUiState by updateViewModel.updateUiState
-    var updateCheckJob by updateViewModel.updateCheckJob
-    var startupUpdateCheckEnabled by updateViewModel.startupUpdateCheckEnabled
-    var startupUpdateCheckHandled by updateViewModel.startupUpdateCheckHandled
+    val updateUiState by updateViewModel.updateUiState.collectAsStateWithLifecycle()
+    val updateCheckJob by updateViewModel.updateCheckJob.collectAsStateWithLifecycle()
+    val startupUpdateCheckEnabled by updateViewModel.startupUpdateCheckEnabled.collectAsStateWithLifecycle()
+    val startupUpdateCheckHandled by updateViewModel.startupUpdateCheckHandled.collectAsStateWithLifecycle()
 
     LaunchedEffect(startupUpdateCheckEnabled, startupUpdateCheckHandled, isSignedIn) {
         if (startupUpdateCheckHandled) return@LaunchedEffect
