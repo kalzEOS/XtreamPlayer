@@ -329,6 +329,14 @@ internal fun BrowseScreen(
         focusToContentTrigger++
     }
 
+    LaunchedEffect(focusToContentTrigger) {
+        if (focusToContentTrigger <= 0) return@LaunchedEffect
+        if (selectedSection == Section.SETTINGS) {
+            withFrameNanos {}
+            runCatching { contentItemFocusRequester.requestFocus() }
+        }
+    }
+
     LaunchedEffect(moveFocusToNav) {
         if (!moveFocusToNav) return@LaunchedEffect
         val requester =

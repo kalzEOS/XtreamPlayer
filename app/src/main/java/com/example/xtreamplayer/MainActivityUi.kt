@@ -315,7 +315,7 @@ private fun RootScreenContent(
     var selectedSection by browseViewModel.selectedSection
     var navExpanded by browseViewModel.navExpanded
     val updateUiStateFlow = updateViewModel.updateUiState
-    val updateUiState by updateUiStateFlow.collectAsStateWithLifecycle()
+    val updateUiState by updateUiStateFlow
     val showManageListsState = browseViewModel.showManageLists
     var showManageLists by showManageListsState
     val showAppearanceState = browseViewModel.showAppearance

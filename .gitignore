@@ -18,6 +18,9 @@ keystore.properties
 # Logs
 *.log
 
+# Local refactor checklist
+XTREAM_REFACTOR_PLAN.md
+
 # OS files
 .DS_Store
 Thumbs.db

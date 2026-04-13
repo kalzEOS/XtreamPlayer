@@ -199,6 +199,7 @@ internal fun SettingsAndSyncHost(
     LaunchedEffect(showAppearance, selectedSection) {
         if (wasShowingAppearanceState.value && !showAppearance && selectedSection == Section.SETTINGS) {
             focusAppearanceOnSettingsReturnState.value = true
+            focusToContentTriggerState.intValue++
         }
         wasShowingAppearanceState.value = showAppearance
     }
@@ -206,6 +207,7 @@ internal fun SettingsAndSyncHost(
     LaunchedEffect(showManageLists, selectedSection) {
         if (wasShowingManageListsState.value && !showManageLists && selectedSection == Section.SETTINGS) {
             focusManageListsOnSettingsReturnState.value = true
+            focusToContentTriggerState.intValue++
         }
         wasShowingManageListsState.value = showManageLists
     }

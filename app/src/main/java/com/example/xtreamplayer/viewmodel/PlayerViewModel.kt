@@ -16,7 +16,7 @@ import kotlinx.coroutines.Job
 class PlayerViewModel @Inject constructor() : ViewModel() {
     val pendingPlayerReset = mutableStateOf(false)
     val playerResetNonce = mutableIntStateOf(0)
-    val playbackRecoveryTracker = PlaybackRecoveryTracker()
+    internal val playbackRecoveryTracker = PlaybackRecoveryTracker()
 
     val activePlaybackQueue = mutableStateOf<PlaybackQueue?>(null)
     val activePlaybackTitle = mutableStateOf<String?>(null)
@@ -33,7 +33,7 @@ class PlayerViewModel @Inject constructor() : ViewModel() {
     val pendingResume = mutableStateOf<PendingResume?>(null)
     val resumePositionMs = mutableStateOf<Long?>(null)
     val resumeFocusId = mutableStateOf<String?>(null)
-    val activePlaybackSubtitleState = mutableStateOf<PlaybackSubtitleState?>(null)
+    internal val activePlaybackSubtitleState = mutableStateOf<PlaybackSubtitleState?>(null)
     val syncPausedForPlayback = mutableStateOf(false)
     val showPlaybackRecoveryDialog = mutableStateOf(false)
 }
