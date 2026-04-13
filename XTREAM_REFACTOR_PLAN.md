@@ -37,7 +37,7 @@ Acceptance criteria:
 - `[ ]` Identify the state that currently belongs to the screen, not the component tree.
 - `[x]` Identify the state that currently belongs to the screen, not the component tree.
 - `[x]` Add `UiState` data classes for major sections instead of many `mutableStateOf` fields.
-- `[ ]` Migrate state into `StateFlow` or `MutableStateFlow` where appropriate.
+- `[x]` Migrate state into `StateFlow` or `MutableStateFlow` where appropriate.
 - `[x]` Keep Compose state only for ephemeral UI details that are truly local.
 - `[x]` Migrate browse, update, and playback orchestration first.
 
