@@ -285,7 +285,6 @@ private fun RootScreenContent(
                 okHttpClient = updateHttpClient
             )
         }
-    val playbackRecoveryTracker = remember { PlaybackRecoveryTracker() }
     val appVersionName = remember {
         runCatching {
             val info = context.packageManager.getPackageInfo(context.packageName, 0)
@@ -339,8 +338,6 @@ private fun RootScreenContent(
     var subtitleAppearancePreview by subtitleAppearancePreviewState
     val showSubtitleCacheAutoClearDialogState = remember { mutableStateOf(false) }
     var showSubtitleCacheAutoClearDialog by showSubtitleCacheAutoClearDialogState
-    val showPlaybackRecoveryDialogState = remember { mutableStateOf(false) }
-    var showPlaybackRecoveryDialog by showPlaybackRecoveryDialogState
     var showLocalFilesGuest by browseViewModel.showLocalFilesGuest
     var cacheClearNonce by browseViewModel.cacheClearNonce
     var activePlaybackQueue by playerViewModel.activePlaybackQueue
@@ -357,7 +354,7 @@ private fun RootScreenContent(
     var movieInfoLoadToken by remember { mutableIntStateOf(0) }
     var playbackFallbackAttempts by playerViewModel.playbackFallbackAttempts
     var playbackPrimaryRetries by playerViewModel.playbackPrimaryRetries
-    var playbackRecoveryJob by remember { mutableStateOf<Job?>(null) }
+    var playbackRecoveryJob by playerViewModel.playbackRecoveryJob
     var liveReconnectAttempts by playerViewModel.liveReconnectAttempts
     var liveReconnectJob by playerViewModel.liveReconnectJob
     var pendingResume by playerViewModel.pendingResume
@@ -1227,14 +1224,14 @@ private fun RootScreenContent(
 
     suspend fun recoverPlaybackIfAppStateWentStale(mediaId: String?): Boolean {
         val nowMs = SystemClock.elapsedRealtime()
-        return when (playbackRecoveryTracker.recordFailure(mediaId, nowMs)) {
+        return when (playerViewModel.playbackRecoveryTracker.recordFailure(mediaId, nowMs)) {
             PlaybackRecoveryAction.NONE -> false
             PlaybackRecoveryAction.SOFT_RECOVERY -> {
                 val playerBeforeRecovery = playbackEngine.player
                 val previousPlayWhenReady = playerBeforeRecovery.playWhenReady
                 val previousPositionMs = playerBeforeRecovery.currentPosition.coerceAtLeast(0L)
                 val previousIndex = playerBeforeRecovery.currentMediaItemIndex
-                playbackRecoveryTracker.markSoftRecoveryPerformed(nowMs)
+                playerViewModel.playbackRecoveryTracker.markSoftRecoveryPerformed(nowMs)
                 Toast.makeText(
                     context,
                     "Playback got stuck. Recovering app state...",
@@ -1267,7 +1264,7 @@ private fun RootScreenContent(
                     event = "app_recovery_dialog_shown",
                     fields = mapOf("reason" to "stale_playback_state_persisted_after_soft_recovery")
                 )
-                showPlaybackRecoveryDialog = true
+                playerViewModel.showPlaybackRecoveryDialog.value = true
                 true
             }
         }
@@ -1312,7 +1309,7 @@ private fun RootScreenContent(
 
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         if (playbackState == Player.STATE_READY) {
-                            playbackRecoveryTracker.markPlaybackHealthy()
+                            playerViewModel.playbackRecoveryTracker.markPlaybackHealthy()
                         }
                         if (playbackState == Player.STATE_READY && !playbackEngine.player.isPlaying
                         ) {
@@ -1683,7 +1680,7 @@ private fun RootScreenContent(
                     subtitleAppearancePreviewState = subtitleAppearancePreviewState,
                     showSubtitleCacheAutoClearDialogState = showSubtitleCacheAutoClearDialogState,
                     showApiKeyDialogState = showApiKeyDialogState,
-                    showPlaybackRecoveryDialogState = showPlaybackRecoveryDialogState
+                    showPlaybackRecoveryDialogState = playerViewModel.showPlaybackRecoveryDialog
                 )
 
                 RootUpdateHost(
