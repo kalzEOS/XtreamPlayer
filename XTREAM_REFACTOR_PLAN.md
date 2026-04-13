@@ -71,6 +71,16 @@ Acceptance criteria:
 - No single repository owns networking, parsing, caching, and sync orchestration together.
 - The code becomes easier to test in isolation.
 
+Boundary map:
+- `LiveContent` for live now/next fetching and live-specific cache policy.
+- `VodContent` for movie info and VOD-specific loaders.
+- `SeriesContent` for series episodes, season counts, and season-full loading.
+- `SearchIndex` for search-page assembly and index/search readiness helpers.
+- `SyncMaintenance` for cache keys, refresh handling, validation, and sync orchestration.
+
+Suggested first split:
+- `SeriesContent` or `SearchIndex`, because both have clear seams and are already close to the current method clusters.
+
 ## Phase 4: Tighten dependency injection
 
 - `[ ]` Verify all repositories and controllers come from Hilt.
