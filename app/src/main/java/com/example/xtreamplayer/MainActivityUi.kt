@@ -143,11 +143,13 @@ import com.example.xtreamplayer.content.SeriesInfo
 import com.example.xtreamplayer.content.SearchNormalizer
 import com.example.xtreamplayer.content.SubtitleRepository
 import com.example.xtreamplayer.content.shouldStoreContinueWatchingEntry
+import com.example.xtreamplayer.di.RootScreenEntryPoint
 import com.example.xtreamplayer.observability.AppDiagnostics
 import com.example.xtreamplayer.player.Media3PlaybackEngine
 import com.example.xtreamplayer.player.BufferProfile
 import com.example.xtreamplayer.settings.PlaybackSettingsController
 import com.example.xtreamplayer.settings.ClockFormatOption
+import com.example.xtreamplayer.settings.SettingsRepository
 import com.example.xtreamplayer.settings.SettingsState
 import com.example.xtreamplayer.settings.SettingsViewModel
 import com.example.xtreamplayer.settings.SubtitleAppearanceSettings
@@ -193,8 +195,8 @@ import com.example.xtreamplayer.ui.theme.AppColors
 import com.example.xtreamplayer.ui.theme.XtreamPlayerTheme
 import com.example.xtreamplayer.viewmodel.BrowseViewModel
 import com.example.xtreamplayer.viewmodel.PlayerViewModel
-import dagger.hilt.android.AndroidEntryPoint
-import javax.inject.Inject
+import com.example.xtreamplayer.viewmodel.UpdateViewModel
+import dagger.hilt.android.EntryPointAccessors
 import java.util.Locale
 import java.io.File
 import android.provider.Settings
@@ -209,7 +211,6 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-import kotlin.LazyThreadSafetyMode
 import kotlin.math.max
 import kotlin.math.min
 
@@ -226,7 +227,7 @@ private enum class UpdateCheckSource {
     STARTUP
 }
 
-private data class UpdateUiState(
+data class UpdateUiState(
     val showDialog: Boolean = false,
     val inProgress: Boolean = false,
     val pendingRelease: UpdateRelease? = null
@@ -255,7 +256,29 @@ private const val PLAYBACK_PROGRESS_SAVE_INTERVAL_MS = 30_000L
 private const val STARTUP_DEFER_NON_CRITICAL_MS = 1_000L
 
 @Composable
-fun RootScreen(
+fun RootScreen() {
+    val context = LocalContext.current
+    val rootScreenEntryPoint = remember(context.applicationContext) {
+        EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            RootScreenEntryPoint::class.java
+        )
+    }
+    RootScreenContent(
+        playbackSettingsController = rootScreenEntryPoint.playbackSettingsController(),
+        playbackEngine = rootScreenEntryPoint.playbackEngine(),
+        contentRepository = rootScreenEntryPoint.contentRepository(),
+        favoritesRepository = rootScreenEntryPoint.favoritesRepository(),
+        historyRepository = rootScreenEntryPoint.historyRepository(),
+        continueWatchingRepository = rootScreenEntryPoint.continueWatchingRepository(),
+        subtitleRepository = rootScreenEntryPoint.subtitleRepository(),
+        settingsRepository = rootScreenEntryPoint.settingsRepository(),
+        updateHttpClient = rootScreenEntryPoint.okHttpClient()
+    )
+}
+
+@Composable
+private fun RootScreenContent(
         playbackSettingsController: PlaybackSettingsController,
         playbackEngine: Media3PlaybackEngine,
         contentRepository: ContentRepository,
@@ -263,6 +286,7 @@ fun RootScreen(
         historyRepository: HistoryRepository,
         continueWatchingRepository: ContinueWatchingRepository,
         subtitleRepository: SubtitleRepository,
+        settingsRepository: SettingsRepository,
         updateHttpClient: OkHttpClient
 ) {
     val context = LocalContext.current
@@ -287,6 +311,7 @@ fun RootScreen(
     val authViewModel: AuthViewModel = hiltViewModel()
     val browseViewModel: BrowseViewModel = hiltViewModel()
     val playerViewModel: PlayerViewModel = hiltViewModel()
+    val updateViewModel: UpdateViewModel = hiltViewModel()
     val authState by authViewModel.uiState.collectAsStateWithLifecycle()
     val savedConfig by authViewModel.savedConfig.collectAsStateWithLifecycle()
     val savedConfigLoaded by authViewModel.savedConfigLoaded.collectAsStateWithLifecycle()
@@ -310,10 +335,10 @@ fun RootScreen(
     var focusManageListsOnSettingsReturn by remember { mutableStateOf(false) }
     var wasShowingAppearance by remember { mutableStateOf(false) }
     var wasShowingManageLists by remember { mutableStateOf(false) }
-    var updateUiState by remember { mutableStateOf(UpdateUiState()) }
-    var updateCheckJob by remember { mutableStateOf<Job?>(null) }
-    var startupUpdateCheckEnabled by remember { mutableStateOf<Boolean?>(null) }
-    var startupUpdateCheckHandled by remember { mutableStateOf(false) }
+    var updateUiState by updateViewModel.updateUiState
+    var updateCheckJob by updateViewModel.updateCheckJob
+    var startupUpdateCheckEnabled by updateViewModel.startupUpdateCheckEnabled
+    var startupUpdateCheckHandled by updateViewModel.startupUpdateCheckHandled
     val showApiKeyDialogState = remember { mutableStateOf(false) }
     var showApiKeyDialog by showApiKeyDialogState
     val showThemeDialogState = remember { mutableStateOf(false) }
@@ -369,11 +394,6 @@ fun RootScreen(
     }
 
     // Progressive sync coordinator
-    val settingsRepository by remember {
-        lazy(LazyThreadSafetyMode.NONE) {
-            com.example.xtreamplayer.settings.SettingsRepository(context)
-        }
-    }
     LaunchedEffect(settings.subtitleCacheAutoClearIntervalMs, startupDeferredReady) {
         if (!startupDeferredReady) {
             return@LaunchedEffect
