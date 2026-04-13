@@ -803,15 +803,15 @@ private fun RootScreenContent(
 
     val handleItemFocused: (ContentItem) -> Unit = { item ->
         if (activePlaybackQueue == null) {
-            resumeFocusId = item.id
+            resumeFocusId = stableContentIdentity(item)
         }
     }
     val resolveResumeFocusTarget: (ContentItem) -> String = { item ->
         val parent = activePlaybackSeriesParent
         if (item.contentType == ContentType.SERIES && parent != null) {
-            parent.id
+            stableContentIdentity(parent)
         } else {
-            item.id
+            stableContentIdentity(item)
         }
     }
     val openMovieInfo: (ContentItem, List<ContentItem>) -> Unit = { item, items ->
@@ -2437,6 +2437,10 @@ private fun stableContentIdentity(item: ContentItem): String {
     return item.streamId.ifBlank { item.id }.ifBlank { item.id }
 }
 
+private fun matchesResumeFocus(item: ContentItem?, resumeFocusId: String?): Boolean {
+    return item != null && stableContentIdentity(item) == resumeFocusId
+}
+
 private fun stableContentKey(item: ContentItem): String {
     return "${item.contentType.name}:${stableContentIdentity(item)}"
 }
@@ -2800,6 +2804,10 @@ private fun ContentBrowserScreen(
                     contentRepository.pager(section, authConfig).flow
                 }
             }
+    val categoryFocusRequesters =
+            remember(categories) { categories.associate { it.id to FocusRequester() } }
+    val selectedCategoryFocusRequester =
+            selectedCategory?.let { categoryFocusRequesters[it.id] }
     val categoryPagerFlow =
             remember(selectedCategory?.id, contentType, authConfig, normalizedQuery) {
                 val category = selectedCategory
@@ -2910,6 +2918,7 @@ private fun ContentBrowserScreen(
                 isLoadingCategories = isLoadingCategories,
                 categoriesError = categoriesError,
                 selectedCategory = selectedCategory,
+                selectedCategoryFocusRequester = selectedCategoryFocusRequester,
                 onCategorySelected = { category ->
                     primaryTab = BrowserPrimaryTab.CATEGORY
                     selectedSeries = null
@@ -2939,7 +2948,16 @@ private fun ContentBrowserScreen(
                 focusRequester = secondaryFocusRequester,
                 resumeFocusId = resumeFocusId,
                 resumeFocusRequester = resumeFocusRequester,
-                onMoveLeft = { primaryFocusRequester.requestFocus() },
+                onMoveLeft = {
+                    if (
+                        primaryTab == BrowserPrimaryTab.CATEGORY &&
+                        selectedCategoryFocusRequester != null
+                    ) {
+                        runCatching { selectedCategoryFocusRequester.requestFocus() }
+                    } else {
+                        runCatching { primaryFocusRequester.requestFocus() }
+                    }
+                },
                 onMoveRight = { previewFocusRequester.requestFocus() }
         )
 
@@ -2970,6 +2988,7 @@ private fun PrimarySidebar(
         isLoadingCategories: Boolean,
         categoriesError: String?,
         selectedCategory: CategoryItem?,
+        selectedCategoryFocusRequester: FocusRequester?,
         onCategorySelected: (CategoryItem) -> Unit
 ) {
     val shape = RoundedCornerShape(16.dp)
@@ -3039,7 +3058,12 @@ private fun PrimarySidebar(
                     SidebarItem(
                             label = category.name,
                             selected = selectedCategory?.id == category.id,
-                            focusRequester = null,
+                            focusRequester =
+                                    if (selectedCategory?.id == category.id) {
+                                        selectedCategoryFocusRequester
+                                    } else {
+                                        null
+                                    },
                             onActivate = { onCategorySelected(category) }
                     )
                 }
@@ -3993,7 +4017,7 @@ private fun StaticContentList(
             val item = items[index]
             val requester =
                     when {
-                        item.id == resumeFocusId -> resumeFocusRequester
+                        matchesResumeFocus(item, resumeFocusId) -> resumeFocusRequester
                         index == 0 -> focusRequester
                         else -> null
                     }
@@ -4066,7 +4090,7 @@ private fun PagedContentList(
             if (item != null) {
                 val requester =
                         when {
-                            item.id == resumeFocusId -> resumeFocusRequester
+                            matchesResumeFocus(item, resumeFocusId) -> resumeFocusRequester
                             index == 0 -> focusRequester
                             else -> null
                         }
@@ -5649,7 +5673,7 @@ fun SectionScreen(
                                                 itemFocusKey != null &&
                                                 itemFocusKey == lastAllFocusedKey ->
                                                 resumeFocusRequester
-                                        item?.id != null && item.id == resumeFocusId ->
+                                        matchesResumeFocus(item, resumeFocusId) ->
                                                 resumeFocusRequester
                                         index == 0 -> contentItemFocusRequester
                                         else -> null
@@ -6684,7 +6708,7 @@ fun FavoritesScreen(
                                     when {
                                         index == 0 -> itemsFirstFocusRequester
                                         index == backDownTargetIndex -> backDownFocusRequester
-                                        item.id == resumeFocusId -> resumeFocusRequester
+                                        matchesResumeFocus(item, resumeFocusId) -> resumeFocusRequester
                                         else -> null
                                     }
                             val isLeftEdge = index % posterColumns == 0
@@ -6912,7 +6936,7 @@ fun FavoritesScreen(
                                     val requester =
                                             when {
                                                 index == backDownTargetIndex -> backDownFocusRequester
-                                                item?.id != null && item.id == resumeFocusId ->
+                                        matchesResumeFocus(item, resumeFocusId) ->
                                                         resumeFocusRequester
                                                 index == 0 -> contentItemFocusRequester
                                                 else -> null
@@ -7728,7 +7752,7 @@ fun CategorySectionScreen(
                                                             searchDownContentFocusRequester
                                                     item?.id != null &&
                                                             (item.id == lastCategoryContentId ||
-                                                                    item.id == resumeFocusId) ->
+                                                matchesResumeFocus(item, resumeFocusId)) ->
                                                             resumeFocusRequester
                                                     index == 0 -> contentItemFocusRequester
                                                     else -> null
@@ -8456,7 +8480,7 @@ fun ContinueWatchingScreen(
                             val requester =
                                     when {
                                         index == clearAllDownTargetIndex -> clearAllDownFocusRequester
-                                        item.id == resumeFocusId -> resumeFocusRequester
+                                        matchesResumeFocus(item, resumeFocusId) -> resumeFocusRequester
                                         index == 0 -> contentItemFocusRequester
                                         else -> null
                                     }
@@ -9616,7 +9640,7 @@ fun SeriesSeasonsScreen(
                                     val item = displayEpisodes[index]
                                     val requester =
                                         when {
-                                            item.id == resumeFocusId -> resumeFocusRequester
+                                            matchesResumeFocus(item, resumeFocusId) -> resumeFocusRequester
                                             index == 0 -> episodesFocusRequester
                                             else -> null
                                         }
@@ -10434,7 +10458,7 @@ fun SeriesEpisodesScreen(
                     val item = lazyItems[index]
                     val requester =
                             when {
-                                item?.id != null && item.id == resumeFocusId -> resumeFocusRequester
+                                matchesResumeFocus(item, resumeFocusId) -> resumeFocusRequester
                                 index == 0 -> contentItemFocusRequester
                                 else -> null
                             }
