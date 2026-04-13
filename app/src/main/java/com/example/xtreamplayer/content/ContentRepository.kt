@@ -1085,14 +1085,6 @@ class ContentRepository(
             contentCache.hasSectionIndex(Section.LIVE, authConfig)
     }
 
-    private fun shouldKeepSectionIndexInMemory(itemCount: Int): Boolean {
-        return itemCount in 1 until MAX_SECTION_INDEX_ITEMS_IN_MEMORY
-    }
-
-    private fun shouldKeepTransientSectionIndexInMemory(itemCount: Int): Boolean {
-        return itemCount in MAX_SECTION_INDEX_ITEMS_IN_MEMORY..MAX_TRANSIENT_SEARCH_INDEX_ITEMS_IN_MEMORY
-    }
-
     private suspend fun preWarmSearchTitles(items: List<ContentItem>) {
         if (items.isEmpty()) return
         val titleSample =
