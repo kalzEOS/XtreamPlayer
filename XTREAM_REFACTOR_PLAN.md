@@ -64,7 +64,7 @@ Suggested boundaries:
 - `[ ]` live content
 - `[x]` VOD content
 - `[x]` series/episode content
-- `[ ]` search/indexing
+- `[x]` search/indexing
 - `[x]` sync/cache maintenance
 
 Acceptance criteria:
