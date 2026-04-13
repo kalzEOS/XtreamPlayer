@@ -3,54 +3,25 @@ package com.example.xtreamplayer
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import com.example.xtreamplayer.content.ContentRepository
-import com.example.xtreamplayer.content.ContinueWatchingRepository
-import com.example.xtreamplayer.content.FavoritesRepository
-import com.example.xtreamplayer.content.HistoryRepository
-import com.example.xtreamplayer.content.SubtitleRepository
-import com.example.xtreamplayer.player.Media3PlaybackEngine
-import com.example.xtreamplayer.settings.PlaybackSettingsController
+import com.example.xtreamplayer.di.RootScreenEntryPoint
 import dagger.hilt.android.AndroidEntryPoint
-import okhttp3.OkHttpClient
-import javax.inject.Inject
+import dagger.hilt.android.EntryPointAccessors
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
-    @Inject lateinit var playbackSettingsController: PlaybackSettingsController
-
-    @Inject lateinit var playbackEngine: Media3PlaybackEngine
-
-    @Inject lateinit var contentRepository: ContentRepository
-
-    @Inject lateinit var favoritesRepository: FavoritesRepository
-
-    @Inject lateinit var historyRepository: HistoryRepository
-
-    @Inject lateinit var continueWatchingRepository: ContinueWatchingRepository
-
-    @Inject lateinit var subtitleRepository: SubtitleRepository
-
-    @Inject lateinit var okHttpClient: OkHttpClient
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            RootScreen(
-                    playbackSettingsController = playbackSettingsController,
-                    playbackEngine = playbackEngine,
-                    contentRepository = contentRepository,
-                    favoritesRepository = favoritesRepository,
-                    historyRepository = historyRepository,
-                    continueWatchingRepository = continueWatchingRepository,
-                    subtitleRepository = subtitleRepository,
-                    updateHttpClient = okHttpClient
-            )
+            RootScreen()
         }
     }
 
     override fun onDestroy() {
         if (isFinishing) {
-            playbackEngine.release()
+            EntryPointAccessors.fromApplication(
+                applicationContext,
+                RootScreenEntryPoint::class.java
+            ).playbackEngine().release()
         }
         super.onDestroy()
     }
