@@ -46,8 +46,7 @@ internal fun SettingsAndSyncHost(
     startupDeferredReadyState: MutableState<Boolean>,
     startupUpdateCheckEnabledState: MutableState<Boolean?>,
     progressiveSyncCoordinatorState: MutableState<ProgressiveSyncCoordinator?>,
-    syncState: ProgressiveSyncState,
-    setProgressiveSyncCoordinatorState: (ProgressiveSyncCoordinator?) -> Unit
+    syncState: ProgressiveSyncState
 ) {
     val showManageLists = showManageListsState.value
     val showAppearance = showAppearanceState.value
@@ -98,9 +97,9 @@ internal fun SettingsAndSyncHost(
             withContext(NonCancellable) {
                 previousCoordinator.dispose()
             }
-            setProgressiveSyncCoordinatorState(null)
+            progressiveSyncCoordinatorState.value = null
         }
-        setProgressiveSyncCoordinatorState(
+        progressiveSyncCoordinatorState.value =
             authState.activeConfig?.let { config ->
                 ProgressiveSyncCoordinator(
                     contentRepository = contentRepository,
@@ -108,7 +107,6 @@ internal fun SettingsAndSyncHost(
                     authConfig = config
                 )
             }
-        )
     }
 
     DisposableEffect(Unit) {

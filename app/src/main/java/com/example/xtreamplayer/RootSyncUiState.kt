@@ -4,6 +4,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import com.example.xtreamplayer.auth.AuthConfig
+import com.example.xtreamplayer.content.ProgressiveSyncCoordinator
 import kotlinx.coroutines.Job
 
 internal data class SectionSyncState(
@@ -20,6 +21,8 @@ internal data class LibrarySyncRequest(
 )
 
 internal class RootSyncUiState {
+    val startupDeferredReady = mutableStateOf(false)
+    val progressiveSyncCoordinator = mutableStateOf<ProgressiveSyncCoordinator?>(null)
     val lastRefreshedAccountKey = mutableStateOf<String?>(null)
     val isRefreshing = mutableStateOf(false)
     val refreshJob = mutableStateOf<Job?>(null)

@@ -357,9 +357,8 @@ private fun RootScreenContent(
     var lastExitBackPressElapsedMs by remember { mutableLongStateOf(0L) }
     val resumeFocusRequester = remember { FocusRequester() }
 
-    val startupDeferredReadyState = remember { mutableStateOf(false) }
-    val progressiveSyncCoordinatorState =
-            remember { mutableStateOf<com.example.xtreamplayer.content.ProgressiveSyncCoordinator?>(null) }
+    val startupDeferredReadyState = rootSyncUiState.startupDeferredReady
+    val progressiveSyncCoordinatorState = rootSyncUiState.progressiveSyncCoordinator
     var progressiveSyncCoordinator by progressiveSyncCoordinatorState
     val emptySyncStateFlow =
             remember { kotlinx.coroutines.flow.MutableStateFlow(com.example.xtreamplayer.content.ProgressiveSyncState()) }
@@ -391,7 +390,6 @@ private fun RootScreenContent(
         startupUpdateCheckEnabledState = updateViewModel.startupUpdateCheckEnabled,
         progressiveSyncCoordinatorState = progressiveSyncCoordinatorState,
         syncState = syncState,
-        setProgressiveSyncCoordinatorState = { progressiveSyncCoordinator = it }
     )
 
     val allNavItemFocusRequester = remember { FocusRequester() }
