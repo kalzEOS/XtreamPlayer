@@ -355,10 +355,12 @@ private fun RootScreenContent(
     var showVodBufferDialog by showVodBufferDialogState
     val showSubtitleAppearanceDialogState = remember { mutableStateOf(false) }
     var showSubtitleAppearanceDialog by showSubtitleAppearanceDialogState
-    var subtitleAppearancePreview by remember { mutableStateOf<SubtitleAppearanceSettings?>(null) }
+    val subtitleAppearancePreviewState = remember { mutableStateOf<SubtitleAppearanceSettings?>(null) }
+    var subtitleAppearancePreview by subtitleAppearancePreviewState
     val showSubtitleCacheAutoClearDialogState = remember { mutableStateOf(false) }
     var showSubtitleCacheAutoClearDialog by showSubtitleCacheAutoClearDialogState
-    var showPlaybackRecoveryDialog by remember { mutableStateOf(false) }
+    val showPlaybackRecoveryDialogState = remember { mutableStateOf(false) }
+    var showPlaybackRecoveryDialog by showPlaybackRecoveryDialogState
     var showLocalFilesGuest by remember { mutableStateOf(false) }
     val cacheClearNonceState = remember { mutableIntStateOf(0) }
     var cacheClearNonce by cacheClearNonceState
@@ -879,18 +881,6 @@ private fun RootScreenContent(
                 showDialog = true
             )
         }
-    }
-
-    LaunchedEffect(startupUpdateCheckEnabled, authState.isSignedIn) {
-        if (startupUpdateCheckHandled) return@LaunchedEffect
-        val enabled = startupUpdateCheckEnabled ?: return@LaunchedEffect
-        if (!enabled) {
-            startupUpdateCheckHandled = true
-            return@LaunchedEffect
-        }
-        if (!authState.isSignedIn) return@LaunchedEffect
-        startupUpdateCheckHandled = true
-        checkForUpdates(UpdateCheckSource.STARTUP)
     }
 
     fun startUpdateDownload(release: UpdateRelease) {
@@ -1997,106 +1987,34 @@ private fun RootScreenContent(
                         getRequiredMediaPermissions = ::getRequiredMediaPermissions
                 )
 
-                if (showThemeDialog) {
-                    ThemeSelectionDialog(
-                        themes = com.example.xtreamplayer.settings.AppThemeOption.entries.toList(),
-                        currentTheme = settings.appTheme,
-                        onThemeSelected = { settingsViewModel.setAppTheme(it) },
-                        onDismiss = { showThemeDialog = false }
-                    )
-                }
+                RootDialogsHost(
+                    context = context,
+                    settings = settings,
+                    settingsViewModel = settingsViewModel,
+                    appRecoveryManager = appRecoveryManager,
+                    showThemeDialogState = showThemeDialogState,
+                    showFontDialogState = showFontDialogState,
+                    showUiScaleDialogState = showUiScaleDialogState,
+                    showFontScaleDialogState = showFontScaleDialogState,
+                    showNextEpisodeThresholdDialogState = showNextEpisodeThresholdDialogState,
+                    showVodBufferDialogState = showVodBufferDialogState,
+                    showSubtitleAppearanceDialogState = showSubtitleAppearanceDialogState,
+                    subtitleAppearancePreviewState = subtitleAppearancePreviewState,
+                    showSubtitleCacheAutoClearDialogState = showSubtitleCacheAutoClearDialogState,
+                    showApiKeyDialogState = showApiKeyDialogState,
+                    showPlaybackRecoveryDialogState = showPlaybackRecoveryDialogState
+                )
 
-                if (showFontDialog) {
-                    FontSelectionDialog(
-                        fonts = com.example.xtreamplayer.ui.theme.AppFont.entries.toList(),
-                        currentFont = settings.appFont,
-                        onFontSelected = { settingsViewModel.setAppFont(it) },
-                        onDismiss = { showFontDialog = false }
-                    )
-                }
-
-                if (showNextEpisodeThresholdDialog) {
-                    NextEpisodeThresholdDialog(
-                        currentSeconds = settings.nextEpisodeThresholdSeconds,
-                        onSecondsChange = { settingsViewModel.setNextEpisodeThreshold(it) },
-                        onDismiss = { showNextEpisodeThresholdDialog = false }
-                    )
-                }
-                if (showVodBufferDialog) {
-                    VodBufferDialog(
-                        currentSeconds = settings.vodBufferSeconds,
-                        onSecondsChange = { settingsViewModel.setVodBufferSeconds(it) },
-                        onDismiss = { showVodBufferDialog = false }
-                    )
-                }
-                if (showSubtitleCacheAutoClearDialog) {
-                    SubtitleCacheAutoClearDialog(
-                        currentIntervalMs = settings.subtitleCacheAutoClearIntervalMs,
-                        onIntervalChange = { settingsViewModel.setSubtitleCacheAutoClearInterval(it) },
-                        onDismiss = { showSubtitleCacheAutoClearDialog = false }
-                    )
-                }
-                if (showSubtitleAppearanceDialog) {
-                    SubtitleAppearanceDialog(
-                        initialSettings = settings.subtitleAppearance,
-                        onPreview = { updated ->
-                            subtitleAppearancePreview = updated
-                        },
-                        onApply = { updated ->
-                            subtitleAppearancePreview = null
-                            settingsViewModel.setSubtitleAppearance(updated)
-                            settingsViewModel.flushPendingSubtitleAppearance()
-                        },
-                        onDismiss = {
-                            subtitleAppearancePreview = null
-                            showSubtitleAppearanceDialog = false
-                        }
-                    )
-                }
-
-                if (showApiKeyDialog) {
-                    ApiKeyInputDialog(
-                        currentKey = settings.openSubtitlesApiKey,
-                        currentUserAgent = settings.openSubtitlesUserAgent,
-                        onSave = { apiKey, userAgent ->
-                            settingsViewModel.setOpenSubtitlesApiKey(apiKey)
-                            settingsViewModel.setOpenSubtitlesUserAgent(userAgent)
-                            Toast.makeText(
-                                context,
-                                "OpenSubtitles settings saved",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                            showApiKeyDialog = false
-                        },
-                        onDismiss = { showApiKeyDialog = false }
-                    )
-                }
-
-                val pendingRelease = updateUiState.pendingRelease
-                if (updateUiState.showDialog && pendingRelease != null) {
-                    UpdatePromptDialog(
-                        release = pendingRelease,
-                        isDownloading = updateUiState.inProgress,
-                        onUpdate = { startUpdateDownload(pendingRelease) },
-                        onLater = { updateUiState = updateUiState.copy(showDialog = false) }
-                    )
-                }
-                if (showPlaybackRecoveryDialog) {
-                    PlaybackRecoveryDialog(
-                        onCancel = { showPlaybackRecoveryDialog = false },
-                        onRestartApp = {
-                            showPlaybackRecoveryDialog = false
-                            appRecoveryManager.restartApp(
-                                "user_requested_restart_after_stale_playback_dialog"
-                            )
-                        },
-                        onOpenAppSettings = {
-                            showPlaybackRecoveryDialog = false
-                            openAppSettings()
-                        }
-                    )
-                }
-                }
+                RootUpdateHost(
+                    updateViewModel = updateViewModel,
+                    appVersionName = appVersionName,
+                    updateHttpClient = updateHttpClient,
+                    isSignedIn = authState.isSignedIn,
+                    onUpdateDownload = { release ->
+                        startUpdateDownload(release)
+                    }
+                )
+            }
 
         } else {
             if (showLocalFilesGuest) {
@@ -2166,22 +2084,6 @@ private fun RootScreenContent(
                         }
                 )
             }
-        }
-
-        if (showUiScaleDialog) {
-            UiScaleDialog(
-                currentScale = settings.uiScale,
-                onScaleChange = { settingsViewModel.setUiScale(it) },
-                onDismiss = { showUiScaleDialog = false }
-            )
-        }
-
-        if (showFontScaleDialog) {
-            FontScaleDialog(
-                currentScale = settings.fontScale,
-                onScaleChange = { settingsViewModel.setFontScale(it) },
-                onDismiss = { showFontScaleDialog = false }
-            )
         }
 
         val effectivePlaybackSettings =
@@ -10749,7 +10651,7 @@ private fun UpdatePromptDialog(
 }
 
 @Composable
-private fun PlaybackRecoveryDialog(
+internal fun PlaybackRecoveryDialog(
     onCancel: () -> Unit,
     onRestartApp: () -> Unit,
     onOpenAppSettings: () -> Unit
