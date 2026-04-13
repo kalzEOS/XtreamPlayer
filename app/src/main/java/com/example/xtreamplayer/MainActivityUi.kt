@@ -298,6 +298,7 @@ private fun RootScreenContent(
     val browseViewModel: BrowseViewModel = hiltViewModel()
     val playerViewModel: PlayerViewModel = hiltViewModel()
     val updateViewModel: UpdateViewModel = hiltViewModel()
+    val rootSyncUiState = remember { RootSyncUiState() }
     val authState by authViewModel.uiState.collectAsStateWithLifecycle()
     val savedConfig by authViewModel.savedConfig.collectAsStateWithLifecycle()
     val savedConfigLoaded by authViewModel.savedConfigLoaded.collectAsStateWithLifecycle()
@@ -493,7 +494,6 @@ private fun RootScreenContent(
 
     val activeConfig = authState.activeConfig
     val accountKey = activeConfig?.let { "${it.baseUrl}|${it.username}|${it.listName}" }
-    val rootSyncUiState = remember { RootSyncUiState() }
     var lastRefreshedAccountKey by rootSyncUiState.lastRefreshedAccountKey
     var isRefreshing by rootSyncUiState.isRefreshing
     var refreshJob by rootSyncUiState.refreshJob
@@ -1576,7 +1576,16 @@ private fun RootScreenContent(
                     showAppearanceState = showAppearanceState,
                     focusAppearanceOnSettingsReturn = focusAppearanceOnSettingsReturnState.value,
                     focusManageListsOnSettingsReturn = focusManageListsOnSettingsReturnState.value,
-                    dialogsState = rootDialogsUiState,
+                    showThemeDialogState = rootDialogsUiState.showThemeDialog,
+                    showFontDialogState = rootDialogsUiState.showFontDialog,
+                    showUiScaleDialogState = rootDialogsUiState.showUiScaleDialog,
+                    showFontScaleDialogState = rootDialogsUiState.showFontScaleDialog,
+                    showNextEpisodeThresholdDialogState = rootDialogsUiState.showNextEpisodeThresholdDialog,
+                    showVodBufferDialogState = rootDialogsUiState.showVodBufferDialog,
+                    showSubtitleAppearanceDialogState = rootDialogsUiState.showSubtitleAppearanceDialog,
+                    subtitleAppearancePreviewState = rootDialogsUiState.subtitleAppearancePreview,
+                    showSubtitleCacheAutoClearDialogState = rootDialogsUiState.showSubtitleCacheAutoClearDialog,
+                    showApiKeyDialogState = rootDialogsUiState.showApiKeyDialog,
                     cacheClearNonceState = browseViewModel.cacheClearNonce,
                     contentRepository = contentRepository,
                     favoritesRepository = favoritesRepository,

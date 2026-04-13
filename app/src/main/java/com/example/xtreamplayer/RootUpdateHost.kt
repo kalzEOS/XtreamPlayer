@@ -65,29 +65,33 @@ internal fun RootUpdateHost(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val updateUiState by updateViewModel.updateUiState.collectAsStateWithLifecycle()
-    val updateCheckJob by updateViewModel.updateCheckJob.collectAsStateWithLifecycle()
-    val startupUpdateCheckEnabled by updateViewModel.startupUpdateCheckEnabled.collectAsStateWithLifecycle()
-    val startupUpdateCheckHandled by updateViewModel.startupUpdateCheckHandled.collectAsStateWithLifecycle()
+    val updateUiStateFlow = updateViewModel.updateUiState
+    val updateUiState by updateUiStateFlow.collectAsStateWithLifecycle()
+    val updateCheckJobFlow = updateViewModel.updateCheckJob
+    val updateCheckJob by updateCheckJobFlow.collectAsStateWithLifecycle()
+    val startupUpdateCheckEnabledFlow = updateViewModel.startupUpdateCheckEnabled
+    val startupUpdateCheckEnabled by startupUpdateCheckEnabledFlow.collectAsStateWithLifecycle()
+    val startupUpdateCheckHandledFlow = updateViewModel.startupUpdateCheckHandled
+    val startupUpdateCheckHandled by startupUpdateCheckHandledFlow.collectAsStateWithLifecycle()
 
     LaunchedEffect(startupUpdateCheckEnabled, startupUpdateCheckHandled, isSignedIn) {
         if (startupUpdateCheckHandled) return@LaunchedEffect
         val enabled = startupUpdateCheckEnabled ?: return@LaunchedEffect
         if (!enabled) {
-            startupUpdateCheckHandled = true
+            startupUpdateCheckHandledFlow.value = true
             return@LaunchedEffect
         }
         if (!isSignedIn) return@LaunchedEffect
-        startupUpdateCheckHandled = true
+        startupUpdateCheckHandledFlow.value = true
         checkForUpdates(
             context = context,
             coroutineScope = coroutineScope,
             updateHttpClient = updateHttpClient,
             appVersionName = appVersionName,
-            updateUiState = { updateUiState },
-            onUpdateUiStateChange = { updateUiState = it },
-            updateCheckJob = { updateCheckJob },
-            onUpdateCheckJobChange = { updateCheckJob = it },
+            updateUiState = { updateUiStateFlow.value },
+            onUpdateUiStateChange = { updateUiStateFlow.value = it },
+            updateCheckJob = { updateCheckJobFlow.value },
+            onUpdateCheckJobChange = { updateCheckJobFlow.value = it },
             source = RootUpdateCheckSource.STARTUP
         )
     }
@@ -98,7 +102,7 @@ internal fun RootUpdateHost(
             release = pendingRelease,
             isDownloading = updateUiState.inProgress,
             onUpdate = { onUpdateDownload(pendingRelease) },
-            onLater = { updateUiState = updateUiState.copy(showDialog = false) }
+            onLater = { updateUiStateFlow.value = updateUiStateFlow.value.copy(showDialog = false) }
         )
     }
 }
