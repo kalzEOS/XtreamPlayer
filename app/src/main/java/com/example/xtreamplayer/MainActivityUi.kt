@@ -336,13 +336,14 @@ private fun RootScreenContent(
     var activePlaybackItem by playerViewModel.activePlaybackItem
     var activePlaybackItems by playerViewModel.activePlaybackItems
     var activePlaybackSeriesParent by playerViewModel.activePlaybackSeriesParent
-    var movieInfoItem by remember { mutableStateOf<ContentItem?>(null) }
-    var movieInfoQueue by remember { mutableStateOf<List<ContentItem>>(emptyList()) }
-    var movieInfoInfo by remember { mutableStateOf<MovieInfo?>(null) }
-    var movieInfoFromContinueWatching by remember { mutableStateOf(false) }
-    var movieInfoResumePositionMs by remember { mutableStateOf<Long?>(null) }
-    var movieInfoLoadJob by remember { mutableStateOf<Job?>(null) }
-    var movieInfoLoadToken by remember { mutableIntStateOf(0) }
+    val movieInfoUiState = remember { MovieInfoUiState() }
+    var movieInfoItem by movieInfoUiState.movieInfoItem
+    var movieInfoQueue by movieInfoUiState.movieInfoQueue
+    var movieInfoInfo by movieInfoUiState.movieInfoInfo
+    var movieInfoFromContinueWatching by movieInfoUiState.movieInfoFromContinueWatching
+    var movieInfoResumePositionMs by movieInfoUiState.movieInfoResumePositionMs
+    var movieInfoLoadJob by movieInfoUiState.movieInfoLoadJob
+    var movieInfoLoadToken by movieInfoUiState.movieInfoLoadToken
     var playbackFallbackAttempts by playerViewModel.playbackFallbackAttempts
     var playbackPrimaryRetries by playerViewModel.playbackPrimaryRetries
     var playbackRecoveryJob by playerViewModel.playbackRecoveryJob
