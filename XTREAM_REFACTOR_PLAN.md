@@ -24,7 +24,7 @@ Reduce the size and coupling of `MainActivityUi.kt` without changing behavior, t
 - `[x]` Extract dialog orchestration into a separate `DialogsHost`.
 - `[x]` Extract playback/player wiring into a dedicated `PlayerHost`.
 - `[x]` Extract settings and sync coordination into a `SettingsAndSyncHost`.
-- `[ ]` Keep each extracted host behavior-identical at first.
+- `[x]` Keep each extracted host behavior-identical at first.
 - `[x]` Re-run `:app:compileDebugKotlin` after each extraction or small batch.
 
 Acceptance criteria:
@@ -35,6 +35,7 @@ Acceptance criteria:
 ## Phase 2: Move root state into view models
 
 - `[ ]` Identify the state that currently belongs to the screen, not the component tree.
+- `[x]` Identify the state that currently belongs to the screen, not the component tree.
 - `[ ]` Add `UiState` data classes for major sections instead of many `mutableStateOf` fields.
 - `[ ]` Migrate state into `StateFlow` or `MutableStateFlow` where appropriate.
 - `[ ]` Keep Compose state only for ephemeral UI details that are truly local.

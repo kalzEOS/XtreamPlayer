@@ -29,4 +29,6 @@ class PlayerViewModel @Inject constructor() : ViewModel() {
     val pendingResume = mutableStateOf<PendingResume?>(null)
     val resumePositionMs = mutableStateOf<Long?>(null)
     val resumeFocusId = mutableStateOf<String?>(null)
+    val syncPausedForPlayback = mutableStateOf(false)
+    val showPlaybackRecoveryDialog = mutableStateOf(false)
 }

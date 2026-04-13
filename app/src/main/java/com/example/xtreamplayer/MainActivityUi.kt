@@ -327,13 +327,11 @@ private fun RootScreenContent(
 
     var selectedSection by browseViewModel.selectedSection
     var navExpanded by browseViewModel.navExpanded
+    var updateUiState by updateViewModel.updateUiState
     val showManageListsState = remember { mutableStateOf(false) }
     var showManageLists by showManageListsState
     val showAppearanceState = remember { mutableStateOf(false) }
     var showAppearance by showAppearanceState
-    var updateUiState by updateViewModel.updateUiState
-    var updateCheckJob by updateViewModel.updateCheckJob
-    var startupUpdateCheckHandled by updateViewModel.startupUpdateCheckHandled
     val showApiKeyDialogState = remember { mutableStateOf(false) }
     var showApiKeyDialog by showApiKeyDialogState
     val showThemeDialogState = remember { mutableStateOf(false) }
@@ -370,13 +368,14 @@ private fun RootScreenContent(
     var movieInfoFromContinueWatching by remember { mutableStateOf(false) }
     var movieInfoResumePositionMs by remember { mutableStateOf<Long?>(null) }
     var movieInfoLoadJob by remember { mutableStateOf<Job?>(null) }
+    var movieInfoLoadToken by remember { mutableIntStateOf(0) }
     var playbackFallbackAttempts by playerViewModel.playbackFallbackAttempts
     var playbackPrimaryRetries by playerViewModel.playbackPrimaryRetries
     var playbackRecoveryJob by remember { mutableStateOf<Job?>(null) }
     var liveReconnectAttempts by playerViewModel.liveReconnectAttempts
     var liveReconnectJob by playerViewModel.liveReconnectJob
     var pendingResume by playerViewModel.pendingResume
-    var syncPausedForPlayback by remember { mutableStateOf(false) }
+    var syncPausedForPlayback by playerViewModel.syncPausedForPlayback
     var resumePositionMs by playerViewModel.resumePositionMs
     var resumeFocusId by playerViewModel.resumeFocusId
     var activePlaybackSubtitleState by remember { mutableStateOf<PlaybackSubtitleState?>(null) }
@@ -392,7 +391,6 @@ private fun RootScreenContent(
     val syncState by
             (progressiveSyncCoordinator?.syncState ?: emptySyncStateFlow)
                     .collectAsStateWithLifecycle()
-    val startupUpdateCheckEnabledState = updateViewModel.startupUpdateCheckEnabled
     val focusAppearanceOnSettingsReturnState = remember { mutableStateOf(false) }
     val focusManageListsOnSettingsReturnState = remember { mutableStateOf(false) }
     val wasShowingAppearanceState = remember { mutableStateOf(false) }
@@ -417,7 +415,7 @@ private fun RootScreenContent(
         wasShowingAppearanceState = wasShowingAppearanceState,
         wasShowingManageListsState = wasShowingManageListsState,
         startupDeferredReadyState = startupDeferredReadyState,
-        startupUpdateCheckEnabledState = startupUpdateCheckEnabledState,
+        startupUpdateCheckEnabledState = updateViewModel.startupUpdateCheckEnabled,
         progressiveSyncCoordinatorState = progressiveSyncCoordinatorState,
         syncState = syncState,
         setProgressiveSyncCoordinatorState = { progressiveSyncCoordinator = it }
@@ -679,8 +677,8 @@ private fun RootScreenContent(
     }
 
     fun checkForUpdates(source: UpdateCheckSource = UpdateCheckSource.MANUAL) {
-        if (updateCheckJob?.isActive == true) return
-        updateCheckJob = coroutineScope.launch {
+        if (updateViewModel.updateCheckJob.value?.isActive == true) return
+        updateViewModel.updateCheckJob.value = coroutineScope.launch {
             val result = runCatching { fetchLatestRelease(updateHttpClient) }
             val latest = result.getOrNull()
             if (latest == null) {
@@ -847,6 +845,8 @@ private fun RootScreenContent(
     val openMovieInfo: (ContentItem, List<ContentItem>) -> Unit = { item, items ->
         val config = authState.activeConfig
         if (config != null) {
+            movieInfoLoadToken++
+            val loadToken = movieInfoLoadToken
             movieInfoLoadJob?.cancel()
             movieInfoItem = null
             movieInfoInfo = null
@@ -866,6 +866,7 @@ private fun RootScreenContent(
                                     }
                             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                         }
+                        if (loadToken != movieInfoLoadToken) return@launch
                         movieInfoInfo = info
                         movieInfoItem = item
                     }
@@ -875,6 +876,8 @@ private fun RootScreenContent(
     val openMovieInfoFromContinueWatching: (ContentItem, List<ContentItem>) -> Unit = { item, items ->
         val config = authState.activeConfig
         if (config != null) {
+            movieInfoLoadToken++
+            val loadToken = movieInfoLoadToken
             movieInfoLoadJob?.cancel()
             movieInfoItem = null
             movieInfoInfo = null
@@ -898,6 +901,7 @@ private fun RootScreenContent(
                                     }
                             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                         }
+                        if (loadToken != movieInfoLoadToken) return@launch
                         movieInfoInfo = info
                         movieInfoItem = item
                     }
@@ -1981,6 +1985,8 @@ private fun RootScreenContent(
                                 null
                     },
                     onDismiss = {
+                        movieInfoLoadToken++
+                        movieInfoLoadJob?.cancel()
                         movieInfoItem = null
                         movieInfoInfo = null
                         movieInfoFromContinueWatching = false
