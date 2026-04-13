@@ -353,7 +353,7 @@ private fun RootScreenContent(
     var syncPausedForPlayback by playerViewModel.syncPausedForPlayback
     var resumePositionMs by playerViewModel.resumePositionMs
     var resumeFocusId by playerViewModel.resumeFocusId
-    var activePlaybackSubtitleState by remember { mutableStateOf<PlaybackSubtitleState?>(null) }
+    var activePlaybackSubtitleState by playerViewModel.activePlaybackSubtitleState
     var lastExitBackPressElapsedMs by remember { mutableLongStateOf(0L) }
     val resumeFocusRequester = remember { FocusRequester() }
 

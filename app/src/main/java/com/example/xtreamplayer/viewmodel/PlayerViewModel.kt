@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import com.example.xtreamplayer.PendingResume
 import com.example.xtreamplayer.content.ContentItem
 import com.example.xtreamplayer.PlaybackQueue
+import com.example.xtreamplayer.PlaybackSubtitleState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
@@ -31,6 +32,7 @@ class PlayerViewModel @Inject constructor() : ViewModel() {
     val pendingResume = mutableStateOf<PendingResume?>(null)
     val resumePositionMs = mutableStateOf<Long?>(null)
     val resumeFocusId = mutableStateOf<String?>(null)
+    val activePlaybackSubtitleState = mutableStateOf<PlaybackSubtitleState?>(null)
     val syncPausedForPlayback = mutableStateOf(false)
     val showPlaybackRecoveryDialog = mutableStateOf(false)
 }
