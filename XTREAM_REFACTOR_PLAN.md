@@ -61,7 +61,7 @@ Acceptance criteria:
 - `[ ]` Move sync coordination into a dedicated manager.
 
 Suggested boundaries:
-- `[ ]` live content
+- `[x]` live content
 - `[x]` VOD content
 - `[x]` series/episode content
 - `[x]` search/indexing

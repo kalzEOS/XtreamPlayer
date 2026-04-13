@@ -33,6 +33,8 @@ class ContentRepository(
     private val searchIndexRepository = SearchIndexRepository(contentCache)
     private val searchContentRepository =
         SearchContentRepository(api, contentCache, searchIndexRepository)
+    private val categoryContentRepository =
+        CategoryContentRepository(api, contentCache, searchContentRepository)
     private companion object {
         const val DEFAULT_PAGE_SIZE = 24
         const val DEFAULT_PREFETCH_DISTANCE = 6
@@ -58,11 +60,6 @@ class ContentRepository(
     private val memoryCache = object : LinkedHashMap<String, ContentPage>(200, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ContentPage>): Boolean {
             return size > 200
-        }
-    }
-    private val categoryThumbnailCache = object : LinkedHashMap<String, String?>(50, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String?>): Boolean {
-            return size > 50
         }
     }
     private val seriesEpisodesCache = object : LinkedHashMap<String, List<ContentItem>>(50, 0.75f, true) {
@@ -107,7 +104,6 @@ class ContentRepository(
             }
         }
     private val locks = Section.values().associateWith { Mutex() }
-    private val categoryLock = Mutex()
     private val memoryCacheMutex = Mutex()
     private val seriesEpisodesMutex = Mutex()
     private val seriesSeasonCountMutex = Mutex()
@@ -117,14 +113,6 @@ class ContentRepository(
     private val liveEpgInFlightMutex = Mutex()
     private val liveEpgInFlight =
         mutableMapOf<String, CompletableDeferred<Result<LiveNowNextEpg?>>>()
-    private val categoryThumbnailMutex = Mutex()
-    private val categoryThumbnailLoadLimiter = Semaphore(permits = 3)
-    private val categoryCache = object : LinkedHashMap<String, List<CategoryItem>>(100, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<CategoryItem>>): Boolean {
-            return size > 100
-        }
-    }
-
     private class SyncPausedException : Exception()
 
     fun pager(section: Section, authConfig: AuthConfig): Pager<Int, ContentItem> {
@@ -254,27 +242,7 @@ class ContentRepository(
         limit: Int,
         authConfig: AuthConfig
     ): ContentPage {
-        val normalizedQuery = SearchNormalizer.normalizeQuery(query)
-        if (normalizedQuery.isBlank()) {
-            return loadCategoryPage(type, categoryId, page, limit, authConfig)
-        }
-        val key = cacheKey("search-${type.name}-$categoryId-$normalizedQuery", page, limit)
-        memoryCacheMutex.withLock {
-            memoryCache[key]?.let { return it }
-        }
-        return searchContentRepository.searchFilterPages(
-            limit = limit,
-            page = page,
-            matcher = { item ->
-                SearchNormalizer.matchesTitle(item.title, normalizedQuery)
-            },
-            pageLoader = { rawPage, rawLimit ->
-                loadCategoryPage(type, categoryId, rawPage, rawLimit, authConfig)
-            },
-            maxScanPages = 6
-        ).also { pageData ->
-            memoryCacheMutex.withLock { memoryCache[key] = pageData }
-        }
+        return categoryContentRepository.searchCategoryPage(type, categoryId, query, page, limit, authConfig)
     }
 
     suspend fun loadCategoryPage(
@@ -285,25 +253,14 @@ class ContentRepository(
         authConfig: AuthConfig,
         forceRefresh: Boolean = false
     ): ContentPage {
-        val cacheKey = "category-${type.name}-$categoryId"
-        val key = cacheKey(cacheKey, page, limit)
-        if (!forceRefresh) {
-            memoryCacheMutex.withLock {
-                memoryCache[key]?.let { return it }
-            }
-        }
-        if (!forceRefresh) {
-            val cached = contentCache.readPage(cacheKey, authConfig, page, limit)
-            if (cached != null) {
-                memoryCacheMutex.withLock { memoryCache[key] = cached }
-                return cached
-            }
-        }
-        val result = api.fetchCategoryPage(type, authConfig, categoryId, page, limit)
-        val pageData = result.getOrElse { throw it }
-        contentCache.writePage(cacheKey, authConfig, page, limit, pageData)
-        memoryCacheMutex.withLock { memoryCache[key] = pageData }
-        return pageData
+        return categoryContentRepository.loadCategoryPage(
+            type,
+            categoryId,
+            page,
+            limit,
+            authConfig,
+            forceRefresh
+        )
     }
 
     suspend fun hasSectionIndex(section: Section, authConfig: AuthConfig): Boolean {
@@ -408,22 +365,7 @@ class ContentRepository(
         authConfig: AuthConfig,
         forceRefresh: Boolean = false
     ): List<CategoryItem> {
-        categoryLock.withLock {
-            val key = "${accountKey(authConfig)}-${type.name}"
-            if (!forceRefresh) {
-                categoryCache[key]?.let { return it }
-                val cached = contentCache.readCategories(type, authConfig)
-                if (cached != null) {
-                    categoryCache[key] = cached
-                    return cached
-                }
-            }
-            val result = api.fetchCategories(type, authConfig)
-            val categories = result.getOrElse { throw it }
-            categoryCache[key] = categories
-            contentCache.writeCategories(type, authConfig, categories)
-            return categories
-        }
+        return categoryContentRepository.loadCategories(type, authConfig, forceRefresh)
     }
 
     /**
@@ -968,12 +910,11 @@ class ContentRepository(
 
     suspend fun clearCache() {
         memoryCacheMutex.withLock { memoryCache.clear() }
-        categoryLock.withLock { categoryCache.clear() }
-        categoryThumbnailMutex.withLock { categoryThumbnailCache.clear() }
         validationCacheMutex.withLock { validationCache.clear() }
         SearchNormalizer.clearCache()
         searchIndexRepository.clearCache()
         searchContentRepository.clearCache()
+        categoryContentRepository.clearCache()
         syncMaintenanceRepository.clearCache()
         vodContentRepository.clearCache()
         seriesContentRepository.clearCache()
@@ -1007,28 +948,7 @@ class ContentRepository(
         categoryId: String,
         authConfig: AuthConfig
     ): String? {
-        val key = "${accountKey(authConfig)}-${type.name}-$categoryId"
-        categoryThumbnailMutex.withLock {
-            categoryThumbnailCache[key]?.let { return it }
-        }
-        val cached = contentCache.readCategoryThumbnail(type, categoryId, authConfig)
-        if (cached != null) {
-            categoryThumbnailMutex.withLock {
-                categoryThumbnailCache[key] = cached
-            }
-            return cached
-        }
-        val page = categoryThumbnailLoadLimiter.withPermit {
-            runCatching {
-                loadCategoryPage(type, categoryId, 0, 1, authConfig)
-            }.getOrNull()
-        }
-        val imageUrl = page?.items?.firstOrNull()?.imageUrl
-        contentCache.writeCategoryThumbnail(type, categoryId, authConfig, imageUrl)
-        categoryThumbnailMutex.withLock {
-            categoryThumbnailCache[key] = imageUrl
-        }
-        return imageUrl
+        return categoryContentRepository.categoryThumbnail(type, categoryId, authConfig)
     }
 
 }
