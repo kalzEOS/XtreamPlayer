@@ -41,10 +41,16 @@ internal class SeriesContentRepository(
                 return size > 50
             }
         }
+    private val seriesInfoCache = object : LinkedHashMap<String, SeriesInfo>(100, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, SeriesInfo>): Boolean {
+            return size > 100
+        }
+    }
     private val seriesEpisodesMutex = Mutex()
     private val seriesSeasonCountMutex = Mutex()
     private val seriesSeasonFullMutex = Mutex()
     private val seriesSeasonsMutex = Mutex()
+    private val seriesInfoMutex = Mutex()
 
     suspend fun loadSeriesEpisodePage(
         seriesId: String,
@@ -143,6 +149,30 @@ internal class SeriesContentRepository(
         return summaries
     }
 
+    suspend fun loadSeriesInfo(
+        item: ContentItem,
+        authConfig: AuthConfig
+    ): SeriesInfo? {
+        if (item.contentType != ContentType.SERIES) {
+            return null
+        }
+        val seriesId = item.streamId.ifBlank { item.id }
+        val key = "series-info-${accountKey(authConfig)}-$seriesId"
+        seriesInfoMutex.withLock {
+            seriesInfoCache[key]?.let { return it }
+        }
+        val cached = contentCache.readSeriesInfo(seriesId, authConfig)
+        if (cached != null) {
+            seriesInfoMutex.withLock { seriesInfoCache[key] = cached }
+            return cached
+        }
+        val result = api.fetchSeriesInfo(authConfig, seriesId)
+        val info = result.getOrElse { throw it }
+        contentCache.writeSeriesInfo(seriesId, authConfig, info)
+        seriesInfoMutex.withLock { seriesInfoCache[key] = info }
+        return info
+    }
+
     fun peekSeriesSeasonFullCache(
         seriesId: String,
         seasonLabel: String,
@@ -196,5 +226,6 @@ internal class SeriesContentRepository(
         seriesSeasonCountMutex.withLock { seriesSeasonCountUnavailableCache.clear() }
         seriesSeasonFullMutex.withLock { seriesSeasonFullCache.clear() }
         seriesSeasonsMutex.withLock { seriesSeasonsCache.clear() }
+        seriesInfoMutex.withLock { seriesInfoCache.clear() }
     }
 }

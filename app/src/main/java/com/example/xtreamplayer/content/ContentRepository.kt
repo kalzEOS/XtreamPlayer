@@ -79,11 +79,6 @@ class ContentRepository(
                 return size > 200
             }
         }
-    private val seriesInfoCache = object : LinkedHashMap<String, SeriesInfo>(100, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, SeriesInfo>): Boolean {
-            return size > 100
-        }
-    }
     private val seriesSeasonFullCache =
         object : LinkedHashMap<String, List<ContentItem>>(20, 0.75f, true) {
             override fun removeEldestEntry(
@@ -114,7 +109,6 @@ class ContentRepository(
     private val memoryCacheMutex = Mutex()
     private val seriesEpisodesMutex = Mutex()
     private val seriesSeasonCountMutex = Mutex()
-    private val seriesInfoMutex = Mutex()
     private val seriesSeasonFullMutex = Mutex()
     private val seriesSeasonsMutex = Mutex()
     private val liveEpgMutex = Mutex()
@@ -385,24 +379,7 @@ class ContentRepository(
         item: ContentItem,
         authConfig: AuthConfig
     ): SeriesInfo? {
-        if (item.contentType != ContentType.SERIES) {
-            return null
-        }
-        val seriesId = item.streamId.ifBlank { item.id }
-        val key = "series-info-${accountKey(authConfig)}-$seriesId"
-        seriesInfoMutex.withLock {
-            seriesInfoCache[key]?.let { return it }
-        }
-        val cached = contentCache.readSeriesInfo(seriesId, authConfig)
-        if (cached != null) {
-            seriesInfoMutex.withLock { seriesInfoCache[key] = cached }
-            return cached
-        }
-        val result = api.fetchSeriesInfo(authConfig, seriesId)
-        val info = result.getOrElse { throw it }
-        contentCache.writeSeriesInfo(seriesId, authConfig, info)
-        seriesInfoMutex.withLock { seriesInfoCache[key] = info }
-        return info
+        return seriesContentRepository.loadSeriesInfo(item, authConfig)
     }
 
     suspend fun loadLiveNowNext(
