@@ -1583,7 +1583,6 @@ private fun RootScreenContent(
                     showNextEpisodeThresholdDialogState = rootDialogsUiState.showNextEpisodeThresholdDialog,
                     showVodBufferDialogState = rootDialogsUiState.showVodBufferDialog,
                     showSubtitleAppearanceDialogState = rootDialogsUiState.showSubtitleAppearanceDialog,
-                    subtitleAppearancePreviewState = rootDialogsUiState.subtitleAppearancePreview,
                     showSubtitleCacheAutoClearDialogState = rootDialogsUiState.showSubtitleCacheAutoClearDialog,
                     showApiKeyDialogState = rootDialogsUiState.showApiKeyDialog,
                     cacheClearNonceState = browseViewModel.cacheClearNonce,

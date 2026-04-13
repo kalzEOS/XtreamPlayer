@@ -36,7 +36,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.xtreamplayer.update.UpdateRelease
 import com.example.xtreamplayer.update.compareVersions
 import com.example.xtreamplayer.update.downloadUpdateApk
@@ -65,33 +64,29 @@ internal fun RootUpdateHost(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val updateUiStateFlow = updateViewModel.updateUiState
-    val updateUiState by updateUiStateFlow.collectAsStateWithLifecycle()
-    val updateCheckJobFlow = updateViewModel.updateCheckJob
-    val updateCheckJob by updateCheckJobFlow.collectAsStateWithLifecycle()
-    val startupUpdateCheckEnabledFlow = updateViewModel.startupUpdateCheckEnabled
-    val startupUpdateCheckEnabled by startupUpdateCheckEnabledFlow.collectAsStateWithLifecycle()
-    val startupUpdateCheckHandledFlow = updateViewModel.startupUpdateCheckHandled
-    val startupUpdateCheckHandled by startupUpdateCheckHandledFlow.collectAsStateWithLifecycle()
+    val updateUiState by updateViewModel.updateUiState
+    val updateCheckJob by updateViewModel.updateCheckJob
+    val startupUpdateCheckEnabled by updateViewModel.startupUpdateCheckEnabled
+    val startupUpdateCheckHandled by updateViewModel.startupUpdateCheckHandled
 
     LaunchedEffect(startupUpdateCheckEnabled, startupUpdateCheckHandled, isSignedIn) {
         if (startupUpdateCheckHandled) return@LaunchedEffect
         val enabled = startupUpdateCheckEnabled ?: return@LaunchedEffect
         if (!enabled) {
-            startupUpdateCheckHandledFlow.value = true
+            updateViewModel.startupUpdateCheckHandled.value = true
             return@LaunchedEffect
         }
         if (!isSignedIn) return@LaunchedEffect
-        startupUpdateCheckHandledFlow.value = true
+        updateViewModel.startupUpdateCheckHandled.value = true
         checkForUpdates(
             context = context,
             coroutineScope = coroutineScope,
             updateHttpClient = updateHttpClient,
             appVersionName = appVersionName,
-            updateUiState = { updateUiStateFlow.value },
-            onUpdateUiStateChange = { updateUiStateFlow.value = it },
-            updateCheckJob = { updateCheckJobFlow.value },
-            onUpdateCheckJobChange = { updateCheckJobFlow.value = it },
+            updateUiState = { updateViewModel.updateUiState.value },
+            onUpdateUiStateChange = { updateViewModel.updateUiState.value = it },
+            updateCheckJob = { updateViewModel.updateCheckJob.value },
+            onUpdateCheckJobChange = { updateViewModel.updateCheckJob.value = it },
             source = RootUpdateCheckSource.STARTUP
         )
     }
@@ -102,7 +97,7 @@ internal fun RootUpdateHost(
             release = pendingRelease,
             isDownloading = updateUiState.inProgress,
             onUpdate = { onUpdateDownload(pendingRelease) },
-            onLater = { updateUiStateFlow.value = updateUiStateFlow.value.copy(showDialog = false) }
+            onLater = { updateViewModel.updateUiState.value = updateViewModel.updateUiState.value.copy(showDialog = false) }
         )
     }
 }
