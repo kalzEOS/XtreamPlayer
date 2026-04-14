@@ -5663,8 +5663,7 @@ fun SectionScreen(
                                 }
                         ) { index ->
                             val item = lazyItems[index]
-                            val itemFocusKey =
-                                    item?.let { "${it.contentType.name}:${it.id}" }
+                            val itemFocusKey = item?.let(::stableContentKey)
                             val requester =
                                     when {
                                         index == (columns - 1).coerceAtMost(lazyItems.itemCount - 1) ->
@@ -5712,7 +5711,7 @@ fun SectionScreen(
                                                 {
                                                     if (section == Section.ALL) {
                                                         lastAllFocusedKey =
-                                                                "${item.contentType.name}:${item.id}"
+                                                                stableContentKey(item)
                                                     }
                                                     if (item.contentType == ContentType.SERIES &&
                                                                     item.containerExtension
@@ -5739,7 +5738,7 @@ fun SectionScreen(
                                     onFocused = { focusedItem ->
                                         if (section == Section.ALL) {
                                             lastAllFocusedKey =
-                                                    "${focusedItem.contentType.name}:${focusedItem.id}"
+                                                    stableContentKey(focusedItem)
                                         }
                                         onItemFocused(focusedItem)
                                     },
@@ -7056,11 +7055,20 @@ fun FavoritesScreen(
                                         pendingCategoryReturnFocus &&
                                                 lastSelectedFavoriteCategoryId == null &&
                                                 index == lastSelectedFavoriteCategoryIndex
+                                val lastSelectedInList =
+                                        lastSelectedFavoriteCategoryId != null &&
+                                                sortedCategories.any {
+                                                    it.id == lastSelectedFavoriteCategoryId
+                                                }
                                 val requester =
                                         when {
                                             isReturnTargetById || isReturnTargetByIndex ->
                                                     contentItemFocusRequester
-                                            !pendingCategoryReturnFocus && index == 0 ->
+                                            !pendingCategoryReturnFocus && lastSelectedInList &&
+                                                    category.id == lastSelectedFavoriteCategoryId ->
+                                                    contentItemFocusRequester
+                                            !pendingCategoryReturnFocus && !lastSelectedInList &&
+                                                    index == 0 ->
                                                     contentItemFocusRequester
                                             index == backDownTargetIndex -> backDownFocusRequester
                                             else -> null
@@ -7197,6 +7205,7 @@ fun CategorySectionScreen(
         contentItemFocusRequester: FocusRequester,
         resumeFocusId: String?,
         resumeFocusRequester: FocusRequester,
+        contentEnterTrigger: Int = 0,
         onItemFocused: (ContentItem) -> Unit,
         onPlay: (ContentItem, List<ContentItem>) -> Unit,
         onPlayWithPosition: (ContentItem, List<ContentItem>, Long?) -> Unit,
@@ -7346,6 +7355,16 @@ fun CategorySectionScreen(
             }
         }
         pendingCategoryReturnFocus = false
+    }
+
+    // Handle nav-return-to-content when no category is open (category grid case).
+    // The content-grid case is handled inside the selectedCategory != null block.
+    val lastHandledOuterContentEnterTrigger = remember { mutableIntStateOf(contentEnterTrigger) }
+    LaunchedEffect(contentEnterTrigger) {
+        if (contentEnterTrigger <= lastHandledOuterContentEnterTrigger.intValue) return@LaunchedEffect
+        if (selectedCategory != null) return@LaunchedEffect
+        lastHandledOuterContentEnterTrigger.intValue = contentEnterTrigger
+        requestFocusWithFrameRetries(contentItemFocusRequester, frameRetries = 3)
     }
 
     // Don't auto-focus content when category changes - user must press Right to navigate there
@@ -7649,6 +7668,37 @@ fun CategorySectionScreen(
                                 }
                         requestFocusWithFrameRetries(requester, frameRetries = 2)
                         pendingSeriesReturnFocus = false
+                    }
+                }
+
+                val lastHandledContentEnterTrigger = remember { mutableIntStateOf(contentEnterTrigger) }
+                LaunchedEffect(contentEnterTrigger, lazyItems.itemCount) {
+                    if (contentEnterTrigger <= lastHandledContentEnterTrigger.intValue) return@LaunchedEffect
+                    if (selectedSeries != null) return@LaunchedEffect
+                    if (lazyItems.itemCount == 0) return@LaunchedEffect
+                    lastHandledContentEnterTrigger.intValue = contentEnterTrigger
+                    val lastId = lastCategoryContentId
+                    val items = lazyItems.itemSnapshotList.items
+                    val targetIndex =
+                            if (lastId != null) {
+                                items.indexOfFirst { it?.id == lastId }.takeIf { it >= 0 }
+                                        ?: lastCategoryContentIndex.coerceAtMost(
+                                                (lazyItems.itemCount - 1).coerceAtLeast(0)
+                                        )
+                            } else {
+                                lastCategoryContentIndex.coerceAtMost(
+                                        (lazyItems.itemCount - 1).coerceAtLeast(0)
+                                )
+                            }
+                    if (targetIndex > 0) {
+                        contentGridState.scrollToItem(targetIndex)
+                    }
+                    withFrameNanos {}
+                    val lastIdInItems = lastId != null && items.any { it?.id == lastId }
+                    if (lastIdInItems) {
+                        requestFocusWithFrameRetries(resumeFocusRequester, frameRetries = 3)
+                    } else {
+                        requestFocusWithFrameRetries(contentItemFocusRequester, frameRetries = 3)
                     }
                 }
 
@@ -7972,6 +8022,9 @@ fun CategorySectionScreen(
                             } else {
                                 -1
                             }
+                    val lastSelectedCategoryInList =
+                            lastSelectedCategoryId != null &&
+                                    filteredCategories.any { it.id == lastSelectedCategoryId }
                     LazyVerticalGrid(
                             columns = GridCells.Fixed(categoryColumns),
                             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -7989,7 +8042,11 @@ fun CategorySectionScreen(
                                         pendingCategoryReturnFocus && index == returnTargetIndex ->
                                                 contentItemFocusRequester
                                         index == searchDownIndex -> searchDownCategoryFocusRequester
-                                        !pendingCategoryReturnFocus && index == 0 ->
+                                        !pendingCategoryReturnFocus && lastSelectedCategoryInList &&
+                                                category.id == lastSelectedCategoryId ->
+                                                contentItemFocusRequester
+                                        !pendingCategoryReturnFocus && !lastSelectedCategoryInList &&
+                                                index == 0 ->
                                                 contentItemFocusRequester
                                         else -> null
                                     }
