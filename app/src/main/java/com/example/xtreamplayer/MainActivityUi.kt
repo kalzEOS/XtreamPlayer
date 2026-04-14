@@ -5666,14 +5666,14 @@ fun SectionScreen(
                             val itemFocusKey = item?.let(::stableContentKey)
                             val requester =
                                     when {
-                                        index == (columns - 1).coerceAtMost(lazyItems.itemCount - 1) ->
-                                                searchDownContentFocusRequester
                                         section == Section.ALL &&
                                                 itemFocusKey != null &&
                                                 itemFocusKey == lastAllFocusedKey ->
                                                 resumeFocusRequester
                                         matchesResumeFocus(item, resumeFocusId) ->
                                                 resumeFocusRequester
+                                        index == (columns - 1).coerceAtMost(lazyItems.itemCount - 1) ->
+                                                searchDownContentFocusRequester
                                         index == 0 -> contentItemFocusRequester
                                         else -> null
                                     }
@@ -6705,9 +6705,9 @@ fun FavoritesScreen(
                                     (posterColumns - 1).coerceAtMost(sortedContent.lastIndex)
                             val requester =
                                     when {
+                                        matchesResumeFocus(item, resumeFocusId) -> resumeFocusRequester
                                         index == 0 -> itemsFirstFocusRequester
                                         index == backDownTargetIndex -> backDownFocusRequester
-                                        matchesResumeFocus(item, resumeFocusId) -> resumeFocusRequester
                                         else -> null
                                     }
                             val isLeftEdge = index % posterColumns == 0
@@ -7798,12 +7798,12 @@ fun CategorySectionScreen(
                                     val requester =
                                             if (selectedSeries == null) {
                                                 when {
-                                                    index == searchDownIndex ->
-                                                            searchDownContentFocusRequester
                                                     item?.id != null &&
                                                             (item.id == lastCategoryContentId ||
                                                 matchesResumeFocus(item, resumeFocusId)) ->
                                                             resumeFocusRequester
+                                                    index == searchDownIndex ->
+                                                            searchDownContentFocusRequester
                                                     index == 0 -> contentItemFocusRequester
                                                     else -> null
                                                 }

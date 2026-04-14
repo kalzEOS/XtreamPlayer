@@ -296,23 +296,25 @@ internal fun BrowseScreen(
     val filteredContinueWatchingItems by
         filteredContinueWatchingFlow.collectAsStateWithLifecycle(initialValue = emptyList())
 
+    var categoryContentEnterTrigger by remember { mutableIntStateOf(0) }
+
     LaunchedEffect(navMoveToContentTrigger) {
         if (navMoveToContentTrigger <= 0) return@LaunchedEffect
-        val useDeterministicContentEntry =
-            selectedSection == Section.SETTINGS || selectedSection == Section.CATEGORIES
-        if (useDeterministicContentEntry) {
-            // These sections should always open at their top focus target.
+        // CATEGORIES uses its own trigger path to avoid FocusRequester-not-initialized
+        // warnings from calling requestFocus() on lazy-grid items that may be off-screen.
+        if (selectedSection == Section.CATEGORIES) {
+            categoryContentEnterTrigger++
+            return@LaunchedEffect
+        }
+        if (selectedSection == Section.SETTINGS) {
+            // SETTINGS always opens at its top focus target via contentItemFocusRequester.
             val focusedNow =
                 runCatching { contentItemFocusRequester.requestFocus() }.getOrDefault(false)
-            if (focusedNow) {
-                return@LaunchedEffect
-            }
+            if (focusedNow) return@LaunchedEffect
             withFrameNanos {}
             val focusedAfterFrame =
                 runCatching { contentItemFocusRequester.requestFocus() }.getOrDefault(false)
-            if (focusedAfterFrame) {
-                return@LaunchedEffect
-            }
+            if (focusedAfterFrame) return@LaunchedEffect
             focusToContentTrigger++
             return@LaunchedEffect
         }
@@ -331,9 +333,17 @@ internal fun BrowseScreen(
 
     LaunchedEffect(focusToContentTrigger) {
         if (focusToContentTrigger <= 0) return@LaunchedEffect
-        if (selectedSection == Section.SETTINGS) {
+        if (selectedSection == Section.CATEGORIES) {
+            categoryContentEnterTrigger++
+        } else {
             withFrameNanos {}
-            runCatching { contentItemFocusRequester.requestFocus() }
+            // moveFocus(Right) works when focus is on MenuButton (content is directly to
+            // its right) and doesn't require any FocusRequester to be attached.
+            // Fall back to contentItemFocusRequester for cases where moveFocus fails
+            // (e.g. the legacy nav-item fallback path).
+            if (!focusManager.moveFocus(FocusDirection.Right)) {
+                runCatching { contentItemFocusRequester.requestFocus() }
+            }
         }
     }
 
@@ -635,6 +645,7 @@ Row(modifier = Modifier.fillMaxSize()) {
                                         contentItemFocusRequester,
                                 resumeFocusId = resumeFocusId,
                                 resumeFocusRequester = resumeFocusRequester,
+                                contentEnterTrigger = categoryContentEnterTrigger,
                                 onItemFocused = onItemFocused,
                                 onPlay = onPlay,
                                 onPlayWithPosition = onPlayWithPositionAndQueue,
