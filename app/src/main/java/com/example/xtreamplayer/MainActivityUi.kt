@@ -2041,11 +2041,8 @@ fun RootScreen(
                         onSave = { apiKey, userAgent ->
                             settingsViewModel.setOpenSubtitlesApiKey(apiKey)
                             settingsViewModel.setOpenSubtitlesUserAgent(userAgent)
-                            Toast.makeText(
-                                context,
-                                "OpenSubtitles settings saved",
-                                Toast.LENGTH_SHORT
-                            ).show()
+                            val message = if (apiKey.isBlank()) "API key cleared" else "OpenSubtitles settings saved"
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                             showApiKeyDialog = false
                         },
                         onDismiss = { showApiKeyDialog = false }
