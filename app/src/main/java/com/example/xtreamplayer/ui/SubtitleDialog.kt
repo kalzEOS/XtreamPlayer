@@ -678,6 +678,7 @@ fun ApiKeyInputDialog(
     val context = LocalContext.current
     val inputFocusRequester = remember { FocusRequester() }
     val userAgentFocusRequester = remember { FocusRequester() }
+    val clearFocusRequester = remember { FocusRequester() }
     val saveFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
@@ -728,12 +729,21 @@ fun ApiKeyInputDialog(
                     fontFamily = AppTheme.fontFamily
                 )
 
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(4.dp))
 
                 val interactionSource = remember { MutableInteractionSource() }
                 val isFocused by interactionSource.collectIsFocusedAsState()
                 val shape = RoundedCornerShape(8.dp)
                 val borderColor = if (isFocused) FocusBorderColor else SecondaryBorderColor
+
+                Text(
+                    text = "32-character token from opensubtitles.com",
+                    color = MutedTextColor,
+                    fontSize = 11.sp,
+                    fontFamily = AppTheme.fontFamily
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
 
                 BasicTextField(
                     value = apiKey,
@@ -785,6 +795,15 @@ fun ApiKeyInputDialog(
                     text = "User agent (app name)",
                     color = MutedTextColor,
                     fontSize = 12.sp,
+                    fontFamily = AppTheme.fontFamily
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = "Any name identifying your app, e.g. XtreamPlayer",
+                    color = MutedTextColor,
+                    fontSize = 11.sp,
                     fontFamily = AppTheme.fontFamily
                 )
 
@@ -867,10 +886,32 @@ fun ApiKeyInputDialog(
 
                     FocusableButton(
                         onClick = {
-                            if (apiKey.isBlank() || userAgent.isBlank()) {
+                            apiKey = ""
+                            userAgent = ""
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = SecondaryBorderColor,
+                            contentColor = AppTheme.colors.textPrimary
+                        ),
+                        modifier = Modifier.focusRequester(clearFocusRequester)
+                    ) {
+                        Text(
+                            text = "Clear",
+                            fontFamily = AppTheme.fontFamily,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    FocusableButton(
+                        onClick = {
+                            val keyBlank = apiKey.isBlank()
+                            val agentBlank = userAgent.isBlank()
+                            if (keyBlank != agentBlank) {
                                 Toast.makeText(
                                     context,
-                                    "Enter API key and user agent",
+                                    "Enter both API key and user agent",
                                     Toast.LENGTH_SHORT
                                 ).show()
                                 return@FocusableButton
