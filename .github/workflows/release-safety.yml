@@ -7,42 +7,59 @@ on:
 jobs:
   validate-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Fetch Release Data
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          release_json="$(mktemp)"
+          curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG_NAME}" \
+            -o "${release_json}"
+          echo "release_json=${release_json}" >> "${GITHUB_OUTPUT}"
+
       - name: Validate Metadata
         env:
           TAG_NAME: ${{ github.event.release.tag_name }}
-          RELEASE_TITLE: ${{ github.event.release.name }}
-          RELEASE_NOTES: ${{ github.event.release.body }}
-          IS_PRERELEASE: ${{ github.event.release.prerelease }}
-          TARGET_BRANCH: ${{ github.event.release.target_commitish }}
+          RELEASE_JSON: ${{ steps.release.outputs.release_json }}
         run: |
           set -euo pipefail
-          title="${RELEASE_TITLE:-${TAG_NAME}}"
           notes_file="$(mktemp)"
-          printf '%s\n' "${RELEASE_NOTES}" > "${notes_file}"
+          title="$(jq -r '.name // empty' "${RELEASE_JSON}")"
+          jq -r '.body // empty' "${RELEASE_JSON}" > "${notes_file}"
+          prerelease="$(jq -r '.prerelease' "${RELEASE_JSON}")"
+          target_branch="$(jq -r '.target_commitish // empty' "${RELEASE_JSON}")"
+          title="${title:-${TAG_NAME}}"
           ./scripts/validate_release_metadata.sh \
             "${TAG_NAME}" \
             "${title}" \
             "${notes_file}" \
-            "${IS_PRERELEASE}" \
-            "${TARGET_BRANCH}"
+            "${prerelease}" \
+            "${target_branch}"
 
       - name: Validate Release Assets
         env:
           TAG_NAME: ${{ github.event.release.tag_name }}
-          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+          RELEASE_JSON: ${{ steps.release.outputs.release_json }}
         run: |
           set -euo pipefail
           version="${TAG_NAME#XtreamPlayerv}"
-          apk_count="$(jq '[.release.assets[] | select(.name | endswith(".apk"))] | length' "${GITHUB_EVENT_PATH}")"
+          apk_count="$(jq '[.assets[] | select(.name | endswith(".apk"))] | length' "${RELEASE_JSON}")"
           if [[ "${apk_count}" -lt 1 ]]; then
             echo "Release must include at least one APK asset."
             exit 1
           fi
-          bad_assets="$(jq -r '.release.assets[] | .name' "${GITHUB_EVENT_PATH}" | awk -v v="${version}" 'index($0, v)==0')"
+          bad_assets="$(jq -r '.assets[] | .name' "${RELEASE_JSON}" | awk -v v="${version}" 'index($0, v)==0')"
           if [[ -n "${bad_assets}" ]]; then
             echo "Every release asset name must include version ${version}."
             echo "${bad_assets}"
