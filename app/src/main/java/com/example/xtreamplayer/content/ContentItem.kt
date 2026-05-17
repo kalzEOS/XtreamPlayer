@@ -16,5 +16,6 @@ data class ContentItem(
     val rating: String? = null,
     val seasonLabel: String? = null,
     val episodeNumber: String? = null,
-    val categoryId: String? = null
+    val categoryId: String? = null,
+    val parentSeriesId: String? = null
 )

@@ -142,6 +142,7 @@ import com.example.xtreamplayer.content.resolveContinueWatchingMinWatchMs
 import com.example.xtreamplayer.content.SeriesInfo
 import com.example.xtreamplayer.content.SearchNormalizer
 import com.example.xtreamplayer.content.SubtitleRepository
+import com.example.xtreamplayer.content.VodPlaybackStateRepository
 import com.example.xtreamplayer.content.shouldStoreContinueWatchingEntry
 import com.example.xtreamplayer.observability.AppDiagnostics
 import com.example.xtreamplayer.player.Media3PlaybackEngine
@@ -291,6 +292,7 @@ fun RootScreen(
     val savedConfig by authViewModel.savedConfig.collectAsStateWithLifecycle()
     val savedConfigLoaded by authViewModel.savedConfigLoaded.collectAsStateWithLifecycle()
     val localPlaybackResumeRepository = remember { LocalPlaybackResumeRepository(context) }
+    val vodPlaybackStateRepository = remember { VodPlaybackStateRepository(context) }
     val localPlaybackResumeEntries by
         localPlaybackResumeRepository.entries.collectAsStateWithLifecycle(initialValue = emptyList())
     val localResumeByMediaId =
@@ -1088,27 +1090,104 @@ fun RootScreen(
         }
     }
 
+    fun resolveActivePlaybackItem(player: ExoPlayer?, mediaItem: MediaItem? = null): ContentItem? {
+        val transitionedMediaId = mediaItem?.mediaId?.takeUnless { it.isBlank() }
+        if (transitionedMediaId != null) {
+            activePlaybackItems.firstOrNull { queueMediaIdFor(it) == transitionedMediaId }?.let {
+                return it
+            }
+        }
+        if (player == null) return activePlaybackItem
+        val currentMediaId = player.currentMediaItem?.mediaId?.takeUnless { it.isBlank() }
+        if (currentMediaId != null) {
+            activePlaybackItems.firstOrNull { queueMediaIdFor(it) == currentMediaId }?.let {
+                return it
+            }
+        }
+        val currentIndex = player.currentMediaItemIndex
+        if (currentIndex in activePlaybackItems.indices) {
+            return activePlaybackItems[currentIndex]
+        }
+        return activePlaybackItem
+    }
+
+    fun syncPlaybackStateFromPlayer(mediaItem: MediaItem? = playbackEngine.player.currentMediaItem) {
+        val player = playbackEngine.player
+        val resolvedItem = resolveActivePlaybackItem(player, mediaItem)
+        if (resolvedItem != null && resolvedItem != activePlaybackItem) {
+            activePlaybackItem = resolvedItem
+        }
+        val resolvedTitle =
+                mediaItem?.mediaMetadata?.title?.toString()?.takeUnless { it.isBlank() }
+                    ?: resolvedItem?.title
+        if (!resolvedTitle.isNullOrBlank() && resolvedTitle != activePlaybackTitle) {
+            activePlaybackTitle = resolvedTitle
+        }
+    }
+
+    fun startPlayback(
+            item: ContentItem,
+            items: List<ContentItem>,
+            config: AuthConfig,
+            parentItem: ContentItem? = null,
+            playbackResumePositionMs: Long? = null
+    ) {
+        val playableItems = items.filter(::isPlayableContent)
+        activePlaybackItems = playableItems
+        activePlaybackItem = item
+        activePlaybackSeriesParent =
+                if (item.contentType == ContentType.SERIES) {
+                    parentItem
+                } else {
+                    null
+                }
+        resumePositionMs = playbackResumePositionMs?.takeIf { it > 0 }
+        val profile =
+                if (item.contentType == ContentType.LIVE) {
+                    BufferProfile.LIVE
+                } else {
+                    BufferProfile.VOD
+                }
+        playbackEngine.setBufferProfile(profile)
+        val queue = buildPlaybackQueue(items, item, config)
+        activePlaybackQueue = queue
+        activePlaybackTitle = queue.items.getOrNull(queue.startIndex)?.title ?: item.title
+    }
+
     val handlePlayItem: (ContentItem, List<ContentItem>) -> Unit = { item, items ->
         val config = authState.activeConfig
         if (config != null) {
             resumeFocusId = resolveResumeFocusTarget(item)
-            val playableItems = items.filter(::isPlayableContent)
-            activePlaybackItems = playableItems
-            activePlaybackItem = item
-            if (item.contentType != ContentType.SERIES) {
-                activePlaybackSeriesParent = null
+            val shouldResolveSeriesQueue =
+                    item.contentType == ContentType.SERIES &&
+                            !item.containerExtension.isNullOrBlank() &&
+                            (items.size <= 1 ||
+                                    items.any {
+                                        it.contentType != ContentType.SERIES ||
+                                                it.containerExtension.isNullOrBlank()
+                                    })
+            if (shouldResolveSeriesQueue) {
+                coroutineScope.launch {
+                    val resolved =
+                            resolveCanonicalSeriesPlaybackItems(
+                                contentRepository = contentRepository,
+                                authConfig = config,
+                                item = item,
+                                fallbackItems = items,
+                                parentHint = activePlaybackSeriesParent
+                            )
+                    startPlayback(item = item, items = resolved.items, config = config, parentItem = resolved.parentItem)
+                    historyRepository.addToHistory(config, item)
+                }
+            } else {
+                startPlayback(
+                    item = item,
+                    items = items,
+                    config = config,
+                    parentItem = activePlaybackSeriesParent
+                )
+                coroutineScope.launch { historyRepository.addToHistory(config, item) }
             }
-            val profile =
-                    if (item.contentType == ContentType.LIVE) {
-                        BufferProfile.LIVE
-                    } else {
-                        BufferProfile.VOD
-                    }
-            playbackEngine.setBufferProfile(profile)
-            val queue = buildPlaybackQueue(items, item, config)
-            activePlaybackQueue = queue
-            activePlaybackTitle = queue.items.getOrNull(queue.startIndex)?.title ?: item.title
-            coroutineScope.launch { historyRepository.addToHistory(config, item) }
         }
     }
 
@@ -1153,18 +1232,38 @@ fun RootScreen(
         if (config != null) {
             resumeFocusId = resolveResumeFocusTarget(item)
             val items = listOf(item)
-            val playableItems = items.filter(::isPlayableContent)
-            activePlaybackItems = playableItems
-            activePlaybackItem = item
-            if (item.contentType != ContentType.SERIES) {
-                activePlaybackSeriesParent = null
+            val shouldResolveSeriesQueue =
+                    item.contentType == ContentType.SERIES &&
+                            !item.containerExtension.isNullOrBlank()
+            if (shouldResolveSeriesQueue) {
+                coroutineScope.launch {
+                    val resolved =
+                            resolveCanonicalSeriesPlaybackItems(
+                                contentRepository = contentRepository,
+                                authConfig = config,
+                                item = item,
+                                fallbackItems = items,
+                                parentHint = activePlaybackSeriesParent
+                            )
+                    startPlayback(
+                        item = item,
+                        items = resolved.items,
+                        config = config,
+                        parentItem = resolved.parentItem,
+                        playbackResumePositionMs = positionMs
+                    )
+                    historyRepository.addToHistory(config, item)
+                }
+            } else {
+                startPlayback(
+                    item = item,
+                    items = items,
+                    config = config,
+                    parentItem = activePlaybackSeriesParent,
+                    playbackResumePositionMs = positionMs
+                )
+                coroutineScope.launch { historyRepository.addToHistory(config, item) }
             }
-            resumePositionMs = if (positionMs > 0) positionMs else null
-            playbackEngine.setBufferProfile(BufferProfile.VOD)
-            val queue = buildPlaybackQueue(items, item, config)
-            activePlaybackQueue = queue
-            activePlaybackTitle = queue.items.getOrNull(queue.startIndex)?.title ?: item.title
-            coroutineScope.launch { historyRepository.addToHistory(config, item) }
         }
     }
 
@@ -1173,24 +1272,43 @@ fun RootScreen(
                 val config = authState.activeConfig
                 if (config != null) {
                     resumeFocusId = resolveResumeFocusTarget(item)
-                    val playableItems = items.filter(::isPlayableContent)
-                    activePlaybackItems = playableItems
-                    activePlaybackItem = item
-                    if (item.contentType != ContentType.SERIES) {
-                        activePlaybackSeriesParent = null
+                    val shouldResolveSeriesQueue =
+                            item.contentType == ContentType.SERIES &&
+                                    !item.containerExtension.isNullOrBlank() &&
+                                    (items.size <= 1 ||
+                                            items.any {
+                                                it.contentType != ContentType.SERIES ||
+                                                        it.containerExtension.isNullOrBlank()
+                                            })
+                    if (shouldResolveSeriesQueue) {
+                        coroutineScope.launch {
+                            val resolved =
+                                    resolveCanonicalSeriesPlaybackItems(
+                                        contentRepository = contentRepository,
+                                        authConfig = config,
+                                        item = item,
+                                        fallbackItems = items,
+                                        parentHint = activePlaybackSeriesParent
+                                    )
+                            startPlayback(
+                                item = item,
+                                items = resolved.items,
+                                config = config,
+                                parentItem = resolved.parentItem,
+                                playbackResumePositionMs = positionMs
+                            )
+                            coroutineScope.launch { historyRepository.addToHistory(config, item) }
+                        }
+                    } else {
+                        startPlayback(
+                            item = item,
+                            items = items,
+                            config = config,
+                            parentItem = activePlaybackSeriesParent,
+                            playbackResumePositionMs = positionMs
+                        )
+                        coroutineScope.launch { historyRepository.addToHistory(config, item) }
                     }
-                    resumePositionMs = positionMs?.takeIf { it > 0 }
-                    val profile =
-                            if (item.contentType == ContentType.LIVE) {
-                                BufferProfile.LIVE
-                            } else {
-                                BufferProfile.VOD
-                            }
-                    playbackEngine.setBufferProfile(profile)
-                    val queue = buildPlaybackQueue(items, item, config)
-                    activePlaybackQueue = queue
-                    activePlaybackTitle = queue.items.getOrNull(queue.startIndex)?.title ?: item.title
-                    coroutineScope.launch { historyRepository.addToHistory(config, item) }
                 }
             }
 
@@ -1214,7 +1332,7 @@ fun RootScreen(
                 }
             }
 
-    val activeContinueWatchingEntryFlow =
+    val activeVodPlaybackStateEntryFlow =
         remember(
             activeConfig,
             activePlaybackItem?.id,
@@ -1226,27 +1344,28 @@ fun RootScreen(
             if (config == null || item == null) {
                 flowOf(null)
             } else {
-                continueWatchingRepository.continueWatchingEntryForContent(config, item)
+                vodPlaybackStateRepository.entryForMediaId(config, queueMediaIdFor(item))
             }
         }
-    val activeContinueWatchingEntry by
-        activeContinueWatchingEntryFlow.collectAsStateWithLifecycle(initialValue = null)
+    val activeVodPlaybackStateEntry by
+        activeVodPlaybackStateEntryFlow.collectAsStateWithLifecycle(initialValue = null)
     LaunchedEffect(
         activePlaybackItem?.id,
         activePlaybackItem?.contentType,
-        activeContinueWatchingEntry?.subtitleFileName,
-        activeContinueWatchingEntry?.subtitleLanguage,
-        activeContinueWatchingEntry?.subtitleLabel,
-        activeContinueWatchingEntry?.subtitleOffsetMs
+        activeVodPlaybackStateEntry?.subtitleFileName,
+        activeVodPlaybackStateEntry?.subtitleLanguage,
+        activeVodPlaybackStateEntry?.subtitleLabel,
+        activeVodPlaybackStateEntry?.subtitleOffsetMs
     ) {
-        activePlaybackSubtitleState = activeContinueWatchingEntry?.toPlaybackSubtitleStateOrNull()
+        activePlaybackSubtitleState = activeVodPlaybackStateEntry?.toPlaybackSubtitleStateOrNull()
     }
 
     fun savePlaybackProgress() {
         val player: ExoPlayer? = playbackEngine.player
         val safePlayer = player ?: return
+        syncPlaybackStateFromPlayer(safePlayer.currentMediaItem)
         val config = authState.activeConfig
-        val item = activePlaybackItem
+        val item = resolveActivePlaybackItem(safePlayer)
         if (config != null &&
                         item != null &&
                         (item.contentType == ContentType.MOVIES ||
@@ -1271,6 +1390,7 @@ fun RootScreen(
                 coroutineScope.launch {
                     if (!shouldStore) {
                         continueWatchingRepository.removeEntry(config, item)
+                        vodPlaybackStateRepository.removeEntry(config, queueMediaIdFor(item))
                     } else {
                         val parentItem =
                                 if (item.contentType == ContentType.SERIES) {
@@ -1289,7 +1409,22 @@ fun RootScreen(
                                 subtitleLabel = subtitleState?.label,
                                 subtitleOffsetMs = subtitleState?.offsetMs ?: 0L
                         )
+                        vodPlaybackStateRepository.updateProgress(
+                                config = config,
+                                mediaId = queueMediaIdFor(item),
+                                title = item.title,
+                                positionMs = position,
+                                durationMs = duration,
+                                subtitleFileName = subtitleState?.fileName,
+                                subtitleLanguage = subtitleState?.language,
+                                subtitleLabel = subtitleState?.label,
+                                subtitleOffsetMs = subtitleState?.offsetMs ?: 0L
+                        )
                     }
+                }
+            } else {
+                coroutineScope.launch {
+                    vodPlaybackStateRepository.removeEntry(config, queueMediaIdFor(item))
                 }
             }
         }
@@ -1325,7 +1460,6 @@ fun RootScreen(
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
-    val latestPlaybackItem by rememberUpdatedState(activePlaybackItem)
     val latestPlaybackQueue by rememberUpdatedState(activePlaybackQueue)
 
     DisposableEffect(lifecycleOwner) {
@@ -1333,7 +1467,8 @@ fun RootScreen(
             val player: ExoPlayer? = playbackEngine.player
             when (event) {
                 Lifecycle.Event.ON_STOP -> {
-                    val item = latestPlaybackItem
+                    syncPlaybackStateFromPlayer(player?.currentMediaItem)
+                    val item = resolveActivePlaybackItem(player)
                     if (item != null &&
                                     (item.contentType == ContentType.MOVIES ||
                                             item.contentType == ContentType.SERIES)
@@ -1356,7 +1491,8 @@ fun RootScreen(
                     }
                 }
                 Lifecycle.Event.ON_START -> {
-                    val item = latestPlaybackItem
+                    syncPlaybackStateFromPlayer(player?.currentMediaItem)
+                    val item = resolveActivePlaybackItem(player)
                     val resume = pendingResume
                     if (item != null &&
                                     resume != null &&
@@ -1480,43 +1616,17 @@ fun RootScreen(
         val listener =
                 object : Player.Listener {
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                        val title = mediaItem?.mediaMetadata?.title?.toString()
-                        if (!title.isNullOrBlank()) {
-                            activePlaybackTitle = title
-                        }
-                        val transitionedMediaId =
-                            mediaItem?.mediaId?.takeUnless { it.isBlank() }
-                                ?: playbackEngine.player.currentMediaItem?.mediaId?.takeUnless { it.isBlank() }
-                        if (!transitionedMediaId.isNullOrBlank()) {
-                            activePlaybackItems.firstOrNull { item ->
-                                queueMediaIdFor(item) == transitionedMediaId
-                            }?.let { matchedItem ->
-                                activePlaybackItem = matchedItem
-                                return
-                            }
-                        }
-                        val currentIndex = playbackEngine.player.currentMediaItemIndex
-                        if (currentIndex < 0 || activePlaybackItems.isEmpty()) return
-                        val queueItems = activePlaybackQueue?.items
-                        if (queueItems != null && queueItems.size != activePlaybackItems.size) {
-                            Timber.w(
-                                    "Playback queue mismatch: queue=${queueItems.size} items=${activePlaybackItems.size} index=$currentIndex"
-                            )
-                            return
-                        }
-                        val safeIndex = currentIndex.coerceIn(0, activePlaybackItems.lastIndex)
-                        if (safeIndex != currentIndex) {
-                            Timber.w("Clamped playback index $currentIndex to $safeIndex")
-                        }
-                        activePlaybackItem = activePlaybackItems[safeIndex]
+                        syncPlaybackStateFromPlayer(mediaItem)
                     }
 
                     override fun onPlaybackStateChanged(playbackState: Int) {
+                        syncPlaybackStateFromPlayer()
                         if (playbackState == Player.STATE_READY) {
                             playbackRecoveryTracker.markPlaybackHealthy()
                         }
                         if (playbackState == Player.STATE_READY && !playbackEngine.player.isPlaying
                         ) {
+                            syncPlaybackStateFromPlayer()
                             savePlaybackProgress()
                         }
                         if (playbackState == Player.STATE_READY &&
@@ -2371,6 +2481,159 @@ fun RootScreen(
     }
     }
     }
+}
+
+private data class CanonicalPlaybackResolution(
+        val items: List<ContentItem>,
+        val parentItem: ContentItem? = null
+)
+
+private fun isSeriesEpisodeLaunch(item: ContentItem): Boolean {
+    return item.contentType == ContentType.SERIES && !item.containerExtension.isNullOrBlank()
+}
+
+private fun canonicalSeriesParentId(item: ContentItem, parentHint: ContentItem?): String? {
+    return parentHint?.streamId?.takeUnless { it.isBlank() }
+            ?: parentHint?.id?.takeUnless { it.isBlank() }
+            ?: item.parentSeriesId?.takeUnless { it.isBlank() }
+}
+
+private fun extractEpisodeSeasonLabel(item: ContentItem): String? {
+    item.seasonLabel?.takeUnless { it.isBlank() }?.let { return it }
+    val subtitle = item.subtitle
+    if (subtitle.isBlank()) return null
+    val match = Regex("S(\\d+)", RegexOption.IGNORE_CASE).find(subtitle)
+    return match?.groupValues?.getOrNull(1)
+}
+
+private fun stripEpisodeSuffixes(title: String): String {
+    var result = title.trim()
+    if (result.isBlank()) return result
+
+    val suffixPatterns =
+            listOf(
+                    Regex("""(?:\s*[-–—:|]\s*)?S\d{1,2}E\d{1,3}(?:\s*[-–—:|].*)?$""", RegexOption.IGNORE_CASE),
+                    Regex("""(?:\s*[-–—:|]\s*)?Season\s*\d+(?:\s*[-–—:|].*)?$""", RegexOption.IGNORE_CASE),
+                    Regex("""(?:\s*[-–—:|]\s*)?(?:Episode|Ep\.?)\s*\d+(?:\s*[-–—:|].*)?$""", RegexOption.IGNORE_CASE)
+            )
+    suffixPatterns.forEach { pattern ->
+        result = result.replace(pattern, "").trim()
+    }
+    return result
+}
+
+private fun normalizeSeriesTitleForMatch(title: String): String {
+    val stripped = stripEpisodeSuffixes(title)
+    if (stripped.isBlank()) return ""
+    val decomposed =
+            java.text.Normalizer.normalize(stripped, java.text.Normalizer.Form.NFKD)
+    return decomposed
+            .replace(Regex("\\p{Mn}+"), "")
+            .replace('ى', 'ي')
+            .replace('ة', 'ه')
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .lowercase(java.util.Locale.ROOT)
+}
+
+private suspend fun resolveSeriesParentByTitle(
+        contentRepository: ContentRepository,
+        authConfig: AuthConfig,
+        item: ContentItem
+): ContentItem? {
+    val searchTitle = stripEpisodeSuffixes(item.title)
+    val normalizedQuery = normalizeSeriesTitleForMatch(searchTitle)
+    if (normalizedQuery.isBlank()) return null
+
+    val candidates =
+            runCatching {
+                contentRepository.searchPage(
+                        section = Section.SERIES,
+                        query = searchTitle,
+                        page = 0,
+                        limit = 20,
+                        authConfig = authConfig
+                )
+            }.getOrNull()?.items.orEmpty()
+
+    val exactMatches =
+            candidates
+                    .asSequence()
+                    .filter { it.contentType == ContentType.SERIES }
+                    .filter { normalizeSeriesTitleForMatch(it.title) == normalizedQuery }
+                    .distinctBy { it.streamId?.takeUnless { streamId -> streamId.isBlank() } ?: it.id }
+                    .toList()
+    return exactMatches.singleOrNull()
+}
+
+private suspend fun resolveCanonicalSeriesPlaybackItems(
+        contentRepository: ContentRepository,
+        authConfig: AuthConfig,
+        item: ContentItem,
+        fallbackItems: List<ContentItem>,
+        parentHint: ContentItem?
+): CanonicalPlaybackResolution {
+    if (!isSeriesEpisodeLaunch(item)) {
+        return CanonicalPlaybackResolution(items = fallbackItems, parentItem = parentHint)
+    }
+
+    val stableParentId = canonicalSeriesParentId(item, parentHint)
+    if (stableParentId.isNullOrBlank()) {
+        val parentItem = resolveSeriesParentByTitle(contentRepository, authConfig, item)
+        if (parentItem == null) {
+            return CanonicalPlaybackResolution(items = fallbackItems)
+        }
+
+        val allEpisodes =
+                runCatching {
+                    contentRepository.loadSeriesEpisodes(parentItem.streamId, authConfig)
+                }.getOrNull().orEmpty()
+        if (allEpisodes.isEmpty()) {
+            return CanonicalPlaybackResolution(items = fallbackItems, parentItem = parentItem)
+        }
+
+        val seasonLabel = extractEpisodeSeasonLabel(item)
+        val resolvedItems =
+                if (!seasonLabel.isNullOrBlank()) {
+                    allEpisodes.filter { episode ->
+                        val episodeSeasonLabel =
+                                episode.seasonLabel?.takeUnless { it.isBlank() }
+                                        ?: extractEpisodeSeasonLabel(episode)
+                        episodeSeasonLabel == seasonLabel
+                    }
+                } else {
+                    allEpisodes
+                }
+        return CanonicalPlaybackResolution(
+                items = if (resolvedItems.isEmpty()) allEpisodes else resolvedItems,
+                parentItem = parentItem
+        )
+    }
+
+    val allEpisodes =
+            runCatching {
+                contentRepository.loadSeriesEpisodes(stableParentId, authConfig)
+            }.getOrNull().orEmpty()
+    if (allEpisodes.isEmpty()) {
+        return CanonicalPlaybackResolution(items = fallbackItems, parentItem = parentHint)
+    }
+
+    val seasonLabel = extractEpisodeSeasonLabel(item)
+    val resolvedItems =
+            if (!seasonLabel.isNullOrBlank()) {
+                allEpisodes.filter { episode ->
+                    val episodeSeasonLabel =
+                            episode.seasonLabel?.takeUnless { it.isBlank() }
+                                ?: extractEpisodeSeasonLabel(episode)
+                    episodeSeasonLabel == seasonLabel
+                }
+            } else {
+                allEpisodes
+            }
+    return CanonicalPlaybackResolution(
+            items = if (resolvedItems.isEmpty()) allEpisodes else resolvedItems,
+            parentItem = parentHint
+    )
 }
 
 @Composable
@@ -8482,20 +8745,25 @@ fun ContinueWatchingScreen(
         kotlin.math.ceil(4.0 / settings.uiScale).toInt().coerceIn(4, 8)
     }
     val columns = rememberReflowColumns(baseColumns, navLayoutExpanded)
+    val resolvedParents = remember { androidx.compose.runtime.mutableStateMapOf<String, ContentItem>() }
     val posterFontScale = remember(columns) { 4f / columns.toFloat() }
+    val resolvedParentsSnapshot = resolvedParents.toMap()
     val displayEntries =
-            remember(continueWatchingItems) {
+            remember(continueWatchingItems, resolvedParentsSnapshot) {
                 fun displayGroupingKey(entry: ContinueWatchingEntry): String {
-                    return if (entry.parentItem != null &&
-                            entry.item.contentType == ContentType.SERIES
+                    val canonicalSeriesId =
+                            entry.parentItem?.streamId?.takeUnless { it.isBlank() }
+                                    ?: entry.parentItem?.id?.takeUnless { it.isBlank() }
+                                    ?: resolvedParentsSnapshot[entry.key]?.streamId?.takeUnless { it.isBlank() }
+                                    ?: resolvedParentsSnapshot[entry.key]?.id?.takeUnless { it.isBlank() }
+                                    ?: entry.item.parentSeriesId?.takeUnless { it.isBlank() }
+                    return if (entry.item.contentType == ContentType.SERIES &&
+                            !canonicalSeriesId.isNullOrBlank()
                     ) {
-                        val parentIdentity =
-                            entry.parentItem.streamId?.takeUnless { it.isBlank() }
-                                ?: entry.parentItem.id
-                        "series:$parentIdentity"
+                        "series:$canonicalSeriesId"
                     } else {
                         val itemIdentity =
-                            entry.item.streamId?.takeUnless { it.isBlank() } ?: entry.item.id
+                                entry.item.streamId?.takeUnless { it.isBlank() } ?: entry.item.id
                         "item:${entry.item.contentType.name}:$itemIdentity"
                     }
                 }
@@ -8503,9 +8771,22 @@ fun ContinueWatchingScreen(
                         continueWatchingItems.groupBy { entry ->
                             displayGroupingKey(entry)
                         }
-                grouped.values.mapNotNull { group ->
+                grouped.entries.mapNotNull { (groupKey, group) ->
                     val latest = group.maxByOrNull { it.timestampMs } ?: return@mapNotNull null
-                    val displayItem = latest.parentItem ?: latest.item
+                    val latestSeriesParent =
+                            group.asSequence()
+                                    .filter { it.parentItem != null }
+                                    .maxByOrNull { it.timestampMs }
+                                    ?.parentItem
+                                    ?: group.asSequence()
+                                            .mapNotNull { entry ->
+                                                resolvedParentsSnapshot[entry.key]?.let { parent ->
+                                                    entry.timestampMs to parent
+                                                }
+                                            }
+                                            .maxByOrNull { it.first }
+                                            ?.second
+                    val displayItem = latestSeriesParent ?: latest.item
                     val resumeLabel =
                             if (latest.item.contentType == ContentType.SERIES) {
                                 formatEpisodeLabel(latest.item, separator = " - ")?.let { "Resume $it" }
@@ -8519,10 +8800,10 @@ fun ContinueWatchingScreen(
                                 displayItem
                             }
                     ContinueWatchingDisplayEntry(
-                            key = latest.key,
+                            key = groupKey,
                             displayItem = displayItemWithSubtitle,
                             resumeItem = latest.item,
-                            parentItem = latest.parentItem,
+                            parentItem = latestSeriesParent ?: latest.parentItem,
                             sourceItems =
                                     group.map { it.item }.distinctBy {
                                         val identity = it.streamId?.takeUnless { id -> id.isBlank() } ?: it.id
@@ -8559,40 +8840,12 @@ fun ContinueWatchingScreen(
                     }
                 }
             }
-    val resolvedParents = remember { androidx.compose.runtime.mutableStateMapOf<String, ContentItem>() }
     val resolveSeriesParent: suspend (ContentItem) -> ContentItem? = { resumeItem ->
-        val rawTitle = resumeItem.title
-        val dashSeasonMatch = Regex("\\s-\\sS\\d", RegexOption.IGNORE_CASE).find(rawTitle)
-        val compactSeasonMatch = Regex("S\\d+E\\d+", RegexOption.IGNORE_CASE).find(rawTitle)
-        val seriesName =
-            when {
-                dashSeasonMatch != null && dashSeasonMatch.range.first > 0 ->
-                    rawTitle.substring(0, dashSeasonMatch.range.first).trim()
-                compactSeasonMatch != null && compactSeasonMatch.range.first > 0 ->
-                    rawTitle.substring(0, compactSeasonMatch.range.first).trim().trimEnd('-').trim()
-                else -> rawTitle
-            }
-        if (seriesName.isBlank()) {
-            null
+        val stableParentId = resumeItem.parentSeriesId?.takeUnless { it.isBlank() }
+        if (!stableParentId.isNullOrBlank()) {
+            contentRepository.findSeriesItemById(stableParentId, authConfig)
         } else {
-            runCatching {
-                contentRepository.searchPage(
-                    section = Section.SERIES,
-                    query = seriesName,
-                    page = 0,
-                    limit = 20,
-                    authConfig = authConfig
-                )
-            }.getOrNull()?.items?.firstOrNull { it.title.startsWith(seriesName, ignoreCase = true) }
-                ?: runCatching {
-                    contentRepository.searchPage(
-                        section = Section.SERIES,
-                        query = seriesName,
-                        page = 0,
-                        limit = 20,
-                        authConfig = authConfig
-                    )
-                }.getOrNull()?.items?.firstOrNull()
+            resolveSeriesParentByTitle(contentRepository, authConfig, resumeItem)
         }
     }
 
@@ -8901,9 +9154,6 @@ fun ContinueWatchingScreen(
                                                 val seriesItem =
                                                         resolvedParent
                                                                 ?: entry.parentItem
-                                                                ?: item.takeIf {
-                                                                    it.containerExtension.isNullOrBlank()
-                                                                }
                                                 if (seriesItem != null) {
                                                     returnFocusItem = item
                                                     pendingResumeItem = entry.resumeItem
@@ -9093,6 +9343,14 @@ fun SeriesSeasonsScreen(
     val episodesTabRequester = contentItemFocusRequester
     val castTabRequester = tabFocusRequesters[1]
     val context = LocalContext.current
+    val vodPlaybackStateRepository = remember { VodPlaybackStateRepository(context) }
+    val vodPlaybackStateEntries by
+        vodPlaybackStateRepository.entriesForConfig(authConfig)
+            .collectAsStateWithLifecycle(initialValue = emptyList())
+    val vodPlaybackStateByMediaId =
+        remember(vodPlaybackStateEntries) {
+            vodPlaybackStateEntries.associateBy { it.mediaId }
+        }
 
     LaunchedEffect(seriesItem.streamId, focusPlayOnOpen) {
         withFrameNanos {}
@@ -9158,10 +9416,12 @@ fun SeriesSeasonsScreen(
                 null
             } else {
                 val episodeIds = allEpisodes.map { it.streamId }.toHashSet()
-                continueWatchingEntries.firstOrNull { entry ->
-                    entry.item.contentType == ContentType.SERIES &&
-                        episodeIds.contains(entry.item.streamId)
-                }
+                continueWatchingEntries
+                    .filter { entry ->
+                        entry.item.contentType == ContentType.SERIES &&
+                            episodeIds.contains(entry.item.streamId)
+                    }
+                    .maxByOrNull { it.timestampMs }
             }
         }
     val continueWatchingEntriesForSeries =
@@ -9177,11 +9437,12 @@ fun SeriesSeasonsScreen(
             }
         }
     val resumePositionsById =
-        remember(continueWatchingEntries) {
-            continueWatchingEntries
-                .asSequence()
-                .filter { it.item.contentType == ContentType.SERIES }
-                .associate { it.item.id to it.positionMs }
+        remember(allEpisodes, vodPlaybackStateByMediaId) {
+            allEpisodes
+                .associate { episode ->
+                    val mediaId = queueMediaIdFor(episode)
+                    episode.id to (vodPlaybackStateByMediaId[mediaId]?.positionMs ?: 0L)
+                }
         }
     val preferredResumeEpisode =
         remember(preferredResumeItem, allEpisodes) {
@@ -10048,6 +10309,18 @@ fun SeriesSeasonsScreen(
                                     }
                                     SeriesEpisodeRow(
                                         item = item,
+                                        fallbackImageUrl = seriesItem.imageUrl,
+                                        progressPercent = run {
+                                            val playbackState =
+                                                vodPlaybackStateByMediaId[queueMediaIdFor(item)]
+                                            val positionMs = playbackState?.positionMs?.takeIf { it > 0 } ?: 0L
+                                            val durationMs = playbackState?.durationMs?.takeIf { it > 0 } ?: 0L
+                                            if (positionMs > 0L && durationMs > 0L) {
+                                                ((positionMs * 100L) / durationMs).toInt().coerceIn(0, 100)
+                                            } else {
+                                                0
+                                            }
+                                        },
                                         focusRequester = requester,
                                         forceDarkText = forceDarkText,
                                         onActivate = {
@@ -10106,6 +10379,8 @@ private enum class SeriesDetailTab {
 @Composable
 private fun SeriesEpisodeRow(
         item: ContentItem,
+        fallbackImageUrl: String?,
+        progressPercent: Int,
         focusRequester: FocusRequester?,
         forceDarkText: Boolean,
         onActivate: () -> Unit,
@@ -10136,10 +10411,10 @@ private fun SeriesEpisodeRow(
     val showEpisodeReadMore = description != "No description available." && descriptionOverflow
     val context = LocalContext.current
     val imageRequest =
-            remember(item.imageUrl) {
+            remember(item.imageUrl, fallbackImageUrl) {
                 buildTvImageRequest(
                     context = context,
-                    imageUrl = item.imageUrl,
+                    imageUrl = item.imageUrl ?: fallbackImageUrl,
                     targetSizePx = 400
                 )
             }
@@ -10196,18 +10471,38 @@ private fun SeriesEpisodeRow(
                     Modifier.width(184.dp)
                             .height(104.dp)
                             .clip(RoundedCornerShape(10.dp))
-            if (imageRequest != null) {
-                AsyncImage(
-                        model = imageRequest,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        filterQuality = FilterQuality.Low,
-                        modifier = thumbModifier
-                )
-            } else {
-                Box(
-                        modifier = thumbModifier.background(colors.surfaceAlt)
-                )
+            Column(
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (imageRequest != null) {
+                    AsyncImage(
+                            model = imageRequest,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            filterQuality = FilterQuality.Low,
+                            modifier = thumbModifier
+                    )
+                } else {
+                    Box(
+                            modifier = thumbModifier.background(colors.surfaceAlt)
+                    )
+                }
+                if (progressPercent > 0) {
+                    Box(
+                            modifier =
+                                    Modifier.width(184.dp)
+                                            .height(4.dp)
+                                            .clip(RoundedCornerShape(999.dp))
+                                            .background(colors.overlaySoft)
+                    ) {
+                        Box(
+                                modifier =
+                                        Modifier.fillMaxWidth(progressPercent / 100f)
+                                                .fillMaxHeight()
+                                                .background(colors.accent)
+                        )
+                    }
+                }
             }
             Column(
                     modifier = Modifier.weight(1f),

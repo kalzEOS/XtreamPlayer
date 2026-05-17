@@ -137,6 +137,7 @@ class FavoritesRepository(private val context: Context) {
         obj.put("contentType", item.contentType.name)
         obj.put("streamId", item.streamId)
         obj.put("containerExtension", item.containerExtension)
+        obj.put("parentSeriesId", item.parentSeriesId)
         return obj.toString()
     }
 
@@ -164,6 +165,8 @@ class FavoritesRepository(private val context: Context) {
                 .takeUnless { it.isBlank() || it == "null" }
             val containerExtension = obj.optString("containerExtension")
                 .takeUnless { it.isBlank() || it == "null" }
+            val parentSeriesId = obj.optString("parentSeriesId")
+                .takeUnless { it.isBlank() || it == "null" }
             val streamId = obj.optString("streamId")
                 .takeUnless { it.isBlank() || it == "null" }
                 ?: obj.optString("id")
@@ -177,7 +180,8 @@ class FavoritesRepository(private val context: Context) {
                     section = section,
                     contentType = contentType,
                     streamId = streamId,
-                    containerExtension = containerExtension
+                    containerExtension = containerExtension,
+                    parentSeriesId = parentSeriesId
                 )
             )
         }.getOrNull()

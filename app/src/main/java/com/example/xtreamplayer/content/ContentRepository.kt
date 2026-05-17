@@ -1085,6 +1085,16 @@ class ContentRepository(
             contentCache.hasSectionIndex(Section.LIVE, authConfig)
     }
 
+    suspend fun findSeriesItemById(seriesId: String, authConfig: AuthConfig): ContentItem? {
+        if (seriesId.isBlank()) return null
+        val items = loadSectionIndex(Section.SERIES, authConfig) ?: return null
+        return items.firstOrNull { item ->
+            item.contentType == ContentType.SERIES &&
+                item.containerExtension.isNullOrBlank() &&
+                (item.streamId == seriesId || item.id == seriesId)
+        }
+    }
+
     private fun shouldKeepSectionIndexInMemory(itemCount: Int): Boolean {
         return itemCount in 1 until MAX_SECTION_INDEX_ITEMS_IN_MEMORY
     }
