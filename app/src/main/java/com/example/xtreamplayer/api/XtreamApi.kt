@@ -374,7 +374,7 @@ class XtreamApi(
                     )
                     body.charStream().use { stream ->
                         val reader = JsonReader(stream)
-                        val allItems = parseSeriesEpisodesAll(reader)
+                        val allItems = parseSeriesEpisodesAll(reader, seriesId)
                         val slice = if (offset >= allItems.size) {
                             emptyList()
                         } else {
@@ -492,7 +492,7 @@ class XtreamApi(
                     body.charStream().use { stream ->
                         val reader = JsonReader(stream)
                         val pageData =
-                            parseSeriesSeasonPage(reader, seasonLabel, offset, limit)
+                            parseSeriesSeasonPage(reader, seriesId, seasonLabel, offset, limit)
                         Result.success(pageData)
                     }
                 }
@@ -529,7 +529,7 @@ class XtreamApi(
                     )
                     body.charStream().use { stream ->
                         val reader = JsonReader(stream)
-                        Result.success(parseSeriesSeasonAll(reader, seasonLabel))
+                        Result.success(parseSeriesSeasonAll(reader, seriesId, seasonLabel))
                     }
                 }
             } catch (e: Exception) {
@@ -1006,6 +1006,7 @@ class XtreamApi(
 
     private fun parseSeriesEpisodes(
         reader: JsonReader,
+        seriesId: String,
         offset: Int,
         limit: Int
     ): ContentPage {
@@ -1049,7 +1050,7 @@ class XtreamApi(
                         }
                         break
                     }
-                    val item = parseEpisodeItem(reader, seasonKey)
+                    val item = parseEpisodeItem(reader, seriesId, seasonKey)
                     if (item != null) {
                         items.add(item)
                     }
@@ -1374,6 +1375,7 @@ class XtreamApi(
 
     private fun parseSeriesSeasonPage(
         reader: JsonReader,
+        seriesId: String,
         seasonLabel: String,
         offset: Int,
         limit: Int
@@ -1409,7 +1411,7 @@ class XtreamApi(
                 }
                 reader.beginArray()
                 while (reader.hasNext()) {
-                    val entry = parseEpisodeEntry(reader, seasonKey)
+                    val entry = parseEpisodeEntry(reader, seriesId, seasonKey)
                     if (entry != null) {
                         if (totalCount >= offset && items.size < limit) {
                             items.add(entry.item)
@@ -1432,6 +1434,7 @@ class XtreamApi(
 
     private fun parseSeriesSeasonAll(
         reader: JsonReader,
+        seriesId: String,
         seasonLabel: String
     ): List<ContentItem> {
         if (reader.peek() != JsonToken.BEGIN_OBJECT) {
@@ -1463,7 +1466,7 @@ class XtreamApi(
                 }
                 reader.beginArray()
                 while (reader.hasNext()) {
-                    parseEpisodeEntry(reader, seasonKey)?.let { items.add(it.item) }
+                    parseEpisodeEntry(reader, seriesId, seasonKey)?.let { items.add(it.item) }
                 }
                 reader.endArray()
             }
@@ -1473,7 +1476,7 @@ class XtreamApi(
         return items
     }
 
-    private fun parseSeriesEpisodesAll(reader: JsonReader): List<ContentItem> {
+    private fun parseSeriesEpisodesAll(reader: JsonReader, seriesId: String): List<ContentItem> {
         if (reader.peek() != JsonToken.BEGIN_OBJECT) {
             reader.skipValue()
             return emptyList()
@@ -1499,7 +1502,7 @@ class XtreamApi(
                 }
                 reader.beginArray()
                 while (reader.hasNext()) {
-                    val entry = parseEpisodeEntry(reader, seasonKey)
+                    val entry = parseEpisodeEntry(reader, seriesId, seasonKey)
                     if (entry != null) {
                         items.add(entry)
                     }
@@ -1518,11 +1521,15 @@ class XtreamApi(
             .map { it.item }
     }
 
-    private fun parseEpisodeItem(reader: JsonReader, seasonLabel: String): ContentItem? {
-        return parseEpisodeEntry(reader, seasonLabel)?.item
+    private fun parseEpisodeItem(reader: JsonReader, seriesId: String, seasonLabel: String): ContentItem? {
+        return parseEpisodeEntry(reader, seriesId, seasonLabel)?.item
     }
 
-    private fun parseEpisodeEntry(reader: JsonReader, seasonLabel: String): EpisodeEntry? {
+    private fun parseEpisodeEntry(
+        reader: JsonReader,
+        seriesId: String,
+        seasonLabel: String
+    ): EpisodeEntry? {
         if (reader.peek() != JsonToken.BEGIN_OBJECT) {
             reader.skipValue()
             return null
@@ -1571,7 +1578,8 @@ class XtreamApi(
             duration = episodeInfo?.duration,
             rating = episodeInfo?.rating,
             seasonLabel = seasonLabel,
-            episodeNumber = episodeNum
+            episodeNumber = episodeNum,
+            parentSeriesId = seriesId
         )
         return EpisodeEntry(
             item = item,

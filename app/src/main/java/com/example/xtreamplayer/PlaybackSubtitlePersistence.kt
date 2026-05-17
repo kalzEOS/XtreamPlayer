@@ -1,6 +1,7 @@
 package com.example.xtreamplayer
 
 import com.example.xtreamplayer.content.ContinueWatchingEntry
+import com.example.xtreamplayer.content.VodPlaybackStateEntry
 
 internal data class ResolvedSubtitlePersistence(
     val subtitleFileName: String?,
@@ -10,6 +11,16 @@ internal data class ResolvedSubtitlePersistence(
 )
 
 internal fun ContinueWatchingEntry.toPlaybackSubtitleStateOrNull(): PlaybackSubtitleState? {
+    val fileName = subtitleFileName?.takeUnless { it.isBlank() || it == "null" } ?: return null
+    return PlaybackSubtitleState(
+        fileName = fileName,
+        language = subtitleLanguage?.takeUnless { it.isBlank() || it == "null" },
+        label = subtitleLabel?.takeUnless { it.isBlank() || it == "null" },
+        offsetMs = subtitleOffsetMs
+    )
+}
+
+internal fun VodPlaybackStateEntry.toPlaybackSubtitleStateOrNull(): PlaybackSubtitleState? {
     val fileName = subtitleFileName?.takeUnless { it.isBlank() || it == "null" } ?: return null
     return PlaybackSubtitleState(
         fileName = fileName,

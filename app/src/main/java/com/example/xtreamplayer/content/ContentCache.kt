@@ -787,6 +787,7 @@ class ContentCache(context: Context) {
             obj.put("seasonLabel", item.seasonLabel)
             obj.put("episodeNumber", item.episodeNumber)
             obj.put("categoryId", item.categoryId)
+            obj.put("parentSeriesId", item.parentSeriesId)
             array.put(obj)
         }
         return array
@@ -970,7 +971,8 @@ class ContentCache(context: Context) {
                     rating = itemObj.optString("rating").ifBlank { null },
                     seasonLabel = itemObj.optString("seasonLabel").ifBlank { null },
                     episodeNumber = itemObj.optString("episodeNumber").ifBlank { null },
-                    categoryId = itemObj.optString("categoryId").ifBlank { null }
+                    categoryId = itemObj.optString("categoryId").ifBlank { null },
+                    parentSeriesId = itemObj.optString("parentSeriesId").ifBlank { null }
                 )
             )
         }

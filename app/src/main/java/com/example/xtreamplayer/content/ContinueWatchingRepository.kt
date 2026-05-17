@@ -42,15 +42,29 @@ class ContinueWatchingRepository(private val context: Context) {
     ) {
         val key = contentKey(config, item)
         val keysToReplace = contentKeysForUpdate(config, item)
+        val targetSeriesIdentity = canonicalSeriesIdentity(item, parentItem)
         val timestampMs = System.currentTimeMillis()
 
         context.continueWatchingDataStore.edit { prefs ->
             val raw = prefs[Keys.CONTINUE_WATCHING_ENTRIES] ?: "[]"
             val entries = parseAllEntries(raw).toMutableList()
-            val existingEntry = entries.firstOrNull { it.key in keysToReplace }
+            val existingEntry =
+                entries.firstOrNull { entry ->
+                    entry.key in keysToReplace ||
+                        isSameCanonicalSeriesIdentity(
+                            canonicalSeriesIdentity(entry.item, entry.parentItem),
+                            targetSeriesIdentity
+                        )
+                }
 
-            // Remove existing entry with same key
-            entries.removeAll { it.key in keysToReplace }
+            // Keep a single canonical entry per series and remove stale legacy series cards.
+            entries.removeAll { entry ->
+                entry.key in keysToReplace ||
+                    isSameCanonicalSeriesIdentity(
+                        canonicalSeriesIdentity(entry.item, entry.parentItem),
+                        targetSeriesIdentity
+                    )
+            }
 
             val resolvedSubtitlePersistence =
                 resolveSubtitlePersistence(
@@ -127,7 +141,7 @@ class ContinueWatchingRepository(private val context: Context) {
 
     fun continueWatchingEntriesForConfig(config: AuthConfig): Flow<List<ContinueWatchingEntry>> {
         return continueWatchingEntries
-            .map { entries -> entries.filter { isEntryForConfig(it, config) } }
+            .map { entries -> canonicalizeEntries(entries.filter { isEntryForConfig(it, config) }) }
             .distinctUntilChanged()
     }
 
@@ -197,6 +211,7 @@ class ContinueWatchingRepository(private val context: Context) {
             obj.put("contentType", item.contentType.name)
             obj.put("streamId", item.streamId)
             obj.put("containerExtension", item.containerExtension)
+            obj.put("parentSeriesId", item.parentSeriesId)
             entry.parentItem?.let { parent ->
                 obj.put("parentId", parent.id)
                 obj.put("parentTitle", parent.title)
@@ -206,6 +221,7 @@ class ContinueWatchingRepository(private val context: Context) {
                 obj.put("parentContentType", parent.contentType.name)
                 obj.put("parentStreamId", parent.streamId)
                 obj.put("parentContainerExtension", parent.containerExtension)
+                obj.put("parentParentSeriesId", parent.parentSeriesId)
             }
             entry.subtitleFileName?.let { obj.put("subtitleFileName", it) }
             entry.subtitleLanguage?.let { obj.put("subtitleLanguage", it) }
@@ -241,6 +257,8 @@ class ContinueWatchingRepository(private val context: Context) {
                     .takeUnless { it.isBlank() || it == "null" }
                 val containerExtension = obj.optString("containerExtension")
                     .takeUnless { it.isBlank() || it == "null" }
+                val parentSeriesId = obj.optString("parentSeriesId")
+                    .takeUnless { it.isBlank() || it == "null" }
                 val streamId = obj.optString("streamId")
                     .takeUnless { it.isBlank() || it == "null" }
                     ?: obj.optString("id")
@@ -266,6 +284,8 @@ class ContinueWatchingRepository(private val context: Context) {
                             .takeUnless { it.isBlank() || it == "null" }
                         val parentContainerExtension = obj.optString("parentContainerExtension")
                             .takeUnless { it.isBlank() || it == "null" }
+                        val parentParentSeriesId = obj.optString("parentParentSeriesId")
+                            .takeUnless { it.isBlank() || it == "null" }
                         val parentStreamId =
                             obj.optString("parentStreamId")
                                 .takeUnless { it.isBlank() || it == "null" }
@@ -278,7 +298,8 @@ class ContinueWatchingRepository(private val context: Context) {
                             section = parentSection,
                             contentType = parentContentType,
                             streamId = parentStreamId,
-                            containerExtension = parentContainerExtension
+                            containerExtension = parentContainerExtension,
+                            parentSeriesId = parentParentSeriesId
                         )
                     }
 
@@ -293,7 +314,8 @@ class ContinueWatchingRepository(private val context: Context) {
                             section = section,
                             contentType = contentType,
                             streamId = streamId,
-                            containerExtension = containerExtension
+                            containerExtension = containerExtension,
+                            parentSeriesId = parentSeriesId
                         ),
                         positionMs = positionMs,
                         durationMs = durationMs,
@@ -334,11 +356,13 @@ class ContinueWatchingRepository(private val context: Context) {
             }
         }
 
+        val canonicalEntries = canonicalizeEntries(result)
+
         // Partial sort for top 15
-        return if (result.size <= 15) {
-            result.sortedByDescending { it.timestampMs }
+        return if (canonicalEntries.size <= 15) {
+            canonicalEntries.sortedByDescending { it.timestampMs }
         } else {
-            result.asSequence()
+            canonicalEntries.asSequence()
                 .sortedByDescending { it.timestampMs }
                 .take(15)
                 .toList()
@@ -399,4 +423,61 @@ private fun hasSamePersistedContinueWatchingItem(
         existing.contentType == incoming.contentType &&
         existing.streamId == incoming.streamId &&
         existing.containerExtension == incoming.containerExtension
+}
+
+private fun canonicalSeriesIdentity(item: ContentItem, parentItem: ContentItem?): String? {
+    if (item.contentType != ContentType.SERIES) return null
+    return parentItem?.streamId?.takeUnless { it.isBlank() }
+        ?: parentItem?.id?.takeUnless { it.isBlank() }
+        ?: item.parentSeriesId?.takeUnless { it.isBlank() }
+        ?: item.takeIf { it.containerExtension.isNullOrBlank() }
+            ?.streamId?.takeUnless { it.isBlank() }
+        ?: item.takeIf { it.containerExtension.isNullOrBlank() }?.id?.takeUnless { it.isBlank() }
+}
+
+private fun isSameCanonicalSeriesIdentity(first: String?, second: String?): Boolean {
+    return !first.isNullOrBlank() && first == second
+}
+
+private fun isSeriesEpisodeEntry(entry: ContinueWatchingEntry): Boolean {
+    return entry.item.contentType == ContentType.SERIES &&
+        !entry.item.containerExtension.isNullOrBlank()
+}
+
+private fun mergeSeriesMetadata(
+    primary: ContinueWatchingEntry,
+    group: List<ContinueWatchingEntry>
+): ContinueWatchingEntry {
+    val latestParentItem =
+        group.asSequence()
+            .mapNotNull { it.parentItem?.let { parent -> it.timestampMs to parent } }
+            .maxByOrNull { it.first }
+            ?.second
+    val mergedItem =
+        if (primary.item.parentSeriesId.isNullOrBlank()) {
+            primary.item.copy(parentSeriesId = latestParentItem?.streamId ?: latestParentItem?.id)
+        } else {
+            primary.item
+        }
+    return if (latestParentItem != null || mergedItem !== primary.item) {
+        primary.copy(item = mergedItem, parentItem = latestParentItem ?: primary.parentItem)
+    } else {
+        primary
+    }
+}
+
+private fun canonicalizeEntries(entries: List<ContinueWatchingEntry>): List<ContinueWatchingEntry> {
+    val grouped = LinkedHashMap<String, MutableList<ContinueWatchingEntry>>()
+    entries.forEach { entry ->
+        val key =
+            canonicalSeriesIdentity(entry.item, entry.parentItem)?.let { "series:$it" }
+                ?: "item:${entry.item.contentType.name}:${entry.item.streamId?.takeUnless { it.isBlank() } ?: entry.item.id}"
+        grouped.getOrPut(key) { mutableListOf() }.add(entry)
+    }
+    return grouped.values.mapNotNull { group ->
+        val episodeEntries = group.filter(::isSeriesEpisodeEntry)
+        val primarySource = if (episodeEntries.isNotEmpty()) episodeEntries else group
+        val latest = primarySource.maxByOrNull { it.timestampMs } ?: return@mapNotNull null
+        mergeSeriesMetadata(latest, group)
+    }
 }
