@@ -8844,19 +8844,25 @@ fun ContinueWatchingScreen(
         val stableParentId = resumeItem.parentSeriesId?.takeUnless { it.isBlank() }
         if (!stableParentId.isNullOrBlank()) {
             contentRepository.findSeriesItemById(stableParentId, authConfig)
+                ?: resolveSeriesParentByTitle(contentRepository, authConfig, resumeItem)
         } else {
             resolveSeriesParentByTitle(contentRepository, authConfig, resumeItem)
         }
     }
 
-    LaunchedEffect(displayEntries, authConfig) {
-        displayEntries
+    LaunchedEffect(continueWatchingItems, authConfig) {
+        val currentKeys = continueWatchingItems.asSequence().map { it.key }.toSet()
+        resolvedParents.keys
+            .filterNot { it in currentKeys }
+            .toList()
+            .forEach { resolvedParents.remove(it) }
+        continueWatchingItems
             .filter { entry ->
-                entry.resumeItem.contentType == ContentType.SERIES && entry.parentItem == null &&
+                entry.item.contentType == ContentType.SERIES && entry.parentItem == null &&
                     !resolvedParents.containsKey(entry.key)
             }
             .forEach { entry ->
-                val resolved = resolveSeriesParent(entry.resumeItem)
+                val resolved = resolveSeriesParent(entry.item)
                 if (resolved != null) {
                     resolvedParents[entry.key] = resolved
                 }
