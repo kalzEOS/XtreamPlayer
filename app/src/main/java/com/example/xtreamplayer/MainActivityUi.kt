@@ -7001,6 +7001,7 @@ fun FavoritesScreen(
     var pendingViewFocus by remember { mutableStateOf(false) }
     var pendingCategoryEnterFocus by remember { mutableStateOf(false) }
     var pendingCategoryReturnFocus by remember { mutableStateOf(false) }
+    var returnFocusItem by remember { mutableStateOf<ContentItem?>(null) }
     var lastSelectedFavoriteCategoryId by remember { mutableStateOf<String?>(null) }
     var lastSelectedFavoriteCategoryIndex by remember { mutableIntStateOf(0) }
     var lastMenuSelection by remember { mutableStateOf(FavoritesView.ITEMS) }
@@ -7008,6 +7009,7 @@ fun FavoritesScreen(
     val backFocusRequester = remember { FocusRequester() }
     val backDownFocusRequester = remember { FocusRequester() }
     val itemsFirstFocusRequester = remember { FocusRequester() }
+    val returnFocusFocusRequester = remember { FocusRequester() }
     val episodesFocusRequester = remember { FocusRequester() }
     var pendingEpisodeFocus by remember { mutableStateOf(false) }
     var selectedCategoryContentCount by remember { mutableIntStateOf(0) }
@@ -7091,13 +7093,15 @@ fun FavoritesScreen(
 
     LaunchedEffect(pendingSeriesReturnFocus, selectedSeries) {
         if (pendingSeriesReturnFocus && selectedSeries == null) {
-            val requester =
-                    if (resumeFocusId != null) {
-                        resumeFocusRequester
-                    } else {
-                        contentItemFocusRequester
-                    }
-            requestFocusWithFrameRetries(requester, frameRetries = 2)
+            val returnId = returnFocusItem?.id
+            val requester = when {
+                returnId != null && returnId == resumeFocusId -> resumeFocusRequester
+                returnId != null -> returnFocusFocusRequester
+                resumeFocusId != null -> resumeFocusRequester
+                else -> itemsFirstFocusRequester
+            }
+            requestFocusWithFrameRetries(requester, frameRetries = 5)
+            returnFocusItem = null
             pendingSeriesReturnFocus = false
         }
     }
@@ -7274,8 +7278,13 @@ fun FavoritesScreen(
                 val activeSeries = selectedSeries!!
                 val closeSeriesDetails = {
                     pendingSeriesPlaybackTransition = false
-                    onItemFocused(activeSeries)
-                    runCatching { contentItemFocusRequester.requestFocus() }
+                    val itemToFocus = returnFocusItem ?: activeSeries
+                    val returnId = itemToFocus.id
+                    runCatching {
+                        if (returnId == resumeFocusId) resumeFocusRequester.requestFocus()
+                        else returnFocusFocusRequester.requestFocus()
+                    }
+                    onItemFocused(itemToFocus)
                     pendingSeriesReturnFocus = true
                     selectedSeries = null
                     pendingSeriesInfo = null
@@ -7411,9 +7420,10 @@ fun FavoritesScreen(
                                     (posterColumns - 1).coerceAtMost(sortedContent.lastIndex)
                             val requester =
                                     when {
+                                        item.id == resumeFocusId -> resumeFocusRequester
+                                        item.id == returnFocusItem?.id -> returnFocusFocusRequester
                                         index == 0 -> itemsFirstFocusRequester
                                         index == backDownTargetIndex -> backDownFocusRequester
-                                        item.id == resumeFocusId -> resumeFocusRequester
                                         else -> null
                                     }
                             val isLeftEdge = index % posterColumns == 0
@@ -7439,8 +7449,11 @@ fun FavoritesScreen(
                                         if (item.contentType == ContentType.SERIES &&
                                                         item.containerExtension.isNullOrBlank()
                                         ) {
+                                            returnFocusItem = item
                                             pendingSeries = item
                                         } else if (item.contentType == ContentType.MOVIES) {
+                                            returnFocusItem = item
+                                            runCatching { returnFocusFocusRequester.requestFocus() }
                                             pendingSeries = null
                                             onMovieInfo(item, sortedContent)
                                         } else {
@@ -8910,6 +8923,7 @@ fun ContinueWatchingScreen(
     val episodesFocusRequester = remember { FocusRequester() }
     val clearAllFocusRequester = remember { FocusRequester() }
     val clearAllDownFocusRequester = remember { FocusRequester() }
+    val returnFocusFocusRequester = remember { FocusRequester() }
     val gridState = rememberLazyGridState()
     val movieQueueItems =
             remember(displayEntries) {
@@ -8971,18 +8985,18 @@ fun ContinueWatchingScreen(
         if (!pendingSeriesReturnFocus || selectedSeries != null || displayEntries.isEmpty()) {
             return@LaunchedEffect
         }
-        val shouldResume =
-            resumeFocusId != null &&
-                displayEntries.any { entry ->
-                    entry.displayItem.id == resumeFocusId ||
-                        resolvedParents[entry.key]?.id == resumeFocusId
-                }
-        val requester = if (shouldResume) resumeFocusRequester else contentItemFocusRequester
-        val focused = requestFocusWithFrameRetries(requester, frameRetries = 2)
-        if (focused) {
-            pendingSeriesReturnFocus = false
-            return@LaunchedEffect
+        val returnId = returnFocusItem?.id
+        val requester = when {
+            returnId != null && returnId == resumeFocusId -> resumeFocusRequester
+            returnId != null -> returnFocusFocusRequester
+            resumeFocusId != null && displayEntries.any { entry ->
+                entry.displayItem.id == resumeFocusId ||
+                    resolvedParents[entry.key]?.id == resumeFocusId
+            } -> resumeFocusRequester
+            else -> contentItemFocusRequester
         }
+        requestFocusWithFrameRetries(requester, frameRetries = 5)
+        returnFocusItem = null
         pendingSeriesReturnFocus = false
     }
 
@@ -9020,6 +9034,11 @@ fun ContinueWatchingScreen(
                 val closeSeriesDetails = {
                     pendingSeriesPlaybackTransition = false
                     val itemToFocus = returnFocusItem ?: activeSeries
+                    val returnId = itemToFocus.id
+                    runCatching {
+                        if (returnId == resumeFocusId) resumeFocusRequester.requestFocus()
+                        else returnFocusFocusRequester.requestFocus()
+                    }
                     selectedSeries = null
                     pendingSeriesInfo = null
                     pendingEpisodeFocus = false
@@ -9210,8 +9229,9 @@ fun ContinueWatchingScreen(
                             val item = displayItem
                             val requester =
                                     when {
-                                        index == clearAllDownTargetIndex -> clearAllDownFocusRequester
                                         item.id == resumeFocusId -> resumeFocusRequester
+                                        item.id == returnFocusItem?.id -> returnFocusFocusRequester
+                                        index == clearAllDownTargetIndex -> clearAllDownFocusRequester
                                         index == 0 -> contentItemFocusRequester
                                         else -> null
                                     }
@@ -9237,7 +9257,11 @@ fun ContinueWatchingScreen(
                                     fontScaleFactor = posterFontScale,
                                     onActivate = {
                                         when (entry.resumeItem.contentType) {
-                                            ContentType.MOVIES -> onMovieInfo(item, movieQueueItems)
+                                            ContentType.MOVIES -> {
+                                                returnFocusItem = item
+                                                runCatching { returnFocusFocusRequester.requestFocus() }
+                                                onMovieInfo(item, movieQueueItems)
+                                            }
                                             ContentType.SERIES -> {
                                                 if (!firstSeriesLaunchLoadingShown) {
                                                     showFirstSeriesLaunchLoading = true
@@ -9448,14 +9472,13 @@ fun SeriesSeasonsScreen(
         }
 
     LaunchedEffect(seriesItem.streamId, focusPlayOnOpen) {
-        withFrameNanos {}
         headerCollapsed = false
         episodesViewportExpanded = false
         internalEpisodeFocusRequested = false
         if (focusPlayOnOpen) {
-            playFocusRequester.requestFocus()
+            requestFocusWithFrameRetries(playFocusRequester, frameRetries = 5)
         } else {
-            contentItemFocusRequester.requestFocus()
+            requestFocusWithFrameRetries(contentItemFocusRequester, frameRetries = 5)
         }
     }
 
