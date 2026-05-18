@@ -1,6 +1,12 @@
 package com.example.xtreamplayer
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.media3.common.Player
 import com.example.xtreamplayer.content.CategoryItem
 import com.example.xtreamplayer.content.ContentItem
 import com.example.xtreamplayer.content.ContentType
@@ -32,7 +38,19 @@ internal fun PlayerScreen(
     loadLiveCategoryThumbnail: suspend (CategoryItem) -> Result<String?>
 ) {
     val queue = activePlaybackQueue ?: return
-    val currentIndex = playbackEngine.player.currentMediaItemIndex
+    val player = playbackEngine.player
+    var currentIndex by remember(queue, player) { mutableIntStateOf(player.currentMediaItemIndex) }
+    DisposableEffect(queue, player) {
+        currentIndex = player.currentMediaItemIndex
+        val listener =
+            object : Player.Listener {
+                override fun onEvents(player: Player, events: Player.Events) {
+                    currentIndex = player.currentMediaItemIndex
+                }
+            }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
     val queueItems = queue.items
     val hasNextEpisode = currentIndex >= 0 && currentIndex < queueItems.size - 1
     val nextEpisodeTitle = queueItems.getOrNull(currentIndex + 1)?.title

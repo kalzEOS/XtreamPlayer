@@ -1125,6 +1125,16 @@ fun RootScreen(
         }
     }
 
+    fun syncPlaybackStateToQueueIndex(index: Int): Boolean {
+        val queue = activePlaybackQueue ?: return false
+        if (index !in queue.items.indices) return false
+        activePlaybackItems.getOrNull(index)?.let { activePlaybackItem = it }
+        activePlaybackTitle = queue.items[index].title
+        activePlaybackSubtitleState = null
+        resumePositionMs = null
+        return true
+    }
+
     fun startPlayback(
             item: ContentItem,
             items: List<ContentItem>,
@@ -1132,9 +1142,11 @@ fun RootScreen(
             parentItem: ContentItem? = null,
             playbackResumePositionMs: Long? = null
     ) {
-        val playableItems = items.filter(::isPlayableContent)
+        val playableItems = playableContentItemsForQueue(items, item)
+        val queue = buildPlaybackQueue(playableItems, item, config)
+        val startItem = playableItems.getOrNull(queue.startIndex) ?: item
         activePlaybackItems = playableItems
-        activePlaybackItem = item
+        activePlaybackItem = startItem
         activePlaybackSeriesParent =
                 if (item.contentType == ContentType.SERIES) {
                     parentItem
@@ -1149,9 +1161,8 @@ fun RootScreen(
                     BufferProfile.VOD
                 }
         playbackEngine.setBufferProfile(profile)
-        val queue = buildPlaybackQueue(items, item, config)
         activePlaybackQueue = queue
-        activePlaybackTitle = queue.items.getOrNull(queue.startIndex)?.title ?: item.title
+        activePlaybackTitle = queue.items.getOrNull(queue.startIndex)?.title ?: startItem.title
     }
 
     val handlePlayItem: (ContentItem, List<ContentItem>) -> Unit = { item, items ->
@@ -1160,12 +1171,7 @@ fun RootScreen(
             resumeFocusId = resolveResumeFocusTarget(item)
             val shouldResolveSeriesQueue =
                     item.contentType == ContentType.SERIES &&
-                            !item.containerExtension.isNullOrBlank() &&
-                            (items.size <= 1 ||
-                                    items.any {
-                                        it.contentType != ContentType.SERIES ||
-                                                it.containerExtension.isNullOrBlank()
-                                    })
+                            !item.containerExtension.isNullOrBlank()
             if (shouldResolveSeriesQueue) {
                 coroutineScope.launch {
                     val resolved =
@@ -1274,12 +1280,7 @@ fun RootScreen(
                     resumeFocusId = resolveResumeFocusTarget(item)
                     val shouldResolveSeriesQueue =
                             item.contentType == ContentType.SERIES &&
-                                    !item.containerExtension.isNullOrBlank() &&
-                                    (items.size <= 1 ||
-                                            items.any {
-                                                it.contentType != ContentType.SERIES ||
-                                                        it.containerExtension.isNullOrBlank()
-                                            })
+                                    !item.containerExtension.isNullOrBlank()
                     if (shouldResolveSeriesQueue) {
                         coroutineScope.launch {
                             val resolved =
@@ -1387,9 +1388,16 @@ fun RootScreen(
                         completionThresholdPercent = CONTINUE_WATCHING_MAX_PROGRESS_PERCENT
                     )
                 val subtitleState = activePlaybackSubtitleState
+                val hasFollowingSeriesEpisode =
+                        item.contentType == ContentType.SERIES &&
+                                activePlaybackQueue?.items
+                                        ?.drop(safePlayer.currentMediaItemIndex + 1)
+                                        ?.any { it.type == ContentType.SERIES } == true
                 coroutineScope.launch {
                     if (!shouldStore) {
-                        continueWatchingRepository.removeEntry(config, item)
+                        if (!hasFollowingSeriesEpisode) {
+                            continueWatchingRepository.removeEntry(config, item)
+                        }
                         vodPlaybackStateRepository.removeEntry(config, queueMediaIdFor(item))
                     } else {
                         val parentItem =
@@ -1617,6 +1625,14 @@ fun RootScreen(
                 object : Player.Listener {
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                         syncPlaybackStateFromPlayer(mediaItem)
+                    }
+
+                    override fun onPositionDiscontinuity(
+                            oldPosition: Player.PositionInfo,
+                            newPosition: Player.PositionInfo,
+                            reason: Int
+                    ) {
+                        syncPlaybackStateFromPlayer(newPosition.mediaItem)
                     }
 
                     override fun onPlaybackStateChanged(playbackState: Int) {
@@ -2294,8 +2310,15 @@ fun RootScreen(
                     resumePositionMs = null
                 },
                 onPlayNextEpisode = {
-                    playbackEngine.player.seekToNextMediaItem()
-                    playbackEngine.player.playWhenReady = true
+                    val player = playbackEngine.player
+                    savePlaybackProgress()
+                    val nextIndex = player.currentMediaItemIndex + 1
+                    if (syncPlaybackStateToQueueIndex(nextIndex)) {
+                        player.seekTo(nextIndex, 0L)
+                    } else {
+                        player.seekToNextMediaItem()
+                    }
+                    player.playWhenReady = true
                 },
                 onMatchFrameRateChange = { enabled ->
                     playbackEngine.applySettings(settings.copy(matchFrameRateEnabled = enabled))
@@ -2718,6 +2741,17 @@ private fun isPlayableContent(item: ContentItem): Boolean {
     return item.contentType != ContentType.SERIES || !item.containerExtension.isNullOrBlank()
 }
 
+private fun playableContentItemsForQueue(
+        items: List<ContentItem>,
+        current: ContentItem
+): List<ContentItem> {
+    val playableItems = items.filter(::isPlayableContent).toMutableList()
+    if (playableItems.none { isSameContentIdentity(it, current) }) {
+        playableItems.add(current)
+    }
+    return playableItems
+}
+
 private fun isSameContentIdentity(first: ContentItem, second: ContentItem): Boolean {
     if (first.contentType != second.contentType) return false
     val firstStreamId = first.streamId?.takeUnless { it.isBlank() }
@@ -2739,10 +2773,7 @@ private fun buildPlaybackQueue(
         current: ContentItem,
         authConfig: AuthConfig
 ): PlaybackQueue {
-    val playableItems = items.filter(::isPlayableContent).toMutableList()
-    if (playableItems.none { isSameContentIdentity(it, current) }) {
-        playableItems.add(current)
-    }
+    val playableItems = playableContentItemsForQueue(items, current)
     val startIndex =
             playableItems.indexOfFirst { isSameContentIdentity(it, current) }.let { index ->
                 if (index >= 0) index else 0
@@ -8746,10 +8777,13 @@ fun ContinueWatchingScreen(
     }
     val columns = rememberReflowColumns(baseColumns, navLayoutExpanded)
     val resolvedParents = remember { androidx.compose.runtime.mutableStateMapOf<String, ContentItem>() }
+    val parentResolutionAttempted =
+            remember { androidx.compose.runtime.mutableStateMapOf<String, Boolean>() }
     val posterFontScale = remember(columns) { 4f / columns.toFloat() }
     val resolvedParentsSnapshot = resolvedParents.toMap()
+    val parentResolutionAttemptedSnapshot = parentResolutionAttempted.toMap()
     val displayEntries =
-            remember(continueWatchingItems, resolvedParentsSnapshot) {
+            remember(continueWatchingItems, resolvedParentsSnapshot, parentResolutionAttemptedSnapshot) {
                 fun displayGroupingKey(entry: ContinueWatchingEntry): String {
                     val canonicalSeriesId =
                             entry.parentItem?.streamId?.takeUnless { it.isBlank() }
@@ -8786,6 +8820,16 @@ fun ContinueWatchingScreen(
                                             }
                                             .maxByOrNull { it.first }
                                             ?.second
+                    val waitingForParentResolution =
+                            group.any { entry ->
+                                entry.item.contentType == ContentType.SERIES &&
+                                        entry.parentItem == null &&
+                                        !resolvedParentsSnapshot.containsKey(entry.key) &&
+                                        parentResolutionAttemptedSnapshot[entry.key] != true
+                            }
+                    if (latestSeriesParent == null && waitingForParentResolution) {
+                        return@mapNotNull null
+                    }
                     val displayItem = latestSeriesParent ?: latest.item
                     val resumeLabel =
                             if (latest.item.contentType == ContentType.SERIES) {
@@ -8856,16 +8900,22 @@ fun ContinueWatchingScreen(
             .filterNot { it in currentKeys }
             .toList()
             .forEach { resolvedParents.remove(it) }
+        parentResolutionAttempted.keys
+            .filterNot { it in currentKeys }
+            .toList()
+            .forEach { parentResolutionAttempted.remove(it) }
         continueWatchingItems
             .filter { entry ->
                 entry.item.contentType == ContentType.SERIES && entry.parentItem == null &&
-                    !resolvedParents.containsKey(entry.key)
+                    !resolvedParents.containsKey(entry.key) &&
+                    parentResolutionAttempted[entry.key] != true
             }
             .forEach { entry ->
                 val resolved = resolveSeriesParent(entry.item)
                 if (resolved != null) {
                     resolvedParents[entry.key] = resolved
                 }
+                parentResolutionAttempted[entry.key] = true
             }
     }
 
