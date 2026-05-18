@@ -5406,6 +5406,30 @@ private fun ContinueWatchingCard(
                     filterQuality = FilterQuality.Low,
                     modifier = Modifier.fillMaxSize()
             )
+        } else {
+            Box(
+                    modifier =
+                            Modifier.fillMaxSize()
+                                    .background(
+                                            Brush.verticalGradient(
+                                                    listOf(colors.surfaceAlt, colors.surface)
+                                            )
+                                    ),
+                    contentAlignment = Alignment.Center
+            ) {
+                val placeholderIcon =
+                        if (entry.resumeItem.contentType == ContentType.MOVIES) {
+                            R.drawable.ic_category_movies
+                        } else {
+                            R.drawable.ic_category_series
+                        }
+                Icon(
+                        painter = painterResource(placeholderIcon),
+                        contentDescription = null,
+                        tint = colors.textSecondary.copy(alpha = 0.35f),
+                        modifier = Modifier.size(48.dp)
+                )
+            }
         }
         if (isFavorite) {
             FavoriteIndicator(modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
@@ -8744,6 +8768,24 @@ private data class ContinueWatchingDisplayEntry(
         val timestampMs: Long
 )
 
+private fun provisionalContinueWatchingSeriesParent(item: ContentItem): ContentItem? {
+    if (item.contentType != ContentType.SERIES || item.containerExtension.isNullOrBlank()) {
+        return null
+    }
+    val parentSeriesId = item.parentSeriesId?.takeUnless { it.isBlank() } ?: return null
+    val parentTitle = stripEpisodeSuffixes(item.title).takeUnless { it.isBlank() } ?: item.title
+    return item.copy(
+            id = parentSeriesId,
+            title = parentTitle,
+            subtitle = "",
+            section = Section.SERIES,
+            contentType = ContentType.SERIES,
+            streamId = parentSeriesId,
+            containerExtension = null,
+            parentSeriesId = null
+    )
+}
+
 @Composable
 fun ContinueWatchingScreen(
         title: String,
@@ -8781,9 +8823,8 @@ fun ContinueWatchingScreen(
             remember { androidx.compose.runtime.mutableStateMapOf<String, Boolean>() }
     val posterFontScale = remember(columns) { 4f / columns.toFloat() }
     val resolvedParentsSnapshot = resolvedParents.toMap()
-    val parentResolutionAttemptedSnapshot = parentResolutionAttempted.toMap()
     val displayEntries =
-            remember(continueWatchingItems, resolvedParentsSnapshot, parentResolutionAttemptedSnapshot) {
+            remember(continueWatchingItems, resolvedParentsSnapshot) {
                 fun displayGroupingKey(entry: ContinueWatchingEntry): String {
                     val canonicalSeriesId =
                             entry.parentItem?.streamId?.takeUnless { it.isBlank() }
@@ -8820,17 +8861,11 @@ fun ContinueWatchingScreen(
                                             }
                                             .maxByOrNull { it.first }
                                             ?.second
-                    val waitingForParentResolution =
-                            group.any { entry ->
-                                entry.item.contentType == ContentType.SERIES &&
-                                        entry.parentItem == null &&
-                                        !resolvedParentsSnapshot.containsKey(entry.key) &&
-                                        parentResolutionAttemptedSnapshot[entry.key] != true
-                            }
-                    if (latestSeriesParent == null && waitingForParentResolution) {
-                        return@mapNotNull null
-                    }
-                    val displayItem = latestSeriesParent ?: latest.item
+                    val provisionalSeriesParent =
+                            latestSeriesParent
+                                    ?: latest.parentItem
+                                    ?: provisionalContinueWatchingSeriesParent(latest.item)
+                    val displayItem = provisionalSeriesParent ?: latest.item
                     val resumeLabel =
                             if (latest.item.contentType == ContentType.SERIES) {
                                 formatEpisodeLabel(latest.item, separator = " - ")?.let { "Resume $it" }
@@ -9210,6 +9245,10 @@ fun ContinueWatchingScreen(
                                                 val seriesItem =
                                                         resolvedParent
                                                                 ?: entry.parentItem
+                                                                ?: item.takeIf {
+                                                                    it.contentType == ContentType.SERIES &&
+                                                                            it.containerExtension.isNullOrBlank()
+                                                                }
                                                 if (seriesItem != null) {
                                                     returnFocusItem = item
                                                     pendingResumeItem = entry.resumeItem
