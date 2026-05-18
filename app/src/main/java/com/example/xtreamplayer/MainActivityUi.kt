@@ -5406,6 +5406,30 @@ private fun ContinueWatchingCard(
                     filterQuality = FilterQuality.Low,
                     modifier = Modifier.fillMaxSize()
             )
+        } else {
+            Box(
+                    modifier =
+                            Modifier.fillMaxSize()
+                                    .background(
+                                            Brush.verticalGradient(
+                                                    listOf(colors.surfaceAlt, colors.surface)
+                                            )
+                                    ),
+                    contentAlignment = Alignment.Center
+            ) {
+                val placeholderIcon =
+                        if (entry.resumeItem.contentType == ContentType.MOVIES) {
+                            R.drawable.ic_category_movies
+                        } else {
+                            R.drawable.ic_category_series
+                        }
+                Icon(
+                        painter = painterResource(placeholderIcon),
+                        contentDescription = null,
+                        tint = colors.textSecondary.copy(alpha = 0.35f),
+                        modifier = Modifier.size(48.dp)
+                )
+            }
         }
         if (isFavorite) {
             FavoriteIndicator(modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
