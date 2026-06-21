@@ -5,6 +5,7 @@ data class AuthUiState(
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
     val activeConfig: AuthConfig? = null,
+    val lastAttemptedConfig: AuthConfig? = null,
     val isEditingList: Boolean = false,
     val autoSignInSuppressed: Boolean = false
 )

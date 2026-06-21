@@ -5,12 +5,16 @@ import androidx.lifecycle.viewModelScope
 import com.example.xtreamplayer.api.XtreamApi
 import com.example.xtreamplayer.settings.SettingsState
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
+
+data class SavedConfigState(
+    val loaded: Boolean = false,
+    val config: AuthConfig? = null
+)
 
 @HiltViewModel
 class AuthViewModel @Inject constructor(
@@ -19,20 +23,16 @@ class AuthViewModel @Inject constructor(
 ) : ViewModel() {
     private val _uiState = kotlinx.coroutines.flow.MutableStateFlow(AuthUiState())
     val uiState: StateFlow<AuthUiState> = _uiState
-
-    private val _savedConfigLoaded = kotlinx.coroutines.flow.MutableStateFlow(false)
-    val savedConfigLoaded: StateFlow<Boolean> = _savedConfigLoaded
-
-    val savedConfig: StateFlow<AuthConfig?> = repository.authConfig.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = null
-    )
+    private val _savedConfigState = MutableStateFlow(SavedConfigState())
+    val savedConfigState: StateFlow<SavedConfigState> = _savedConfigState
 
     init {
         viewModelScope.launch {
-            repository.authConfig.collect {
-                _savedConfigLoaded.value = true
+            repository.authConfig.collect { config ->
+                _savedConfigState.value = SavedConfigState(
+                    loaded = true,
+                    config = config
+                )
             }
         }
     }
@@ -47,7 +47,7 @@ class AuthViewModel @Inject constructor(
             return
         }
         if (!settings.autoSignIn || !settings.rememberLogin) return
-        val config = savedConfig.value ?: return
+        val config = _savedConfigState.value.config ?: return
         signInWithConfig(config, rememberLogin = true)
     }
 
@@ -122,7 +122,8 @@ class AuthViewModel @Inject constructor(
                     isSignedIn = false,
                     isLoading = false,
                     errorMessage = error.message ?: "Login failed",
-                    activeConfig = null
+                    activeConfig = null,
+                    lastAttemptedConfig = config
                 )
             }
         }

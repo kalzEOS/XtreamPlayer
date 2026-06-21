@@ -170,6 +170,8 @@ import com.example.xtreamplayer.ui.NextEpisodeThresholdDialog
 import com.example.xtreamplayer.ui.PlaybackSettingsDialog
 import com.example.xtreamplayer.ui.PlaybackSpeedDialog
 import com.example.xtreamplayer.ui.SubtitleCacheAutoClearDialog
+import com.example.xtreamplayer.ui.AutoSyncInfoDialog
+import com.example.xtreamplayer.ui.SyncScheduleDialog
 import com.example.xtreamplayer.ui.SubtitleAppearanceDialog
 import com.example.xtreamplayer.ui.SubtitleDialogState
 import com.example.xtreamplayer.ui.SubtitleOptionsDialog
@@ -205,6 +207,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -289,8 +292,9 @@ fun RootScreen(
     val browseViewModel: BrowseViewModel = hiltViewModel()
     val playerViewModel: PlayerViewModel = hiltViewModel()
     val authState by authViewModel.uiState.collectAsStateWithLifecycle()
-    val savedConfig by authViewModel.savedConfig.collectAsStateWithLifecycle()
-    val savedConfigLoaded by authViewModel.savedConfigLoaded.collectAsStateWithLifecycle()
+    val savedConfigState by authViewModel.savedConfigState.collectAsStateWithLifecycle()
+    val savedConfig = savedConfigState.config
+    val savedConfigLoaded = savedConfigState.loaded
     val localPlaybackResumeRepository = remember { LocalPlaybackResumeRepository(context) }
     val vodPlaybackStateRepository = remember { VodPlaybackStateRepository(context) }
     val localPlaybackResumeEntries by
@@ -316,6 +320,7 @@ fun RootScreen(
     var updateCheckJob by remember { mutableStateOf<Job?>(null) }
     var startupUpdateCheckEnabled by remember { mutableStateOf<Boolean?>(null) }
     var startupUpdateCheckHandled by remember { mutableStateOf(false) }
+    var startupRefreshHandled by remember { mutableStateOf(false) }
     val showApiKeyDialogState = remember { mutableStateOf(false) }
     var showApiKeyDialog by showApiKeyDialogState
     val showThemeDialogState = remember { mutableStateOf(false) }
@@ -335,6 +340,8 @@ fun RootScreen(
     var subtitleAppearancePreview by remember { mutableStateOf<SubtitleAppearanceSettings?>(null) }
     val showSubtitleCacheAutoClearDialogState = remember { mutableStateOf(false) }
     var showSubtitleCacheAutoClearDialog by showSubtitleCacheAutoClearDialogState
+    val showSyncScheduleDialogState = remember { mutableStateOf(false) }
+    var showSyncScheduleDialog by showSyncScheduleDialogState
     var showPlaybackRecoveryDialog by remember { mutableStateOf(false) }
     var showLocalFilesGuest by remember { mutableStateOf(false) }
     val cacheClearNonceState = remember { mutableIntStateOf(0) }
@@ -459,18 +466,22 @@ fun RootScreen(
             val hasSearchIndex = contentRepository.hasSearchIndex(config)
             val hasAnySearchIndex = contentRepository.hasAnySearchIndex(config)
 
-            val effectiveState =
-                    savedState
-                            ?: if (hasFullIndex) {
-                                com.example.xtreamplayer.content.ProgressiveSyncState(
-                                        phase = com.example.xtreamplayer.content.SyncPhase.COMPLETE,
-                                        fastStartReady = true,
-                                        fullIndexComplete = true,
-                                        lastSyncTimestamp = System.currentTimeMillis()
-                                )
-                            } else {
-                                null
-                            }
+            val completeState = com.example.xtreamplayer.content.ProgressiveSyncState(
+                phase = com.example.xtreamplayer.content.SyncPhase.COMPLETE,
+                fastStartReady = true,
+                fullIndexComplete = true,
+                lastSyncTimestamp = System.currentTimeMillis()
+            )
+            // Trust the cache checkpoints over saved coordinator state when the cache says done.
+            // WorkManager completes a full reindex but doesn't write fullIndexComplete to
+            // SettingsRepository — hasFullIndex() catches that gap and prevents a redundant
+            // background sync on the next launch.
+            val effectiveState = when {
+                savedState != null && savedState.fullIndexComplete -> savedState
+                hasFullIndex -> completeState
+                savedState != null -> savedState
+                else -> null
+            }
 
             if (effectiveState != null) {
                 coordinator.restoreState(effectiveState)
@@ -875,6 +886,16 @@ fun RootScreen(
         checkForUpdates(UpdateCheckSource.STARTUP)
     }
 
+    LaunchedEffect(authState.isSignedIn, progressiveSyncCoordinator) {
+        if (startupRefreshHandled) return@LaunchedEffect
+        if (!authState.isSignedIn) return@LaunchedEffect
+        val coordinator = progressiveSyncCoordinator ?: return@LaunchedEffect
+        startupRefreshHandled = true
+        if (settings.refreshOnStartup) {
+            coordinator.resetAndResync()
+        }
+    }
+
     fun startUpdateDownload(release: UpdateRelease) {
         if (updateUiState.inProgress) return
         updateUiState = updateUiState.copy(inProgress = true)
@@ -1005,6 +1026,7 @@ fun RootScreen(
                     !showVodBufferDialog &&
                     !showSubtitleAppearanceDialog &&
                     !showSubtitleCacheAutoClearDialog &&
+                    !showSyncScheduleDialog &&
                     !showApiKeyDialog &&
                     !updateUiState.showDialog
     BackHandler(enabled = shouldHandleRootBackForExit) {
@@ -1907,8 +1929,13 @@ fun RootScreen(
                         syncState.phase == com.example.xtreamplayer.content.SyncPhase.ON_DEMAND_BOOST ||
                         syncState.phase == com.example.xtreamplayer.content.SyncPhase.PAUSED
                 val isLegacySyncActive = sectionSyncStates.values.any { it.isActive }
+                val isWorkerSyncActive by remember {
+                    androidx.work.WorkManager.getInstance(context)
+                        .getWorkInfosForUniqueWorkFlow("library_sync_periodic")
+                        .map { infos -> infos.any { it.state == androidx.work.WorkInfo.State.RUNNING } }
+                }.collectAsStateWithLifecycle(initialValue = false)
                 val shouldShowSyncUi =
-                    !isPlaybackActiveLocal && (isProgressiveSyncActive || isLegacySyncActive)
+                    !isPlaybackActiveLocal && (isProgressiveSyncActive || isLegacySyncActive || isWorkerSyncActive)
 
                 // Progressive sync status indicators
                 if (shouldShowSyncUi) {
@@ -2000,6 +2027,29 @@ fun RootScreen(
                                     )
                                 }
                             }
+
+                            // WorkManager background sync indicator (no pause control)
+                            if (isWorkerSyncActive && !isProgressiveSyncActive) {
+                                Row(
+                                    modifier = Modifier
+                                        .background(colors.surfaceAlt, RoundedCornerShape(4.dp))
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    androidx.compose.material3.CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        strokeWidth = 2.dp,
+                                        color = colors.textPrimary
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        "Background sync running...",
+                                        fontSize = 11.sp,
+                                        color = colors.textPrimary,
+                                        fontFamily = AppTheme.fontFamily
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -2031,6 +2081,7 @@ fun RootScreen(
                         showVodBufferDialogState = showVodBufferDialogState,
                         showSubtitleAppearanceDialogState = showSubtitleAppearanceDialogState,
                         showSubtitleCacheAutoClearDialogState = showSubtitleCacheAutoClearDialogState,
+                        showSyncScheduleDialogState = showSyncScheduleDialogState,
                         showApiKeyDialogState = showApiKeyDialogState,
                         cacheClearNonceState = cacheClearNonceState,
                         contentRepository = contentRepository,
@@ -2141,6 +2192,19 @@ fun RootScreen(
                         onIntervalChange = { settingsViewModel.setSubtitleCacheAutoClearInterval(it) },
                         onDismiss = { showSubtitleCacheAutoClearDialog = false }
                     )
+                }
+                if (showSyncScheduleDialog) {
+                    var showAutoSyncInfoFromSchedule by remember { mutableStateOf(false) }
+                    if (showAutoSyncInfoFromSchedule) {
+                        AutoSyncInfoDialog(onDismiss = { showAutoSyncInfoFromSchedule = false })
+                    } else {
+                        SyncScheduleDialog(
+                            current = settings.syncScheduleInterval,
+                            onIntervalChange = { settingsViewModel.setSyncScheduleInterval(it) },
+                            onDismiss = { showSyncScheduleDialog = false },
+                            onLearnMore = { showAutoSyncInfoFromSchedule = true }
+                        )
+                    }
                 }
                 if (showSubtitleAppearanceDialog) {
                     SubtitleAppearanceDialog(
@@ -2253,7 +2317,7 @@ fun RootScreen(
             } else {
                 LoginScreen(
                         authState = authState,
-                        initialConfig = authState.activeConfig ?: savedConfig,
+                        initialConfig = authState.activeConfig ?: authState.lastAttemptedConfig ?: savedConfig,
                         onSignIn = { listName, baseUrl, username, password ->
                             authViewModel.signIn(
                                     listName = listName,

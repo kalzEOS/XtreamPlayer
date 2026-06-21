@@ -3,6 +3,7 @@ package com.example.xtreamplayer.content
 import com.example.xtreamplayer.Section
 import com.example.xtreamplayer.auth.AuthConfig
 import com.example.xtreamplayer.settings.SettingsRepository
+import com.example.xtreamplayer.sync.ActiveSyncGuard
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -142,6 +143,7 @@ class ProgressiveSyncCoordinator(
             settingsRepository.saveSyncState(_syncState.value, accountKey())
 
             backgroundSyncJob = scope.launch {
+                ActiveSyncGuard.markActive()
                 Timber.i("Starting background full sync")
 
                 val sections = listOf(Section.SERIES, Section.MOVIES, Section.LIVE)
@@ -165,7 +167,7 @@ class ProgressiveSyncCoordinator(
                                     _syncState.value.isPaused
                                 },
                                 skipCompleted = if (fullReindex) false else !force,
-                                throttleMs = throttleMs ?: 200L,
+                                throttleMs = throttleMs ?: 0L,
                                 useBulkFirst = true,
                                 fallbackPageSize = 1000,
                                 fullReindex = fullReindex,
@@ -188,6 +190,7 @@ class ProgressiveSyncCoordinator(
                         }
 
                 result.onSuccess {
+                    ActiveSyncGuard.markInactive()
                     if (_syncState.value.isPaused) {
                         Timber.i("Background sync paused")
                         updateSyncState {
@@ -214,6 +217,7 @@ class ProgressiveSyncCoordinator(
 
                     settingsRepository.saveSyncState(_syncState.value, accountKey())
                 }.onFailure { error ->
+                    ActiveSyncGuard.markInactive()
                     // Clear active sections on failure
                     scope.launch {
                         activeSyncMutex.withLock { activeSyncSections.clear() }
@@ -445,7 +449,24 @@ class ProgressiveSyncCoordinator(
             }
         }
         // Faster, incremental sync that skips already indexed pages
-        startBackgroundFullSync(force = true, throttleMs = 100L, fullReindex = true)
+        startBackgroundFullSync(force = true, throttleMs = 0L, fullReindex = true)
+    }
+
+    /**
+     * Full reset: cancels all syncs, clears persisted state, and starts fresh from fast-start.
+     * Called after cache is manually cleared so the coordinator doesn't think sync is done.
+     */
+    suspend fun resetAndResync() {
+        cancelAllSyncsInternal()
+        updateSyncState {
+            ProgressiveSyncState(
+                phase = SyncPhase.IDLE,
+                fastStartReady = false,
+                fullIndexComplete = false
+            )
+        }
+        settingsRepository.clearSyncState(accountKey())
+        startFastStartSync()
     }
 
     /**
@@ -530,6 +551,7 @@ class ProgressiveSyncCoordinator(
         if (disposed) return
         disposed = true
         Timber.d("Disposing ProgressiveSyncCoordinator")
+        ActiveSyncGuard.markInactive()
         cancelAllSyncsInternal()
         scopeJob.cancelAndJoin()
     }
@@ -538,6 +560,7 @@ class ProgressiveSyncCoordinator(
         if (disposed) return
         disposed = true
         Timber.d("Disposing ProgressiveSyncCoordinator")
+        ActiveSyncGuard.markInactive()
         scopeJob.cancel()
     }
 }

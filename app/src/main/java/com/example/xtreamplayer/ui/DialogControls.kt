@@ -150,6 +150,44 @@ fun RepeatableFocusableButton(
 }
 
 @Composable
+fun DialogLearnMoreButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    label: String = "How this works"
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val colors = AppTheme.colors
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .focusable(interactionSource = interactionSource)
+            .onKeyEvent {
+                if (it.type != KeyEventType.KeyDown) false
+                else when (it.key) {
+                    Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> { onClick(); true }
+                    else -> false
+                }
+            }
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (isFocused) colors.surfaceAlt else colors.surface)
+            .border(1.dp, if (isFocused) colors.accentAlt else colors.borderStrong, RoundedCornerShape(8.dp))
+            .padding(vertical = 10.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = if (isFocused) colors.textPrimary else colors.textSecondary,
+            fontSize = 14.sp,
+            fontFamily = AppTheme.fontFamily,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@Composable
 fun DialogCloseButton(
     focusRequester: FocusRequester,
     onDismiss: () -> Unit,

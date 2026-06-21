@@ -26,7 +26,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,6 +52,7 @@ import com.example.xtreamplayer.settings.vodBufferLabel
 import com.example.xtreamplayer.ui.theme.AppFont
 import com.example.xtreamplayer.ui.theme.AppTheme
 import com.example.xtreamplayer.settings.uiScaleDisplayPercent
+import com.example.xtreamplayer.ui.AutoSyncInfoDialog
 import kotlin.math.roundToInt
 
 @Composable
@@ -74,6 +77,8 @@ fun SettingsScreen(
     onOpenSubtitlesApiKey: () -> Unit,
     onManageLists: () -> Unit,
     onRefreshContent: () -> Unit,
+    onToggleRefreshOnStartup: () -> Unit,
+    onOpenSyncSchedule: () -> Unit,
     onToggleCheckUpdatesOnStartup: () -> Unit,
     onCheckForUpdates: () -> Unit,
     onClearCache: () -> Unit,
@@ -106,7 +111,8 @@ fun SettingsScreen(
         SettingsAction("Manage lists", null, onManageLists)
     )
     val libraryActions = listOf(
-        SettingsAction("Sync library", null, onRefreshContent)
+        SettingsAction("Sync library", null, onRefreshContent),
+        SettingsAction("Refresh on startup", flagLabel(settings.refreshOnStartup), onToggleRefreshOnStartup)
     )
     val aboutActions = listOf(
         SettingsAction(
@@ -116,6 +122,11 @@ fun SettingsScreen(
         ),
         SettingsAction("Check for updates", appVersionLabel, onCheckForUpdates)
     )
+
+    var showAutoSyncInfo by remember { mutableStateOf(false) }
+    if (showAutoSyncInfo) {
+        AutoSyncInfoDialog(onDismiss = { showAutoSyncInfo = false })
+    }
 
     // Focus is managed by user navigation - no auto-focus on screen load
 
@@ -191,6 +202,15 @@ fun SettingsScreen(
 
                 SettingsSectionHeader("Library")
                 libraryActions.forEach { action -> renderAction(action) }
+                SettingsActionRow(
+                    label = "Auto-sync interval",
+                    value = settings.syncScheduleInterval.label,
+                    focusRequester = null,
+                    onMoveLeft = onMoveLeft,
+                    onActivate = onOpenSyncSchedule,
+                    fontFamily = settings.appFont.fontFamily,
+                    secondaryText = "Refreshes your library in the background on a schedule, even when the app is closed. Open to change interval or tap \"How this works\" to learn more."
+                )
                 SettingsActionRow(
                     label = "Clear cache",
                     value = null,
