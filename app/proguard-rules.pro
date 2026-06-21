@@ -41,6 +41,11 @@
 -keep class com.example.xtreamplayer.content.** { *; }
 -keep class com.example.xtreamplayer.settings.** { *; }
 
+# Keep Room database implementations. WorkManager uses Room internally and
+# instantiates WorkDatabase_Impl via reflection; R8 strips the no-arg constructor
+# without this rule, crashing InitializationProvider before the app starts.
+-keep class * extends androidx.room.RoomDatabase { <init>(); }
+
 # Keep Timber
 -keep class timber.log.** { *; }
 
