@@ -43,6 +43,11 @@ class LibrarySyncWorker(
             return Result.success()
         }
 
+        if (!ActiveSyncGuard.tryMarkActive()) {
+            Timber.d("LibrarySyncWorker: lost race to in-app sync, skipping this run")
+            return Result.success()
+        }
+
         Timber.i("LibrarySyncWorker: starting scheduled sync")
         return try {
             contentRepository.syncBackgroundFull(
@@ -57,6 +62,8 @@ class LibrarySyncWorker(
         } catch (e: Exception) {
             Timber.e(e, "LibrarySyncWorker: sync failed")
             Result.retry()
+        } finally {
+            ActiveSyncGuard.markInactive()
         }
     }
 }

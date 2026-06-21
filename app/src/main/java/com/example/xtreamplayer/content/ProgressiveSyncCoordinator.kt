@@ -131,6 +131,12 @@ class ProgressiveSyncCoordinator(
                 return
             }
 
+            // Check if worker already holds the guard
+            if (ActiveSyncGuard.isActive) {
+                Timber.d("Background sync skipped: scheduled worker sync already running")
+                return
+            }
+
             // Update state
             updateSyncState {
                 it.copy(
@@ -143,7 +149,10 @@ class ProgressiveSyncCoordinator(
             settingsRepository.saveSyncState(_syncState.value, accountKey())
 
             backgroundSyncJob = scope.launch {
-                ActiveSyncGuard.markActive()
+                if (!ActiveSyncGuard.tryMarkActive()) {
+                    Timber.d("Background sync lost guard race, aborting")
+                    return@launch
+                }
                 Timber.i("Starting background full sync")
 
                 val sections = listOf(Section.SERIES, Section.MOVIES, Section.LIVE)

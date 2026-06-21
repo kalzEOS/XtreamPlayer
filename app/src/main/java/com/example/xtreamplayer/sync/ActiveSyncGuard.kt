@@ -10,7 +10,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 object ActiveSyncGuard {
     private val active = AtomicBoolean(false)
 
-    fun markActive() { active.set(true) }
+    /** Atomically claims the guard. Returns false if already held by another caller. */
+    fun tryMarkActive(): Boolean = active.compareAndSet(false, true)
     fun markInactive() { active.set(false) }
     val isActive: Boolean get() = active.get()
 }
