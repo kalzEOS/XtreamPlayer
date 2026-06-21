@@ -46,8 +46,8 @@ class XtreamApi(
 
     private companion object {
         const val MAX_SMALL_JSON_BYTES = 1L * 1024 * 1024
-        const val MAX_BULK_RESPONSE_BYTES = 64L * 1024 * 1024
-        const val MAX_BULK_ITEMS = 150_000
+        const val MAX_BULK_RESPONSE_BYTES = 2L * 1024 * 1024 * 1024
+        const val MAX_BULK_ITEMS = 1_000_000
         const val INITIAL_BULK_ITEMS_CAPACITY = 1_000
         val TIMESTAMP_PATTERNS = listOf(
             "yyyy-MM-dd HH:mm:ss",
@@ -121,37 +121,27 @@ class XtreamApi(
                 IllegalArgumentException("Invalid service URL")
             )
 
-            var lastError: Exception? = null
-            repeat(3) { attempt ->
-                try {
-                    val request = Request.Builder().url(url).get().build()
-                    pageClient.newCall(request).execute().use { response ->
-                        if (!response.isSuccessful) {
-                            return@withContext Result.failure(
-                                IllegalStateException("Request failed: ${response.code}")
-                            )
-                        }
-                        val body = response.body ?: return@withContext Result.failure(
-                            IllegalStateException("Empty response")
+            try {
+                val request = Request.Builder().url(url).get().build()
+                pageClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        return@withContext Result.failure(
+                            IllegalStateException("Request failed: ${response.code}")
                         )
-                        body.charStream().use { stream ->
-                            val reader = JsonReader(stream)
-                            val pageData = parsePage(reader, section, offset, limit)
-                            return@withContext Result.success(pageData)
-                        }
                     }
-                } catch (e: Exception) {
-                    lastError = e
-                    val isTimeout = e is SocketTimeoutException || e is SocketException
-                    Timber.e(e, "Failed to fetch section page: section=$section, page=$page")
-                    if (isTimeout && attempt < 2) {
-                        delay(500L * (attempt + 1))
-                    } else {
-                        return@withContext Result.failure(e)
+                    val body = response.body ?: return@withContext Result.failure(
+                        IllegalStateException("Empty response")
+                    )
+                    body.charStream().use { stream ->
+                        val reader = JsonReader(stream)
+                        val pageData = parsePage(reader, section, offset, limit)
+                        return@withContext Result.success(pageData)
                     }
                 }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to fetch section page: section=$section, page=$page")
+                return@withContext Result.failure(e)
             }
-            Result.failure(lastError ?: IllegalStateException("Request failed"))
         }
     }
 

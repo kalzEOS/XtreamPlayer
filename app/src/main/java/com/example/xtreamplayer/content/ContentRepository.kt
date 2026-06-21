@@ -39,7 +39,12 @@ class ContentRepository(
         const val FAST_START_PAGES = 2
         const val BACKGROUND_PAGE_SIZE = 400
         const val BACKGROUND_SAVE_INTERVAL = 25
-        const val BACKGROUND_THROTTLE_MS = 200L
+        const val BACKGROUND_THROTTLE_MS = 0L
+        const val BULK_RETRY_MAX = 2
+        const val BULK_RETRY_INITIAL_BACKOFF_MS = 2_000L
+        const val PAGE_RETRY_MAX = 3
+        const val PAGE_RETRY_INITIAL_BACKOFF_MS = 500L
+        const val PARALLEL_PAGE_CONCURRENCY = 16
         const val BOOST_PAGE_SIZE = 400
         const val LIVE_EPG_CACHE_TTL_MS = 20_000L
         const val LIVE_EPG_STALE_CACHE_TTL_MS = 3 * 60_000L
@@ -653,6 +658,41 @@ class ContentRepository(
             attempt++
         }
         return lastResult
+    }
+
+    private fun shouldRetryPageError(error: Throwable?): Boolean {
+        if (error == null) return false
+        if (error is java.io.IOException) return true
+        val msg = error.message?.lowercase().orEmpty()
+        return msg.contains("429") || msg.contains("503") || msg.contains("502") ||
+            msg.contains("500") || msg.contains("408") || msg.contains("timeout")
+    }
+
+    private fun shouldRetryBulkError(error: Throwable?): Boolean {
+        if (error == null) return false
+        if (error is java.io.IOException) return true
+        val msg = error.message?.lowercase().orEmpty()
+        // Size-limit errors are structural — retrying the same request won't change the response size
+        if (msg.contains("exceeded limit") || msg.contains("too large")) return false
+        return msg.contains("429") || msg.contains("503") || msg.contains("502") ||
+            msg.contains("500") || msg.contains("408") || msg.contains("timeout")
+    }
+
+    private suspend fun fetchSectionAllWithRetry(
+        section: Section,
+        authConfig: AuthConfig
+    ): Result<List<ContentItem>> {
+        var backoff = BULK_RETRY_INITIAL_BACKOFF_MS
+        repeat(BULK_RETRY_MAX) { attempt ->
+            val result = api.fetchSectionAll(section, authConfig)
+            if (result.isSuccess) return result
+            val err = result.exceptionOrNull()
+            if (!shouldRetryBulkError(err)) return result
+            Timber.w("Bulk fetch attempt ${attempt + 1}/$BULK_RETRY_MAX failed for $section: ${err?.message}, retrying in ${backoff}ms")
+            delay(backoff)
+            backoff = (backoff * 2).coerceAtMost(16_000L)
+        }
+        return api.fetchSectionAll(section, authConfig)
     }
 
     private fun shouldRetryLiveEpgError(error: Throwable?): Boolean {
@@ -1407,6 +1447,18 @@ class ContentRepository(
         onSectionStart: suspend (Section) -> Unit = {},
         onSectionComplete: suspend (Section) -> Unit = {}
     ): Result<Unit> {
+        // Pre-fetch all sections in parallel when using bulk mode — mirrors FredTV's approach.
+        val preFetchedBulk: Map<Section, Result<List<ContentItem>>> =
+            if (useBulkFirst && sectionsToSync.size > 1) {
+                coroutineScope {
+                    sectionsToSync
+                        .map { section -> section to async { fetchSectionAllWithRetry(section, authConfig) } }
+                        .associate { (section, deferred) -> section to deferred.await() }
+                }
+            } else {
+                emptyMap()
+            }
+
         var lastError: Throwable? = null
         for ((sectionIndex, section) in sectionsToSync.withIndex()) {
             val stagingMode = fullReindex || useStaging
@@ -1466,11 +1518,11 @@ class ContentRepository(
                     }
                 }
 
-                // Try bulk fetch first if requested
+                // Try bulk fetch first if requested (use pre-fetched result when available)
                 var bulkSuccess = false
                 val existingIds = allItems.asSequence().map { it.id }.toHashSet()
                 if (useBulkFirst) {
-                    val bulkResult = api.fetchSectionAll(section, authConfig)
+                    val bulkResult = preFetchedBulk[section] ?: fetchSectionAllWithRetry(section, authConfig)
                     if (bulkResult.isSuccess) {
                         val bulkItems = bulkResult.getOrNull().orEmpty()
                         if (bulkItems.isNotEmpty()) {
@@ -1516,57 +1568,50 @@ class ContentRepository(
                     }
                 }
 
-                // Only do page-by-page if bulk didn't succeed
+                // Parallel page fallback: fire PARALLEL_PAGE_CONCURRENCY pages simultaneously.
+                // Only reached after bulk fetch has been tried and retried.
                 if (!bulkSuccess) {
-                    var page = startPage
-                    Timber.d("Background sync: $section starting at page $page (checkpoint: ${checkpoint?.itemsIndexed} items)")
+                    val effectivePageSize = if (useBulkFirst) fallbackPageSize else pageSize
+                    var batchStart = startPage
+                    var hitEnd = false
+                    Timber.d("Background sync: $section starting parallel page fallback at page $batchStart")
 
-                    while (true) {
-                        // Check pause on every page for responsive pausing
+                    while (!hitEnd) {
                         if (checkPause()) {
-                            saveProgressCheckpoint(page - 1)
-                            Timber.i("Background sync paused: $section at page $page")
+                            saveProgressCheckpoint(maxOf(0, batchStart - 1))
+                            Timber.i("Background sync paused: $section at batch starting page $batchStart")
                             throw SyncPausedException()
                         }
 
-                        val effectivePageSize = if (useBulkFirst) fallbackPageSize else pageSize
-                        val pageDataResult =
-                            api.fetchSectionPage(section, authConfig, page, effectivePageSize)
-                        if (pageDataResult.isFailure) {
-                            Timber.w("Background sync: $section page $page failed: ${pageDataResult.exceptionOrNull()}")
-                            throw pageDataResult.exceptionOrNull()
-                                ?: IllegalStateException("Background sync failed")
-                        }
-
-                        val pageData = pageDataResult.getOrThrow()
-
-                        if (pageData.items.isNotEmpty()) {
-                            pageData.items.forEach { item ->
-                                if (existingIds.add(item.id)) {
-                                    allItems.add(item)
-                                }
-                            }
-                        }
-
-                        // Incremental save every 10 pages
-                        if (page % BACKGROUND_SAVE_INTERVAL == 0) {
-                            if (stagingMode) {
-                                contentCache.updateSectionIndexIncrementalStagingWithCheckpoint(
-                                    section, authConfig, allItems, page, false
-                                )
-                            } else {
-                                // Transactional write: index + checkpoint atomically
-                                contentCache.updateSectionIndexIncrementalWithCheckpoint(
-                                    section, authConfig, allItems, page, false
-                                )
-                                val cacheKey = indexKey(section, authConfig)
-                                sectionIndexMutex.withLock {
-                                    if (shouldKeepSectionIndexInMemory(allItems.size)) {
-                                        sectionIndexCache[cacheKey] = allItems
-                                    } else {
-                                        sectionIndexCache.remove(cacheKey)
+                        // Fire a full batch of pages concurrently
+                        val batch = coroutineScope {
+                            (batchStart until batchStart + PARALLEL_PAGE_CONCURRENCY).map { page ->
+                                async {
+                                    var backoff = PAGE_RETRY_INITIAL_BACKOFF_MS
+                                    for (attempt in 0 until PAGE_RETRY_MAX) {
+                                        val result = api.fetchSectionPage(section, authConfig, page, effectivePageSize)
+                                        if (result.isSuccess) return@async page to result.getOrThrow()
+                                        val err = result.exceptionOrNull()
+                                        if (attempt == PAGE_RETRY_MAX || !shouldRetryPageError(err)) {
+                                            Timber.w("Sync: $section page $page failed after ${attempt + 1} attempt(s): $err")
+                                            throw err ?: IllegalStateException("Page $page failed")
+                                        }
+                                        Timber.d("Sync: $section page $page attempt ${attempt + 1} failed, retrying in ${backoff}ms")
+                                        delay(backoff)
+                                        backoff = (backoff * 2).coerceAtMost(8_000L)
                                     }
+                                    throw IllegalStateException("Unreachable")
                                 }
+                            }.awaitAll()
+                        }.sortedBy { (page, _) -> page }
+
+                        for ((_, pageData) in batch) {
+                            if (pageData.items.isEmpty() || pageData.endReached) {
+                                hitEnd = true
+                                break
+                            }
+                            pageData.items.forEach { item ->
+                                if (existingIds.add(item.id)) allItems.add(item)
                             }
                         }
 
@@ -1576,37 +1621,36 @@ class ContentRepository(
                                 sectionIndex = sectionIndex,
                                 totalSections = sectionsToSync.size,
                                 itemsIndexed = allItems.size,
-                                progress = 0.5f, // Indeterminate for background
+                                progress = 0.5f,
                                 phase = com.example.xtreamplayer.content.SyncPhase.BACKGROUND_FULL
                             )
                         )
 
-                        if (pageData.items.isEmpty() || pageData.endReached) {
-                            // Section complete
-                            if (stagingMode) {
-                                contentCache.updateSectionIndexIncrementalStagingWithCheckpoint(
-                                    section, authConfig, allItems, page, true
-                                )
-                                contentCache.commitSectionIndexStaging(section, authConfig)
-                            } else {
-                                // Transactional write: index + checkpoint atomically
-                                contentCache.writeSectionIndexPartial(section, authConfig, allItems, page, true)
-                            }
-                            val key = indexKey(section, authConfig)
-                            sectionIndexMutex.withLock {
-                                if (shouldKeepSectionIndexInMemory(allItems.size)) {
-                                    sectionIndexCache[key] = allItems
-                                } else {
-                                    sectionIndexCache.remove(key)
-                                }
-                            }
-                            Timber.i("Background sync complete: $section with ${allItems.size} items")
-                            break
+                        if (!hitEnd) {
+                            saveProgressCheckpoint(batchStart + PARALLEL_PAGE_CONCURRENCY - 1)
+                            batchStart += PARALLEL_PAGE_CONCURRENCY
                         }
-
-                        delay(throttleMs) // Throttle to avoid blocking UI
-                        page++
                     }
+
+                    // Section complete
+                    val lastPage = batchStart + PARALLEL_PAGE_CONCURRENCY - 1
+                    if (stagingMode) {
+                        contentCache.updateSectionIndexIncrementalStagingWithCheckpoint(
+                            section, authConfig, allItems, lastPage, true
+                        )
+                        contentCache.commitSectionIndexStaging(section, authConfig)
+                    } else {
+                        contentCache.writeSectionIndexPartial(section, authConfig, allItems, lastPage, true)
+                    }
+                    val key = indexKey(section, authConfig)
+                    sectionIndexMutex.withLock {
+                        if (shouldKeepSectionIndexInMemory(allItems.size)) {
+                            sectionIndexCache[key] = allItems
+                        } else {
+                            sectionIndexCache.remove(key)
+                        }
+                    }
+                    Timber.i("Background sync (parallel pages) complete: $section with ${allItems.size} items")
                 } // end if (!bulkSuccess)
             }
 

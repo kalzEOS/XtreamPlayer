@@ -149,6 +149,7 @@ internal fun BrowseScreen(
     showVodBufferDialogState: MutableState<Boolean>,
     showSubtitleAppearanceDialogState: MutableState<Boolean>,
     showSubtitleCacheAutoClearDialogState: MutableState<Boolean>,
+    showSyncScheduleDialogState: MutableState<Boolean>,
     showApiKeyDialogState: MutableState<Boolean>,
     cacheClearNonceState: MutableState<Int>,
     contentRepository: ContentRepository,
@@ -209,6 +210,7 @@ internal fun BrowseScreen(
     var showVodBufferDialog by showVodBufferDialogState
     var showSubtitleAppearanceDialog by showSubtitleAppearanceDialogState
     var showSubtitleCacheAutoClearDialog by showSubtitleCacheAutoClearDialogState
+    var showSyncScheduleDialog by showSyncScheduleDialogState
     var showApiKeyDialog by showApiKeyDialogState
     var cacheClearNonce by cacheClearNonceState
     val focusManager = LocalFocusManager.current
@@ -492,6 +494,8 @@ Row(modifier = Modifier.fillMaxSize()) {
                                 }
                             }
                         },
+                        onToggleRefreshOnStartup = settingsViewModel::toggleRefreshOnStartup,
+                        onOpenSyncSchedule = { showSyncScheduleDialog = true },
                         onToggleCheckUpdatesOnStartup = onToggleCheckUpdatesOnStartup,
                         onCheckForUpdates = { onCheckForUpdates() },
                         onClearCache = {
@@ -520,10 +524,13 @@ Row(modifier = Modifier.fillMaxSize()) {
                                         }
                                 Toast.makeText(
                                                 context,
-                                                "Cache cleared ($sizeLabel)",
+                                                "Cache cleared ($sizeLabel). Resyncing library...",
                                                 Toast.LENGTH_SHORT
                                 )
                                         .show()
+                                // Reset sync coordinator so it doesn't think the library is already
+                                // indexed — this starts a fresh fast-start sync immediately.
+                                progressiveSyncCoordinator?.resetAndResync()
                             }
                         },
                         onSignOut = {

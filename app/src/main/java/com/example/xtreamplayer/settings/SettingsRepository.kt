@@ -40,6 +40,8 @@ class SettingsRepository(private val context: Context) {
                 ?: SubtitleCacheAutoClearOption.THIRTY_DAYS.intervalMs
         val matchFrameRate = prefs[Keys.MATCH_FRAME_RATE_ENABLED] ?: true
         val checkUpdatesOnStartup = prefs[Keys.CHECK_UPDATES_ON_STARTUP] ?: true
+        val refreshOnStartup = prefs[Keys.REFRESH_ON_STARTUP] ?: false
+        val syncScheduleInterval = parseSyncScheduleInterval(prefs[Keys.SYNC_SCHEDULE_INTERVAL])
         val rememberLogin = prefs[Keys.REMEMBER_LOGIN] ?: true
         val autoSignIn = prefs[Keys.AUTO_SIGN_IN] ?: true
         val appTheme = parseAppTheme(prefs[Keys.APP_THEME])
@@ -62,6 +64,8 @@ class SettingsRepository(private val context: Context) {
             subtitleCacheAutoClearIntervalMs = subtitleCacheAutoClearIntervalMs,
             matchFrameRateEnabled = matchFrameRate,
             checkUpdatesOnStartup = checkUpdatesOnStartup,
+            refreshOnStartup = refreshOnStartup,
+            syncScheduleInterval = syncScheduleInterval,
             rememberLogin = rememberLogin,
             autoSignIn = autoSignIn,
             appTheme = appTheme,
@@ -199,6 +203,18 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun setRefreshOnStartup(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.REFRESH_ON_STARTUP] = enabled
+        }
+    }
+
+    suspend fun setSyncScheduleInterval(interval: SyncScheduleInterval) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.SYNC_SCHEDULE_INTERVAL] = interval.name
+        }
+    }
+
     suspend fun setRememberLogin(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[Keys.REMEMBER_LOGIN] = enabled
@@ -276,6 +292,11 @@ class SettingsRepository(private val context: Context) {
         return ClockFormatOption.values().firstOrNull { it.name == value } ?: ClockFormatOption.AM_PM
     }
 
+    private fun parseSyncScheduleInterval(value: String?): SyncScheduleInterval {
+        if (value == null) return SyncScheduleInterval.OFF
+        return SyncScheduleInterval.values().firstOrNull { it.name == value } ?: SyncScheduleInterval.OFF
+    }
+
     private fun cacheBootSettings(
         appTheme: AppThemeOption? = null,
         appFont: AppFont? = null,
@@ -319,6 +340,8 @@ class SettingsRepository(private val context: Context) {
         val SUBTITLE_CACHE_AUTO_CLEAR_LAST_RUN_MS = longPreferencesKey("subtitle_cache_auto_clear_last_run_ms")
         val MATCH_FRAME_RATE_ENABLED = booleanPreferencesKey("match_frame_rate_enabled")
         val CHECK_UPDATES_ON_STARTUP = booleanPreferencesKey("check_updates_on_startup")
+        val REFRESH_ON_STARTUP = booleanPreferencesKey("refresh_on_startup")
+        val SYNC_SCHEDULE_INTERVAL = stringPreferencesKey("sync_schedule_interval")
         val REMEMBER_LOGIN = booleanPreferencesKey("remember_login")
         val AUTO_SIGN_IN = booleanPreferencesKey("auto_sign_in")
         val APP_THEME = stringPreferencesKey("app_theme")
@@ -356,6 +379,23 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.SYNC_LAST_TIMESTAMP] = state.lastSyncTimestamp
             prefs[Keys.SYNC_PAUSED] = state.isPaused
             prefs[Keys.SYNC_ACCOUNT_KEY] = accountKey
+        }
+    }
+
+    /**
+     * Clear persisted sync state for an account so the next launch triggers a fresh sync.
+     */
+    suspend fun clearSyncState(accountKey: String) {
+        context.dataStore.edit { prefs ->
+            val storedKey = prefs[Keys.SYNC_ACCOUNT_KEY]
+            if (storedKey == accountKey) {
+                prefs.remove(Keys.SYNC_PHASE)
+                prefs.remove(Keys.SYNC_FAST_START_READY)
+                prefs.remove(Keys.SYNC_FULL_COMPLETE)
+                prefs.remove(Keys.SYNC_LAST_TIMESTAMP)
+                prefs.remove(Keys.SYNC_PAUSED)
+                prefs.remove(Keys.SYNC_ACCOUNT_KEY)
+            }
         }
     }
 

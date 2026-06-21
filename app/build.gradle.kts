@@ -127,6 +127,9 @@ dependencies {
     implementation(libs.hilt.navigation.compose)
     kapt(libs.hilt.compiler)
 
+    // Background work
+    implementation(libs.androidx.work.runtime.ktx)
+
     // Logging
     implementation(libs.timber)
 

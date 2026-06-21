@@ -1,20 +1,25 @@
 package com.example.xtreamplayer.settings
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import com.example.xtreamplayer.ui.theme.AppFont
 import androidx.lifecycle.viewModelScope
+import com.example.xtreamplayer.sync.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    private val repository: SettingsRepository
+    private val repository: SettingsRepository,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
     private var subtitleAppearanceSaveJob: Job? = null
     private var pendingSubtitleAppearance: SubtitleAppearanceSettings? = null
@@ -22,6 +27,10 @@ class SettingsViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             repository.migrateBootSettingsToDataStore()
+            // Restore any active background sync schedule after process restart.
+            val savedInterval = repository.settings.firstOrNull()?.syncScheduleInterval
+                ?: SyncScheduleInterval.OFF
+            SyncScheduler.schedule(context, savedInterval)
         }
     }
 
@@ -98,6 +107,19 @@ class SettingsViewModel @Inject constructor(
     fun toggleCheckUpdatesOnStartup() {
         viewModelScope.launch {
             repository.setCheckUpdatesOnStartup(!settings.value.checkUpdatesOnStartup)
+        }
+    }
+
+    fun toggleRefreshOnStartup() {
+        viewModelScope.launch {
+            repository.setRefreshOnStartup(!settings.value.refreshOnStartup)
+        }
+    }
+
+    fun setSyncScheduleInterval(interval: SyncScheduleInterval) {
+        viewModelScope.launch {
+            repository.setSyncScheduleInterval(interval)
+            SyncScheduler.schedule(context, interval)
         }
     }
 

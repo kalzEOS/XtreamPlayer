@@ -34,6 +34,16 @@ enum class SubtitleCacheAutoClearOption(
     THIRTY_DAYS(30L * 24L * 60L * 60L * 1000L, "30 days")
 }
 
+enum class SyncScheduleInterval(val hours: Long, val label: String) {
+    OFF(0, "Off"),
+    EVERY_6_HOURS(6, "Every 6 hours"),
+    EVERY_12_HOURS(12, "Every 12 hours"),
+    EVERY_24_HOURS(24, "Every 24 hours"),
+    EVERY_7_DAYS(168, "Weekly")
+}
+
+fun syncScheduleLabel(interval: SyncScheduleInterval): String = interval.label
+
 fun subtitleAutoClearLabel(intervalMs: Long): String {
     return SubtitleCacheAutoClearOption.entries
         .firstOrNull { it.intervalMs == intervalMs }
@@ -51,6 +61,8 @@ data class SettingsState(
     val subtitleCacheAutoClearIntervalMs: Long = SubtitleCacheAutoClearOption.THIRTY_DAYS.intervalMs,
     val matchFrameRateEnabled: Boolean = true,
     val checkUpdatesOnStartup: Boolean = true,
+    val refreshOnStartup: Boolean = false,
+    val syncScheduleInterval: SyncScheduleInterval = SyncScheduleInterval.OFF,
     val rememberLogin: Boolean = true,
     val autoSignIn: Boolean = true,
     val appTheme: AppThemeOption = AppThemeOption.DEFAULT,

@@ -46,6 +46,9 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.content.Context
@@ -424,6 +427,11 @@ private fun TvTextField(
             onValueChange = onValueChange,
             label = { Text(label) },
             singleLine = true,
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Text,
+                autoCorrectEnabled = false,
+                capitalization = KeyboardCapitalization.None
+            ),
             modifier = Modifier
                 .fillMaxWidth()
                 .focusRequester(textFieldFocusRequester)
