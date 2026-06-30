@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -70,6 +71,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -108,6 +112,7 @@ import com.example.xtreamplayer.ui.SubtitleTrackDialog
 import com.example.xtreamplayer.ui.VideoResolutionDialog
 import com.example.xtreamplayer.ui.theme.AppTheme
 import com.example.xtreamplayer.settings.SubtitleAppearanceSettings
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -131,6 +136,16 @@ private const val LIVE_GUIDE_MAX_ROWS_VISIBLE = 10
 private const val NERD_STATS_REFRESH_INTERVAL_MS = 500L
 private const val SUBTITLE_OFFSET_PREVIEW_DEBOUNCE_MS = 700L
 private const val NEXT_EPISODE_COUNTDOWN_SECONDS = 15
+private const val DUAL_MAX_RECONNECT_ATTEMPTS = 10
+
+private fun dualReconnectDelayMs(attempt: Int): Long = when (attempt) {
+    0 -> 1L
+    1 -> 500L
+    2 -> 1_000L
+    3 -> 2_000L
+    4 -> 4_000L
+    else -> 8_000L
+}
 private val LANGUAGE_PREFIX_REGEX = Regex("^\\s*[A-Z]{2,3}\\s*-\\s*")
 private val BRACKET_TEXT_REGEX = Regex("\\[[^\\]]*\\]")
 private val PAREN_TEXT_REGEX = Regex("\\([^\\)]*\\)")
@@ -581,6 +596,8 @@ internal fun PlayerOverlay(
         onLiveChannelSwitch: (Int) -> Boolean,
         onLiveGuideChannelSelect: (ContentItem, List<ContentItem>) -> Unit,
         onSubtitleStateChanged: (PlaybackSubtitleState?) -> Unit,
+        dualLiveEnabled: Boolean,
+        loadLiveStreamUri: suspend (ContentItem) -> Uri?,
         loadLiveNowNext: suspend (ContentItem) -> Result<LiveNowNextEpg?>,
         loadLiveCategories: suspend () -> Result<List<CategoryItem>>,
         loadLiveCategoryChannels: suspend (CategoryItem) -> Result<List<ContentItem>>,
@@ -738,6 +755,24 @@ internal fun PlayerOverlay(
         }
     }
 
+    // --- Dual screen state ---
+    var isDualScreenActive by remember { mutableStateOf(false) }
+    var dualScreenFullscreenTile by remember { mutableStateOf<DualTile?>(null) }
+    var dualScreenLeftClosed by remember { mutableStateOf(false) }
+    var dualScreenRightChannel by remember { mutableStateOf<ContentItem?>(null) }
+    var dualScreenRightChannels by remember { mutableStateOf<List<ContentItem>>(emptyList()) }
+    var dualScreenFocusedTile by remember { mutableStateOf(DualTile.LEFT) }
+    var dualLivePickerTarget by remember { mutableStateOf<DualTile?>(null) }
+    // Action menu tile lives here so the parent BackHandler can dismiss it before exiting dual screen.
+    var dualActionMenuTile by remember { mutableStateOf<DualTile?>(null) }
+    var secondaryExoPlayer by remember { mutableStateOf<ExoPlayer?>(null) }
+    var rightTileState by remember { mutableStateOf<DualTilePlayerState>(DualTilePlayerState.Idle) }
+    var dualRightRetryCount by remember { mutableStateOf(0) }
+    // Plain ref — only read/written in the reconnect handler, never drives recomposition.
+    val dualLeftRetries = remember { object { var count = 0 } }
+    var leftTileState by remember { mutableStateOf<DualTilePlayerState>(DualTilePlayerState.Ready) }
+    var wasDualScreenActive by remember { mutableStateOf(false) }
+
     val closeLiveGuide: () -> Unit = {
         showLiveGuide = false
         liveGuideErrorMessage = null
@@ -748,11 +783,13 @@ internal fun PlayerOverlay(
         liveGuideSearchResultIndex = 0
         liveGuideSearchReturnIndex = 0
         hideLiveGuideSearchKeyboard()
-        playerView?.let { view ->
-            view.post {
-                view.useController = true
-                view.showController()
-                view.focusPlayPause()
+        if (!isDualScreenActive) {
+            playerView?.let { view ->
+                view.post {
+                    view.useController = true
+                    view.showController()
+                    view.focusPlayPause()
+                }
             }
         }
     }
@@ -896,9 +933,24 @@ internal fun PlayerOverlay(
         liveGuideSearchResultIndex = 0
         liveGuideSearchReturnIndex = 0
         hideLiveGuideSearchKeyboard()
+        val guideTarget =
+                dualLivePickerTarget
+                        ?: if (isDualScreenActive) dualScreenFocusedTile else null
+        val guideReferenceChannel =
+                if (guideTarget == DualTile.RIGHT) {
+                    dualScreenRightChannel
+                } else {
+                    activePlaybackItem
+                }
+        val guideQueueItems =
+                if (guideTarget == DualTile.RIGHT && dualScreenRightChannels.isNotEmpty()) {
+                    dualScreenRightChannels
+                } else {
+                    liveQueueItems
+                }
         val queueCategoryId =
-                normalizeCategoryId(activePlaybackItem?.categoryId)
-                        ?: liveQueueItems
+                normalizeCategoryId(guideReferenceChannel?.categoryId)
+                        ?: guideQueueItems
                                 .mapNotNull { normalizeCategoryId(it.categoryId) }
                                 .groupingBy { it }
                                 .eachCount()
@@ -906,8 +958,8 @@ internal fun PlayerOverlay(
                                 ?.key
                         ?: inferCategoryIdFromChannelTitles(
                                 categories = liveGuideCategories,
-                                activeChannel = activePlaybackItem,
-                                channels = liveQueueItems
+                                activeChannel = guideReferenceChannel,
+                                channels = guideQueueItems
                         )
                         ?: normalizeCategoryId(liveGuideParentCategoryId)
                         ?: normalizeCategoryId(liveGuidePreferredCategoryId)
@@ -920,20 +972,23 @@ internal fun PlayerOverlay(
                 liveGuideSelectedCategory = liveGuideCategories[preferredIndex]
             }
         }
-        if (liveQueueItems.size > 1) {
-            liveGuideChannels = liveQueueItems
+        if (guideQueueItems.size > 1) {
+            liveGuideChannels = guideQueueItems
             liveGuideLevel = LiveGuideLevel.CHANNELS
             liveGuideChannelIndex =
-                    liveQueueItems.indexOfFirst {
-                        it.id == activePlaybackItem?.id
+                    guideQueueItems.indexOfFirst {
+                        guideReferenceChannel != null &&
+                                liveGuideChannelCacheKey(it) == liveGuideChannelCacheKey(guideReferenceChannel)
                     }.takeIf { it >= 0 } ?: 0
         } else {
             liveGuideLevel = LiveGuideLevel.CATEGORIES
         }
         showLiveGuide = true
         playerView?.hideController()
-        playerView?.resetControllerFocus()
-        playerView?.requestFocus()
+        if (!isDualScreenActive) {
+            playerView?.resetControllerFocus()
+            playerView?.requestFocus()
+        }
         if (liveGuideCategories.isEmpty()) {
             refreshLiveCategories()
         } else {
@@ -1093,6 +1148,31 @@ internal fun PlayerOverlay(
         }
     }
 
+    fun selectLiveGuideChannel(channel: ContentItem, siblingChannels: List<ContentItem>) {
+        val pickerTarget =
+                if (isDualScreenActive) {
+                    dualLivePickerTarget ?: dualScreenFocusedTile
+                } else {
+                    null
+                }
+        if (isDualScreenActive && pickerTarget != null) {
+            dualLivePickerTarget = null
+            if (pickerTarget == DualTile.RIGHT) {
+                dualScreenRightChannel = channel
+                dualScreenRightChannels = siblingChannels
+                dualScreenFocusedTile = DualTile.RIGHT
+                closeLiveGuide()
+            } else {
+                dualScreenLeftClosed = false
+                dualScreenFocusedTile = DualTile.LEFT
+                closeLiveGuide()
+                onLiveGuideChannelSelect(channel, siblingChannels)
+            }
+            return
+        }
+        onLiveGuideChannelSelect(channel, siblingChannels)
+    }
+
     fun activateLiveGuideSelection() {
         if (liveGuideLoading) return
         playerView?.hideController()
@@ -1122,7 +1202,7 @@ internal fun PlayerOverlay(
                                 categoryId?.let { liveGuideSearchChannelsByCategoryId[it] }
                                         ?.takeIf { it.isNotEmpty() }
                                         ?: liveGuideChannels.ifEmpty { listOf(row.channel) }
-                        onLiveGuideChannelSelect(row.channel, siblingChannels)
+                        selectLiveGuideChannel(row.channel, siblingChannels)
                     }
                 }
                 return
@@ -1132,15 +1212,16 @@ internal fun PlayerOverlay(
             return
         }
         val channel = liveGuideChannels.getOrNull(liveGuideChannelIndex) ?: return
-        if (channel.id == activePlaybackItem?.id) {
+        if (!isDualScreenActive && channel.id == activePlaybackItem?.id) {
             closeLiveGuide()
             return
         }
-        onLiveGuideChannelSelect(channel, liveGuideChannels)
+        selectLiveGuideChannel(channel, liveGuideChannels)
     }
 
     LaunchedEffect(currentContentType) {
         if (currentContentType != ContentType.LIVE) {
+            dualLivePickerTarget = null
             showLiveGuide = false
         }
     }
@@ -1830,15 +1911,76 @@ internal fun PlayerOverlay(
         }
     }
 
+    fun exitDualScreen() {
+        isDualScreenActive = false
+        dualScreenFullscreenTile = null
+        dualScreenLeftClosed = false
+        dualLivePickerTarget = null
+        dualActionMenuTile = null
+        dualScreenRightChannel = null
+        dualScreenRightChannels = emptyList()
+        rightTileState = DualTilePlayerState.Idle
+        secondaryExoPlayer?.release()
+        secondaryExoPlayer = null
+        player.volume = 1f
+        player.playWhenReady = true
+    }
+
+    fun exitDualScreenToFocusedChannel() {
+        val rightChannel = dualScreenRightChannel
+        val shouldPromoteRight =
+                rightChannel != null &&
+                        (dualScreenFocusedTile == DualTile.RIGHT || dualScreenLeftClosed)
+        if (shouldPromoteRight) {
+            val channels =
+                    dualScreenRightChannels
+                            .takeIf { it.any { channel -> liveGuideChannelCacheKey(channel) == liveGuideChannelCacheKey(rightChannel) } }
+                            ?: activePlaybackItems
+                                    .filter { it.contentType == ContentType.LIVE }
+                                    .takeIf { it.any { channel -> liveGuideChannelCacheKey(channel) == liveGuideChannelCacheKey(rightChannel) } }
+                            ?: listOf(rightChannel)
+            onLiveGuideChannelSelect(rightChannel, channels)
+        }
+        exitDualScreen()
+    }
+
+    fun closeDualScreenTile(tile: DualTile) {
+        if (tile == DualTile.RIGHT) {
+            dualScreenRightChannel = null
+            dualScreenRightChannels = emptyList()
+            secondaryExoPlayer?.release()
+            secondaryExoPlayer = null
+            rightTileState = DualTilePlayerState.Idle
+            dualScreenFocusedTile = DualTile.RIGHT
+        } else {
+            dualScreenLeftClosed = true
+            player.volume = 0f
+            player.pause()
+            dualScreenFocusedTile = DualTile.LEFT
+        }
+    }
+
     BackHandler(enabled = true) {
         when {
             showNextEpisodeOverlay -> dismissNextEpisodePrompt()
-            showLiveGuide -> closeLiveGuide()
+            // Action menu must be dismissed before anything else in dual-screen mode.
+            // Keeping this state in the parent prevents a race where the action menu's
+            // own BackHandler hasn't been composed yet but Back is already dispatched.
+            dualActionMenuTile != null -> dualActionMenuTile = null
+            showLiveGuide -> { dualLivePickerTarget = null; closeLiveGuide() }
             showSubtitleTimingDialog -> showSubtitleTimingDialog = false
             showSubtitleTrackDialog -> showSubtitleTrackDialog = false
             showPlaybackSettingsDialog -> showPlaybackSettingsDialog = false
             showPlaybackSpeedDialog -> showPlaybackSpeedDialog = false
             showResolutionDialog -> showResolutionDialog = false
+            dualScreenFullscreenTile != null -> {
+                if (playerView?.isControllerFullyVisible == true) {
+                    playerView?.hideController()
+                } else {
+                    dualScreenFullscreenTile = null
+                }
+            }
+            isDualScreenActive -> exitDualScreenToFocusedChannel()
             else -> {
                 if (playerView?.isControllerFullyVisible == true) {
                     playerView?.hideController()
@@ -1920,6 +2062,248 @@ internal fun PlayerOverlay(
     // live-only UI leaking into VOD when item metadata lags during transitions.
     val isLivePlayback = currentContentType == ContentType.LIVE
 
+    val effectivePlayer: Player = if (dualScreenFullscreenTile == DualTile.RIGHT && secondaryExoPlayer != null) secondaryExoPlayer!! else player
+
+    DisposableEffect(Unit) {
+        onDispose {
+            secondaryExoPlayer?.release()
+            secondaryExoPlayer = null
+        }
+    }
+
+    DisposableEffect(isDualScreenActive) {
+        if (isDualScreenActive) {
+            player.repeatMode = Player.REPEAT_MODE_ONE
+        } else {
+            player.repeatMode = Player.REPEAT_MODE_OFF
+        }
+        onDispose {
+            player.repeatMode = Player.REPEAT_MODE_OFF
+        }
+    }
+
+    // Pause the secondary player when the app goes to background. Unlike the primary player,
+    // the secondary has no media session or audio focus so it must be explicitly lifecycle-managed.
+    val dualLifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(dualLifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> secondaryExoPlayer?.pause()
+                Lifecycle.Event.ON_START -> {
+                    if (isDualScreenActive) secondaryExoPlayer?.playWhenReady = true
+                }
+                else -> Unit
+            }
+        }
+        dualLifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { dualLifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    DisposableEffect(secondaryExoPlayer) {
+        val secPlayer = secondaryExoPlayer
+        if (secPlayer == null) return@DisposableEffect onDispose {}
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                when (playbackState) {
+                    Player.STATE_BUFFERING -> rightTileState = DualTilePlayerState.Loading
+                    Player.STATE_READY -> {
+                        dualRightRetryCount = 0  // stream recovered — reset so next drop gets fresh attempts
+                        rightTileState = DualTilePlayerState.Ready
+                    }
+                    // STATE_ENDED means provider dropped the stream — go to Reconnecting so
+                    // the LaunchedEffect below silently restarts without showing "Stream failed".
+                    Player.STATE_ENDED -> rightTileState = if (dualScreenRightChannel != null) DualTilePlayerState.Reconnecting else DualTilePlayerState.Idle
+                    else -> rightTileState = DualTilePlayerState.Idle
+                }
+            }
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                // Also use Reconnecting for errors — the LaunchedEffect will surface Error
+                // only if the URL lookup fails, so transient failures stay silent.
+                if (dualScreenRightChannel != null) {
+                    rightTileState = DualTilePlayerState.Reconnecting
+                } else {
+                    rightTileState = DualTilePlayerState.Error(error.message)
+                }
+            }
+        }
+        secPlayer.addListener(listener)
+        onDispose { secPlayer.removeListener(listener) }
+    }
+
+    LaunchedEffect(dualScreenRightChannel) {
+        dualRightRetryCount = 0
+        val channel = dualScreenRightChannel
+        if (channel == null) {
+            rightTileState = DualTilePlayerState.Idle
+            secondaryExoPlayer?.release()
+            secondaryExoPlayer = null
+            return@LaunchedEffect
+        }
+        rightTileState = DualTilePlayerState.Loading
+        val uri = loadLiveStreamUri(channel)
+        if (uri == null) {
+            rightTileState = DualTilePlayerState.Error("Failed to build stream URL")
+            return@LaunchedEffect
+        }
+        var secPlayer = secondaryExoPlayer
+        if (secPlayer == null) {
+            secPlayer = playbackEngine.createSecondaryLivePlayer()
+            secondaryExoPlayer = secPlayer
+        }
+        secPlayer.setMediaItem(androidx.media3.common.MediaItem.fromUri(uri))
+        secPlayer.prepare()
+        secPlayer.playWhenReady = true
+        if (dualScreenFocusedTile == DualTile.RIGHT) {
+            player.volume = 0f
+            secPlayer.volume = 1f
+        } else {
+            player.volume = 1f
+            secPlayer.volume = 0f
+        }
+    }
+
+    // Silent auto-reconnect for the right (secondary) tile.
+    // Triggered by Reconnecting state — set by the player listener on STATE_ENDED or error.
+    // Uses exponential backoff and gives up after DUAL_MAX_RECONNECT_ATTEMPTS, at which point
+    // the tile shows an error the user can dismiss. Only surfaces Error if URL lookup fails or
+    // all retries are exhausted; transient failures stay silent.
+    LaunchedEffect(rightTileState, dualScreenRightChannel, isDualScreenActive) {
+        val channel = dualScreenRightChannel ?: return@LaunchedEffect
+        if (!isDualScreenActive) return@LaunchedEffect
+        if (rightTileState !is DualTilePlayerState.Reconnecting) return@LaunchedEffect
+
+        val attempt = dualRightRetryCount
+        if (attempt >= DUAL_MAX_RECONNECT_ATTEMPTS) {
+            rightTileState = DualTilePlayerState.Error("Stream unavailable after $DUAL_MAX_RECONNECT_ATTEMPTS retries")
+            return@LaunchedEffect
+        }
+        dualRightRetryCount = attempt + 1
+
+        delay(dualReconnectDelayMs(attempt))
+
+        if (rightTileState !is DualTilePlayerState.Reconnecting) return@LaunchedEffect
+        if (dualScreenRightChannel != channel) return@LaunchedEffect
+
+        val uri = loadLiveStreamUri(channel)
+        if (uri == null) {
+            rightTileState = DualTilePlayerState.Error("Failed to build stream URL")
+            return@LaunchedEffect
+        }
+        var secPlayer = secondaryExoPlayer
+        if (secPlayer == null) {
+            secPlayer = playbackEngine.createSecondaryLivePlayer()
+            secondaryExoPlayer = secPlayer
+        }
+        secPlayer.setMediaItem(androidx.media3.common.MediaItem.fromUri(uri))
+        secPlayer.prepare()
+        secPlayer.playWhenReady = true
+        // Restore volume based on current focus (may have changed while reconnecting).
+        if (dualScreenFocusedTile == DualTile.RIGHT) {
+            player.volume = 0f
+            secPlayer.volume = 1f
+        } else {
+            secPlayer.volume = 0f
+        }
+    }
+
+    // Silent auto-reconnect for the left (primary) tile in dual-screen mode.
+    // Uses Handler-based backoff (same schedule as right tile) so a bad URL doesn't spin
+    // at full speed. After DUAL_MAX_RECONNECT_ATTEMPTS the tile goes silent — the user can
+    // restart manually via the tile action menu.
+    DisposableEffect(isDualScreenActive, activePlaybackItem?.id) {
+        dualLeftRetries.count = 0
+        leftTileState = DualTilePlayerState.Ready
+        if (!isDualScreenActive) return@DisposableEffect onDispose {}
+        if (activePlaybackItem == null) return@DisposableEffect onDispose {}
+        val reconnectHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        val listener = object : Player.Listener {
+            private fun scheduleReconnect() {
+                val attempt = dualLeftRetries.count
+                if (attempt >= DUAL_MAX_RECONNECT_ATTEMPTS) {
+                    leftTileState = DualTilePlayerState.Error("Stream unavailable after $DUAL_MAX_RECONNECT_ATTEMPTS retries")
+                    return
+                }
+                dualLeftRetries.count = attempt + 1
+                reconnectHandler.postDelayed({
+                    if (!isDualScreenActive || currentContentType != ContentType.LIVE) return@postDelayed
+                    player.prepare()
+                    player.playWhenReady = true
+                }, dualReconnectDelayMs(attempt))
+            }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                when (playbackState) {
+                    Player.STATE_READY -> {
+                        dualLeftRetries.count = 0  // stream recovered — reset so next drop gets fresh attempts
+                        leftTileState = DualTilePlayerState.Ready
+                    }
+                    Player.STATE_ENDED -> {
+                        if (!isDualScreenActive) return
+                        if (currentContentType != ContentType.LIVE) return
+                        scheduleReconnect()
+                    }
+                    else -> {}
+                }
+            }
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                if (!isDualScreenActive) return
+                if (currentContentType != ContentType.LIVE) return
+                scheduleReconnect()
+            }
+        }
+        player.addListener(listener)
+        onDispose {
+            player.removeListener(listener)
+            reconnectHandler.removeCallbacksAndMessages(null)
+        }
+    }
+
+    LaunchedEffect(
+        isDualScreenActive,
+        dualScreenFocusedTile,
+        dualScreenFullscreenTile,
+        dualScreenLeftClosed,
+        dualScreenRightChannel,
+        secondaryExoPlayer
+    ) {
+        if (!isDualScreenActive) {
+            player.volume = 1f
+            return@LaunchedEffect
+        }
+        val fullscreenTile = dualScreenFullscreenTile
+        if (fullscreenTile != null) {
+            if (fullscreenTile == DualTile.LEFT) {
+                player.volume = 1f
+                secondaryExoPlayer?.volume = 0f
+                player.playWhenReady = true
+            } else {
+                player.volume = 0f
+                secondaryExoPlayer?.volume = 1f
+                secondaryExoPlayer?.playWhenReady = true
+            }
+            return@LaunchedEffect
+        }
+        delay(300)
+        val leftPlayable = !dualScreenLeftClosed
+        val rightPlayable = dualScreenRightChannel != null && secondaryExoPlayer != null
+        val audibleTile =
+                when {
+                    dualScreenFocusedTile == DualTile.LEFT && leftPlayable -> DualTile.LEFT
+                    dualScreenFocusedTile == DualTile.RIGHT && rightPlayable -> DualTile.RIGHT
+                    leftPlayable -> DualTile.LEFT
+                    rightPlayable -> DualTile.RIGHT
+                    else -> DualTile.LEFT
+                }
+        if (audibleTile == DualTile.LEFT) {
+            player.volume = 1f
+            secondaryExoPlayer?.volume = 0f
+            player.playWhenReady = true
+        } else {
+            player.volume = 0f
+            secondaryExoPlayer?.volume = 1f
+            secondaryExoPlayer?.playWhenReady = true
+        }
+    }
+
     val bindMutablePlayerCallbacks: (XtreamPlayerView) -> Unit = { view ->
         view.resizeMode = resizeMode.resizeMode
         view.forcedAspectRatio = resizeMode.forcedAspectRatio
@@ -1937,6 +2321,16 @@ internal fun PlayerOverlay(
         view.onAudioBoostClick = { showAudioBoostDialog = true }
         view.onSettingsClick = { showPlaybackSettingsDialog = true }
         view.isLiveContent = isLivePlayback
+        view.isDualLiveEnabled = dualLiveEnabled
+        view.onDualScreenClick = if (isLivePlayback && !isPlayerModalOpen && !showLiveGuide) {
+            {
+                isDualScreenActive = true
+                dualScreenLeftClosed = false
+                dualScreenFocusedTile = DualTile.LEFT
+            }
+        } else {
+            null
+        }
         view.fastSeekEnabled = !isLivePlayback
         view.defaultControllerTimeoutMs = 3000
         view.onToggleControls = {
@@ -1952,21 +2346,27 @@ internal fun PlayerOverlay(
             }
         }
         view.onChannelUp = {
-            if (!isPlayerModalOpen && isLivePlayback) {
+            // Disable channel switching when fullscreen-from-right is active — the right tile
+            // uses a separate player/queue and onLiveChannelSwitch operates on the left queue.
+            if (!isPlayerModalOpen && isLivePlayback && !(isDualScreenActive && dualScreenFullscreenTile == DualTile.RIGHT)) {
                 onLiveChannelSwitch(1)
             } else {
                 false
             }
         }
         view.onChannelDown = {
-            if (!isPlayerModalOpen && isLivePlayback) {
+            if (!isPlayerModalOpen && isLivePlayback && !(isDualScreenActive && dualScreenFullscreenTile == DualTile.RIGHT)) {
                 onLiveChannelSwitch(-1)
             } else {
                 false
             }
         }
         view.onOpenLiveGuide = {
-            if (!isPlayerModalOpen && isLivePlayback) {
+            if (isDualScreenActive && dualScreenFullscreenTile != null && !isPlayerModalOpen && isLivePlayback) {
+                dualLivePickerTarget = dualScreenFullscreenTile
+                showLiveGuidePanel()
+                true
+            } else if (!isDualScreenActive && !isPlayerModalOpen && isLivePlayback) {
                 showLiveGuidePanel()
                 true
             } else {
@@ -1987,8 +2387,36 @@ internal fun PlayerOverlay(
         }
         view.onLiveGuideSearchKey = { event -> handleLiveGuideSearchKey(event) }
         view.onLiveGuideDismiss = {
+            dualLivePickerTarget = null
             closeLiveGuide()
             true
+        }
+    }
+
+    LaunchedEffect(isDualScreenActive, dualScreenFullscreenTile, showLiveGuide) {
+        val returningFromDualScreen = wasDualScreenActive && !isDualScreenActive
+        val shouldRestoreFullscreenControls =
+                !showLiveGuide &&
+                    (
+                        (isDualScreenActive && dualScreenFullscreenTile != null) ||
+                            returningFromDualScreen
+                    )
+        wasDualScreenActive = isDualScreenActive
+        if (shouldRestoreFullscreenControls) {
+            playerView?.post {
+                val view = playerView ?: return@post
+                val timeoutMs = view.defaultControllerTimeoutMs
+                view.isFocusable = true
+                view.isFocusableInTouchMode = true
+                view.useController = true
+                view.hideController()
+                view.setControllerShowTimeoutMs(timeoutMs)
+                view.requestFocus()
+                view.postDelayed({
+                    view.setControllerShowTimeoutMs(timeoutMs)
+                    view.showController()
+                }, 80L)
+            }
         }
     }
 
@@ -2032,6 +2460,7 @@ internal fun PlayerOverlay(
                                     return@setOnKeyListener true
                                 }
                                 if (showLiveGuide) {
+                                    dualLivePickerTarget = null
                                     closeLiveGuide()
                                     return@setOnKeyListener true
                                 }
@@ -2041,7 +2470,12 @@ internal fun PlayerOverlay(
                                 }
                                 val dismissed = dismissSettingsWindowIfShowing()
                                 if (!dismissed) {
-                                    onExit()
+                                    // Fullscreen-from-split: Back returns to split, not exit.
+                                    if (dualScreenFullscreenTile != null) {
+                                        dualScreenFullscreenTile = null
+                                    } else {
+                                        onExit()
+                                    }
                                 }
                                 return@setOnKeyListener true
                             }
@@ -2054,9 +2488,12 @@ internal fun PlayerOverlay(
                     }
                 },
                 update = { view ->
-                    view.player = player
-                    view.useController = !showLiveGuide
-                    if (showLiveGuide) {
+                    val dualSplitActive = isDualScreenActive && dualScreenFullscreenTile == null
+                    view.player = if (dualSplitActive) null else effectivePlayer
+                    view.useController = !showLiveGuide && !dualSplitActive
+                    view.isFocusable = !dualSplitActive
+                    view.isFocusableInTouchMode = !dualSplitActive
+                    if (showLiveGuide || dualSplitActive) {
                         view.hideController()
                     }
                     bindMutablePlayerCallbacks(view)
@@ -2065,234 +2502,570 @@ internal fun PlayerOverlay(
                     }
                 }
         )
-        // Next Episode Overlay
-        if (showNextEpisodeOverlay && nextEpisodeTitle != null) {
-            NextEpisodeOverlay(
-                nextEpisodeTitle = nextEpisodeTitle,
-                countdownSeconds = NEXT_EPISODE_COUNTDOWN_SECONDS,
-                remainingSeconds = countdownRemaining,
-                controlsVisible = controlsVisible,
-                modifier = Modifier.align(Alignment.BottomEnd)
-            )
-        }
-
-        if (currentContentType != ContentType.LIVE && showVodStartupIndicator) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Color.Black.copy(alpha = 0.55f))
-                    .border(1.dp, AppTheme.colors.borderStrong, RoundedCornerShape(14.dp))
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+        PlayerBoxOverlays(
+            showNextEpisodeOverlay = showNextEpisodeOverlay,
+            nextEpisodeTitle = nextEpisodeTitle,
+            countdownRemaining = countdownRemaining,
+            controlsVisible = controlsVisible,
+            currentContentType = currentContentType,
+            showVodStartupIndicator = showVodStartupIndicator,
+            showNerdStats = showNerdStats,
+            nerdStats = nerdStats,
+            showSubtitleTimingDialog = showSubtitleTimingDialog,
+            activeSubtitle = activeSubtitle,
+            subtitleOffsetMs = subtitleOffsetMs,
+            subtitleTimingSessionStartOffsetMs = subtitleTimingSessionStartOffsetMs,
+            lastAppliedOffsetMs = lastAppliedOffsetMs,
+            isDualScreenActive = isDualScreenActive,
+            dualScreenFullscreenTile = dualScreenFullscreenTile,
+            primaryPlayer = player,
+            secondaryPlayer = secondaryExoPlayer,
+            primaryChannel = activePlaybackItem.takeUnless { dualScreenLeftClosed },
+            rightChannel = dualScreenRightChannel,
+            focusedTile = dualScreenFocusedTile,
+            leftTileState = leftTileState,
+            rightTileState = rightTileState,
+            actionMenuTile = dualActionMenuTile,
+            isGuideOpen = showLiveGuide,
+            activeChannelId = if (isDualScreenActive && (dualLivePickerTarget ?: dualScreenFocusedTile) == DualTile.RIGHT) {
+                dualScreenRightChannel?.id
+            } else {
+                activePlaybackItem?.id
+            },
+            liveGuideLevel = liveGuideLevel,
+            liveGuideCategories = liveGuideCategories,
+            liveGuideChannels = liveGuideChannels,
+            liveGuideCategoryIndex = liveGuideCategoryIndex,
+            liveGuideChannelIndex = liveGuideChannelIndex,
+            liveGuideLoading = liveGuideLoading,
+            liveGuideErrorMessage = liveGuideErrorMessage,
+            liveGuideSelectedCategoryName = liveGuideSelectedCategory?.name,
+            liveGuideSearchQuery = liveGuideSearchQuery,
+            liveGuideSearchFocused = liveGuideSearchFocused,
+            liveGuideSearchEditing = liveGuideSearchEditing,
+            liveGuideSearchEditRequestNonce = liveGuideSearchEditRequestNonce,
+            liveGuideSearchChannelsLoading = liveGuideSearchChannelsLoading,
+            liveGuideSearchActive = liveGuideSearchActive,
+            liveGuideSearchRows = liveGuideSearchRows,
+            liveGuideSearchResultIndex = liveGuideSearchResultIndex,
+            selectedLiveGuideTickerText = selectedLiveGuideTickerText,
+            selectedLiveGuideTickerLoading = selectedLiveGuideTickerLoading,
+            liveGuideReturnCategoryAtTop = liveGuideReturnCategoryAtTop,
+            onDismissNextEpisodePrompt = dismissNextEpisodePrompt,
+            onSubtitleTimingOffsetChange = { newOffset ->
+                subtitleOffsetMs = newOffset
+                scheduleOffsetApply(newOffset)
+            },
+            onSubtitleTimingCancel = {
+                offsetApplyJob?.cancel()
+                offsetApplyJob = null
+                val restoreOffset = subtitleTimingSessionStartOffsetMs
+                subtitleOffsetMs = restoreOffset
+                showSubtitleTimingDialog = false
+                if (restoreOffset != lastAppliedOffsetMs) {
+                    applyOffsetNow(restoreOffset)
+                }
+            },
+            onSubtitleTimingDismiss = {
+                offsetApplyJob?.cancel()
+                offsetApplyJob = null
+                showSubtitleTimingDialog = false
+                if (subtitleOffsetMs != lastAppliedOffsetMs) {
+                    applyOffsetNow(subtitleOffsetMs)
+                }
+            },
+            onOpenActionMenu = { tile -> dualActionMenuTile = tile },
+            onCloseActionMenu = { dualActionMenuTile = null },
+            onFocusChange = { tile -> dualScreenFocusedTile = tile },
+            onEnterFullscreen = { tile ->
+                if ((tile == DualTile.LEFT && !dualScreenLeftClosed) ||
+                    (tile == DualTile.RIGHT && secondaryExoPlayer != null)
                 ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.width(28.dp).height(28.dp),
-                        color = AppTheme.colors.accent,
-                        strokeWidth = 3.dp
-                    )
-                    Text(
-                        text = "Loading video...",
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontFamily = AppTheme.fontFamily,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-        }
-
-        if (showNerdStats) {
-            PlayerNerdStatsPanel(
-                stats = nerdStats,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(start = 12.dp, top = 64.dp)
-            )
-        }
-
-        // Subtitle offset adjustment overlay with modal backdrop
-        if (showSubtitleTimingDialog && activeSubtitle != null && isOffsetSupported(activeSubtitle?.fileName)) {
-            SubtitleOffsetDialog(
-                offsetMs = subtitleOffsetMs,
-                onOffsetChange = { newOffset ->
-                    if (newOffset == subtitleOffsetMs) return@SubtitleOffsetDialog
-                    subtitleOffsetMs = newOffset
-                    scheduleOffsetApply(newOffset)
-                },
-                onCancel = {
-                    offsetApplyJob?.cancel()
-                    offsetApplyJob = null
-                    val restoreOffset = subtitleTimingSessionStartOffsetMs
-                    subtitleOffsetMs = restoreOffset
-                    showSubtitleTimingDialog = false
-                    if (restoreOffset != lastAppliedOffsetMs) {
-                        applyOffsetNow(restoreOffset)
-                    }
-                },
-                onDismiss = {
-                    offsetApplyJob?.cancel()
-                    offsetApplyJob = null
-                    showSubtitleTimingDialog = false
-                    if (subtitleOffsetMs != lastAppliedOffsetMs) {
-                        applyOffsetNow(subtitleOffsetMs)
+                    dualScreenFullscreenTile = tile
+                    if (tile == DualTile.LEFT) {
+                        player.volume = 1f
+                        secondaryExoPlayer?.volume = 0f
+                        player.playWhenReady = true
+                    } else {
+                        player.volume = 0f
+                        secondaryExoPlayer?.volume = 1f
+                        secondaryExoPlayer?.playWhenReady = true
                     }
                 }
-            )
-        }
-
-        if (showLiveGuide && currentContentType == ContentType.LIVE) {
-            LiveGuidePanel(
-                    level = liveGuideLevel,
-                    categories = liveGuideCategories,
-                    channels = liveGuideChannels,
-                    selectedCategoryIndex = liveGuideCategoryIndex,
-                    selectedChannelIndex = liveGuideChannelIndex,
-                    activeChannelId = activePlaybackItem?.id,
-                    isLoading = liveGuideLoading,
-                    errorMessage = liveGuideErrorMessage,
-                    selectedCategoryName = liveGuideSelectedCategory?.name,
-                    searchQuery = liveGuideSearchQuery,
-                    searchFocused = liveGuideSearchFocused,
-                    searchEditing = liveGuideSearchEditing,
-                    searchEditRequestNonce = liveGuideSearchEditRequestNonce,
-                    searchLoading = liveGuideSearchChannelsLoading,
-                    searchActive = liveGuideSearchActive,
-                    searchRows = liveGuideSearchRows,
-                    selectedSearchIndex = liveGuideSearchResultIndex,
-                    onSearchQueryChange = { query -> updateLiveGuideSearchQuery(query) },
-                    onSearchMoveUp = {
-                        moveLiveGuideSelection(-1)
-                        playerView?.requestFocus()
-                    },
-                    onSearchMoveDown = {
-                        moveLiveGuideSelection(1)
-                        playerView?.requestFocus()
-                    },
-                    onSearchStopEditing = {
-                        liveGuideSearchEditing = false
-                        hideLiveGuideSearchKeyboard()
-                        playerView?.requestFocus()
-                    },
-                    selectedChannelTickerText = selectedLiveGuideTickerText,
-                    selectedChannelTickerLoading = selectedLiveGuideTickerLoading,
-                    alignCategorySelectionToTop = liveGuideReturnCategoryAtTop,
-                    onCategorySelectionAligned = { liveGuideReturnCategoryAtTop = false },
-                    categoryThumbnailProvider = { category ->
-                        liveGuideCategoryThumbnails[liveGuideCategoryUiKey(category)]
-                    },
-                    onCategoryThumbnailNeeded = { category ->
-                        ensureLiveGuideCategoryThumbnail(category)
+            },
+            onOpenChannelPicker = { tile ->
+                dualScreenFocusedTile = tile
+                dualLivePickerTarget = tile
+                showLiveGuidePanel()
+            },
+            onCloseTile = { tile -> closeDualScreenTile(tile) },
+            onRestartStream = { tile ->
+                if (tile == DualTile.LEFT) {
+                    dualLeftRetries.count = 0
+                    leftTileState = DualTilePlayerState.Ready
+                    val p = player as? ExoPlayer
+                    if (p != null) {
+                        p.seekToDefaultPosition()
+                        p.prepare()
+                        p.playWhenReady = true
                     }
-            )
-        }
-
+                } else {
+                    dualRightRetryCount = 0
+                    val secPlayer = secondaryExoPlayer
+                    val channel = dualScreenRightChannel
+                    if (secPlayer != null && channel != null) {
+                        subtitleCoroutineScope.launch {
+                            rightTileState = DualTilePlayerState.Loading
+                            val uri = loadLiveStreamUri(channel)
+                            if (uri != null) {
+                                secPlayer.setMediaItem(androidx.media3.common.MediaItem.fromUri(uri))
+                                secPlayer.prepare()
+                                secPlayer.playWhenReady = true
+                            } else {
+                                rightTileState = DualTilePlayerState.Error("Failed to build stream URL")
+                            }
+                        }
+                    }
+                }
+            },
+            onRetryError = { tile ->
+                if (tile == DualTile.LEFT) {
+                    dualLeftRetries.count = 0
+                    leftTileState = DualTilePlayerState.Ready
+                    player.prepare()
+                    player.playWhenReady = true
+                } else {
+                    val secPlayer = secondaryExoPlayer
+                    val channel = dualScreenRightChannel
+                    if (secPlayer != null && channel != null) {
+                        subtitleCoroutineScope.launch {
+                            dualRightRetryCount = 0
+                            rightTileState = DualTilePlayerState.Loading
+                            val uri = loadLiveStreamUri(channel)
+                            if (uri != null) {
+                                secPlayer.setMediaItem(androidx.media3.common.MediaItem.fromUri(uri))
+                                secPlayer.prepare()
+                                secPlayer.playWhenReady = true
+                            } else {
+                                rightTileState = DualTilePlayerState.Error("Failed to build stream URL")
+                            }
+                        }
+                    }
+                }
+            },
+            onExitDualScreen = { exitDualScreen() },
+            onGuideMove = { delta -> moveLiveGuideSelection(delta) },
+            onGuideSelect = { activateLiveGuideSelection() },
+            onGuideBack = { handleLiveGuideLeft() },
+            onGuideDismiss = {
+                dualLivePickerTarget = null
+                closeLiveGuide()
+            },
+            onGuideSearchKey = { event -> handleLiveGuideSearchKey(event) },
+            onSearchQueryChange = { query -> updateLiveGuideSearchQuery(query) },
+            onSearchMoveUp = {
+                moveLiveGuideSelection(-1)
+                playerView?.requestFocus()
+            },
+            onSearchMoveDown = {
+                moveLiveGuideSelection(1)
+                playerView?.requestFocus()
+            },
+            onSearchStopEditing = {
+                liveGuideSearchEditing = false
+                hideLiveGuideSearchKeyboard()
+                playerView?.requestFocus()
+            },
+            onCategorySelectionAligned = { liveGuideReturnCategoryAtTop = false },
+            categoryThumbnailProvider = { category ->
+                liveGuideCategoryThumbnails[liveGuideCategoryUiKey(category)]
+            },
+            onCategoryThumbnailNeeded = { category ->
+                ensureLiveGuideCategoryThumbnail(category)
+            },
+        )
     }
 
 
+    PlayerDialogsSection(
+        showSubtitleDialog = showSubtitleDialog,
+        showSubtitleOptionsDialog = showSubtitleOptionsDialog,
+        showSubtitleTrackDialog = showSubtitleTrackDialog,
+        showAudioTrackDialog = showAudioTrackDialog,
+        showAudioBoostDialog = showAudioBoostDialog,
+        showPlaybackSettingsDialog = showPlaybackSettingsDialog,
+        showPlaybackSpeedDialog = showPlaybackSpeedDialog,
+        showResolutionDialog = showResolutionDialog,
+        title = title,
+        subtitleDialogState = subtitleDialogState,
+        subtitlesEnabled = subtitlesEnabled,
+        hasEmbeddedSubtitles = hasEmbeddedSubtitles,
+        openSubtitlesApiKey = openSubtitlesApiKey,
+        openSubtitlesUserAgent = openSubtitlesUserAgent,
+        audioBoostDb = audioBoostDb,
+        currentContentType = currentContentType,
+        matchFrameRateEnabled = matchFrameRateEnabled,
+        showNerdStats = showNerdStats,
+        player = player,
+        playbackEngine = playbackEngine,
+        subtitleRepository = subtitleRepository,
+        subtitleCoroutineScope = subtitleCoroutineScope,
+        mediaId = mediaId,
+        onRequestOpenSubtitlesApiKey = onRequestOpenSubtitlesApiKey,
+        publishSubtitleState = ::publishSubtitleState,
+        toggleSubtitles = toggleSubtitles,
+        onMatchFrameRateChange = onMatchFrameRateChange,
+        onShowSubtitleDialogChange = { showSubtitleDialog = it },
+        onSubtitleDialogStateChange = { subtitleDialogState = it },
+        onSubtitlesEnabledChange = { subtitlesEnabled = it },
+        onActiveSubtitleChange = { activeSubtitle = it },
+        onSubtitleOffsetMsReset = { subtitleOffsetMs = 0L },
+        onLastAppliedOffsetMsReset = { lastAppliedOffsetMs = 0L },
+        onShowSubtitleTrackDialogChange = { showSubtitleTrackDialog = it },
+        onShowSubtitleOptionsDialogChange = { showSubtitleOptionsDialog = it },
+        onShowAudioTrackDialogChange = { showAudioTrackDialog = it },
+        onAudioBoostChange = { audioBoostDb = it },
+        onShowAudioBoostDialogChange = { showAudioBoostDialog = it },
+        onShowPlaybackSettingsDialogChange = { showPlaybackSettingsDialog = it },
+        onShowNerdStatsChange = { showNerdStats = it },
+        onShowPlaybackSpeedDialogChange = { showPlaybackSpeedDialog = it },
+        onShowResolutionDialogChange = { showResolutionDialog = it },
+    )
+}
+
+@Composable
+private fun BoxScope.PlayerBoxOverlays(
+    showNextEpisodeOverlay: Boolean,
+    nextEpisodeTitle: String?,
+    countdownRemaining: Int,
+    controlsVisible: Boolean,
+    currentContentType: ContentType?,
+    showVodStartupIndicator: Boolean,
+    showNerdStats: Boolean,
+    nerdStats: PlayerNerdStats?,
+    showSubtitleTimingDialog: Boolean,
+    activeSubtitle: ActiveSubtitle?,
+    subtitleOffsetMs: Long,
+    subtitleTimingSessionStartOffsetMs: Long,
+    lastAppliedOffsetMs: Long,
+    isDualScreenActive: Boolean,
+    dualScreenFullscreenTile: DualTile?,
+    primaryPlayer: Player,
+    secondaryPlayer: ExoPlayer?,
+    primaryChannel: ContentItem?,
+    rightChannel: ContentItem?,
+    focusedTile: DualTile,
+    leftTileState: DualTilePlayerState,
+    rightTileState: DualTilePlayerState,
+    actionMenuTile: DualTile?,
+    isGuideOpen: Boolean,
+    activeChannelId: String?,
+    liveGuideLevel: LiveGuideLevel,
+    liveGuideCategories: List<CategoryItem>,
+    liveGuideChannels: List<ContentItem>,
+    liveGuideCategoryIndex: Int,
+    liveGuideChannelIndex: Int,
+    liveGuideLoading: Boolean,
+    liveGuideErrorMessage: String?,
+    liveGuideSelectedCategoryName: String?,
+    liveGuideSearchQuery: String,
+    liveGuideSearchFocused: Boolean,
+    liveGuideSearchEditing: Boolean,
+    liveGuideSearchEditRequestNonce: Int,
+    liveGuideSearchChannelsLoading: Boolean,
+    liveGuideSearchActive: Boolean,
+    liveGuideSearchRows: List<LiveGuideSearchRow>,
+    liveGuideSearchResultIndex: Int,
+    selectedLiveGuideTickerText: String?,
+    selectedLiveGuideTickerLoading: Boolean,
+    liveGuideReturnCategoryAtTop: Boolean,
+    onDismissNextEpisodePrompt: () -> Unit,
+    onSubtitleTimingOffsetChange: (Long) -> Unit,
+    onSubtitleTimingCancel: () -> Unit,
+    onSubtitleTimingDismiss: () -> Unit,
+    onOpenActionMenu: (DualTile) -> Unit,
+    onCloseActionMenu: () -> Unit,
+    onFocusChange: (DualTile) -> Unit,
+    onEnterFullscreen: (DualTile) -> Unit,
+    onOpenChannelPicker: (DualTile) -> Unit,
+    onCloseTile: (DualTile) -> Unit,
+    onRestartStream: (DualTile) -> Unit,
+    onRetryError: (DualTile) -> Unit,
+    onExitDualScreen: () -> Unit,
+    onGuideMove: (Int) -> Unit,
+    onGuideSelect: () -> Unit,
+    onGuideBack: () -> Unit,
+    onGuideDismiss: () -> Unit,
+    onGuideSearchKey: (KeyEvent) -> Boolean,
+    onSearchQueryChange: (String) -> Unit,
+    onSearchMoveUp: () -> Unit,
+    onSearchMoveDown: () -> Unit,
+    onSearchStopEditing: () -> Unit,
+    onCategorySelectionAligned: () -> Unit,
+    categoryThumbnailProvider: (CategoryItem) -> String?,
+    onCategoryThumbnailNeeded: (CategoryItem) -> Unit,
+) {
+    if (showNextEpisodeOverlay && nextEpisodeTitle != null) {
+        NextEpisodeOverlay(
+            nextEpisodeTitle = nextEpisodeTitle,
+            countdownSeconds = NEXT_EPISODE_COUNTDOWN_SECONDS,
+            remainingSeconds = countdownRemaining,
+            controlsVisible = controlsVisible,
+            modifier = Modifier.align(Alignment.BottomEnd)
+        )
+    }
+
+    if (currentContentType != ContentType.LIVE && showVodStartupIndicator) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color.Black.copy(alpha = 0.55f))
+                .border(1.dp, AppTheme.colors.borderStrong, RoundedCornerShape(14.dp))
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.width(28.dp).height(28.dp),
+                    color = AppTheme.colors.accent,
+                    strokeWidth = 3.dp
+                )
+                Text(
+                    text = "Loading video...",
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontFamily = AppTheme.fontFamily,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    }
+
+    if (showNerdStats) {
+        PlayerNerdStatsPanel(
+            stats = nerdStats,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 12.dp, top = 64.dp)
+        )
+    }
+
+    if (showSubtitleTimingDialog && activeSubtitle != null && isOffsetSupported(activeSubtitle.fileName)) {
+        SubtitleOffsetDialog(
+            offsetMs = subtitleOffsetMs,
+            onOffsetChange = { newOffset ->
+                if (newOffset == subtitleOffsetMs) return@SubtitleOffsetDialog
+                onSubtitleTimingOffsetChange(newOffset)
+            },
+            onCancel = onSubtitleTimingCancel,
+            onDismiss = onSubtitleTimingDismiss
+        )
+    }
+
+    if (isDualScreenActive && dualScreenFullscreenTile == null) {
+        DualLiveScreen(
+            primaryPlayer = primaryPlayer,
+            secondaryPlayer = secondaryPlayer,
+            primaryChannel = primaryChannel,
+            rightChannel = rightChannel,
+            focusedTile = focusedTile,
+            leftTileState = leftTileState,
+            rightTileState = rightTileState,
+            actionMenuTile = actionMenuTile,
+            onOpenActionMenu = onOpenActionMenu,
+            onCloseActionMenu = onCloseActionMenu,
+            onFocusChange = onFocusChange,
+            onEnterFullscreen = onEnterFullscreen,
+            onOpenChannelPicker = onOpenChannelPicker,
+            onCloseTile = onCloseTile,
+            onRestartStream = onRestartStream,
+            onRetryError = onRetryError,
+            onExitDualScreen = onExitDualScreen,
+            isGuideOpen = isGuideOpen,
+            onGuideMove = onGuideMove,
+            onGuideSelect = onGuideSelect,
+            onGuideBack = onGuideBack,
+            onGuideDismiss = onGuideDismiss,
+            onGuideSearchKey = onGuideSearchKey,
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+
+    if (isGuideOpen && currentContentType == ContentType.LIVE) {
+        LiveGuidePanel(
+            level = liveGuideLevel,
+            categories = liveGuideCategories,
+            channels = liveGuideChannels,
+            selectedCategoryIndex = liveGuideCategoryIndex,
+            selectedChannelIndex = liveGuideChannelIndex,
+            activeChannelId = activeChannelId,
+            isLoading = liveGuideLoading,
+            errorMessage = liveGuideErrorMessage,
+            selectedCategoryName = liveGuideSelectedCategoryName,
+            searchQuery = liveGuideSearchQuery,
+            searchFocused = liveGuideSearchFocused,
+            searchEditing = liveGuideSearchEditing,
+            searchEditRequestNonce = liveGuideSearchEditRequestNonce,
+            searchLoading = liveGuideSearchChannelsLoading,
+            searchActive = liveGuideSearchActive,
+            searchRows = liveGuideSearchRows,
+            selectedSearchIndex = liveGuideSearchResultIndex,
+            onSearchQueryChange = onSearchQueryChange,
+            onSearchMoveUp = onSearchMoveUp,
+            onSearchMoveDown = onSearchMoveDown,
+            onSearchStopEditing = onSearchStopEditing,
+            selectedChannelTickerText = selectedLiveGuideTickerText,
+            selectedChannelTickerLoading = selectedLiveGuideTickerLoading,
+            alignCategorySelectionToTop = liveGuideReturnCategoryAtTop,
+            onCategorySelectionAligned = onCategorySelectionAligned,
+            categoryThumbnailProvider = categoryThumbnailProvider,
+            onCategoryThumbnailNeeded = onCategoryThumbnailNeeded
+        )
+    }
+}
+
+@Composable
+private fun PlayerDialogsSection(
+    showSubtitleDialog: Boolean,
+    showSubtitleOptionsDialog: Boolean,
+    showSubtitleTrackDialog: Boolean,
+    showAudioTrackDialog: Boolean,
+    showAudioBoostDialog: Boolean,
+    showPlaybackSettingsDialog: Boolean,
+    showPlaybackSpeedDialog: Boolean,
+    showResolutionDialog: Boolean,
+    title: String,
+    subtitleDialogState: SubtitleDialogState,
+    subtitlesEnabled: Boolean,
+    hasEmbeddedSubtitles: Boolean,
+    openSubtitlesApiKey: String,
+    openSubtitlesUserAgent: String,
+    audioBoostDb: Float,
+    currentContentType: ContentType?,
+    matchFrameRateEnabled: Boolean,
+    showNerdStats: Boolean,
+    player: Player,
+    playbackEngine: Media3PlaybackEngine,
+    subtitleRepository: SubtitleRepository,
+    subtitleCoroutineScope: CoroutineScope,
+    mediaId: String,
+    onRequestOpenSubtitlesApiKey: () -> Unit,
+    publishSubtitleState: (ActiveSubtitle?, Long) -> Unit,
+    toggleSubtitles: () -> Unit,
+    onMatchFrameRateChange: (Boolean) -> Unit,
+    onShowSubtitleDialogChange: (Boolean) -> Unit,
+    onSubtitleDialogStateChange: (SubtitleDialogState) -> Unit,
+    onSubtitlesEnabledChange: (Boolean) -> Unit,
+    onActiveSubtitleChange: (ActiveSubtitle?) -> Unit,
+    onSubtitleOffsetMsReset: () -> Unit,
+    onLastAppliedOffsetMsReset: () -> Unit,
+    onShowSubtitleTrackDialogChange: (Boolean) -> Unit,
+    onShowSubtitleOptionsDialogChange: (Boolean) -> Unit,
+    onShowAudioTrackDialogChange: (Boolean) -> Unit,
+    onAudioBoostChange: (Float) -> Unit,
+    onShowAudioBoostDialogChange: (Boolean) -> Unit,
+    onShowPlaybackSettingsDialogChange: (Boolean) -> Unit,
+    onShowNerdStatsChange: (Boolean) -> Unit,
+    onShowPlaybackSpeedDialogChange: (Boolean) -> Unit,
+    onShowResolutionDialogChange: (Boolean) -> Unit,
+) {
     if (showSubtitleDialog) {
         val subtitleQuery = remember(title) { sanitizeSubtitleQuery(title) }
         SubtitleSearchDialog(
-                initialQuery = subtitleQuery,
-                state = subtitleDialogState,
-                subtitlesEnabled = subtitlesEnabled,
-                embeddedSubtitlesAvailable = hasEmbeddedSubtitles,
-                onSearch = { query ->
-                    if (openSubtitlesApiKey.isBlank()) {
-                        showSubtitleDialog = false
-                        subtitleDialogState = SubtitleDialogState.Idle
-                        onRequestOpenSubtitlesApiKey()
-                        return@SubtitleSearchDialog
-                    }
-                    subtitleDialogState = SubtitleDialogState.Searching
-                    subtitleCoroutineScope.launch {
-                        val result =
-                                subtitleRepository.searchSubtitles(
-                                        apiKey = openSubtitlesApiKey,
-                                        userAgent = openSubtitlesUserAgent,
-                                        title = query
-                                )
-                        subtitleDialogState =
-                                result.fold(
-                                        onSuccess = { subtitles ->
-                                            if (subtitles.isEmpty()) {
-                                                SubtitleDialogState.Results(emptyList())
-                                            } else {
-                                                SubtitleDialogState.Results(subtitles)
-                                            }
-                                        },
-                                        onFailure = { error ->
-                                            SubtitleDialogState.Error(
-                                                    error.message ?: "Search failed"
-                                            )
-                                        }
-                                )
-                    }
-                },
-                onSelect = { subtitle ->
-                    subtitleDialogState = SubtitleDialogState.Downloading(subtitle)
-                    subtitleCoroutineScope.launch {
-                        val result =
-                                subtitleRepository.downloadAndCacheSubtitle(
-                                        apiKey = openSubtitlesApiKey,
-                                        userAgent = openSubtitlesUserAgent,
-                                        subtitle = subtitle,
-                                        mediaId = mediaId
-                                )
-                        if (result.isSuccess) {
-                            val cachedSubtitle = result.getOrThrow()
-                            // Read original content for offset adjustment
-                            val originalContent =
-                                    withContext(Dispatchers.IO) {
-                                        try {
-                                            java.io.File(cachedSubtitle.uri.path ?: "").readBytes()
-                                        } catch (e: Exception) {
-                                            null
-                                        }
-                                    }
-                            activeSubtitle =
-                                    ActiveSubtitle(
-                                            uri = cachedSubtitle.uri,
-                                            language = cachedSubtitle.language,
-                                            label = subtitle.release,
-                                            fileName = cachedSubtitle.fileName,
-                                            originalContent = originalContent
-                                    )
-                            subtitleOffsetMs = 0L  // Reset offset for new subtitle
-                            lastAppliedOffsetMs = 0L
-                            val mimeType = subtitleMimeType(cachedSubtitle.fileName)
-                            playbackEngine.addSubtitle(
-                                    subtitleUri = cachedSubtitle.uri,
-                                    language = cachedSubtitle.language,
-                                    label = subtitle.release,
-                                    mimeType = mimeType
-                            )
-                            publishSubtitleState(activeSubtitle, 0L)
-                            subtitlesEnabled = true
-                            showSubtitleDialog = false
-                            subtitleDialogState = SubtitleDialogState.Idle
-                        } else {
-                            val error = result.exceptionOrNull()
-                            subtitleDialogState =
-                                    SubtitleDialogState.Error(
-                                            error?.message ?: "Download failed"
-                                    )
-                        }
-                    }
-                },
-                onToggleSubtitles = { toggleSubtitles() },
-                onSelectSubtitleTrack = {
-                    showSubtitleDialog = false
-                    showSubtitleTrackDialog = true
-                },
-                onDismiss = {
-                    showSubtitleDialog = false
-                    subtitleDialogState = SubtitleDialogState.Idle
+            initialQuery = subtitleQuery,
+            state = subtitleDialogState,
+            subtitlesEnabled = subtitlesEnabled,
+            embeddedSubtitlesAvailable = hasEmbeddedSubtitles,
+            onSearch = { query ->
+                if (openSubtitlesApiKey.isBlank()) {
+                    onShowSubtitleDialogChange(false)
+                    onSubtitleDialogStateChange(SubtitleDialogState.Idle)
+                    onRequestOpenSubtitlesApiKey()
+                    return@SubtitleSearchDialog
                 }
+                onSubtitleDialogStateChange(SubtitleDialogState.Searching)
+                subtitleCoroutineScope.launch {
+                    val result =
+                        subtitleRepository.searchSubtitles(
+                            apiKey = openSubtitlesApiKey,
+                            userAgent = openSubtitlesUserAgent,
+                            title = query
+                        )
+                    onSubtitleDialogStateChange(
+                        result.fold(
+                            onSuccess = { subtitles ->
+                                if (subtitles.isEmpty()) SubtitleDialogState.Results(emptyList())
+                                else SubtitleDialogState.Results(subtitles)
+                            },
+                            onFailure = { error ->
+                                SubtitleDialogState.Error(error.message ?: "Search failed")
+                            }
+                        )
+                    )
+                }
+            },
+            onSelect = { subtitle ->
+                onSubtitleDialogStateChange(SubtitleDialogState.Downloading(subtitle))
+                subtitleCoroutineScope.launch {
+                    val result =
+                        subtitleRepository.downloadAndCacheSubtitle(
+                            apiKey = openSubtitlesApiKey,
+                            userAgent = openSubtitlesUserAgent,
+                            subtitle = subtitle,
+                            mediaId = mediaId
+                        )
+                    if (result.isSuccess) {
+                        val cachedSubtitle = result.getOrThrow()
+                        val originalContent =
+                            withContext(Dispatchers.IO) {
+                                try {
+                                    java.io.File(cachedSubtitle.uri.path ?: "").readBytes()
+                                } catch (e: Exception) {
+                                    null
+                                }
+                            }
+                        val newSubtitle = ActiveSubtitle(
+                            uri = cachedSubtitle.uri,
+                            language = cachedSubtitle.language,
+                            label = subtitle.release,
+                            fileName = cachedSubtitle.fileName,
+                            originalContent = originalContent
+                        )
+                        onActiveSubtitleChange(newSubtitle)
+                        onSubtitleOffsetMsReset()
+                        onLastAppliedOffsetMsReset()
+                        val mimeType = subtitleMimeType(cachedSubtitle.fileName)
+                        playbackEngine.addSubtitle(
+                            subtitleUri = cachedSubtitle.uri,
+                            language = cachedSubtitle.language,
+                            label = subtitle.release,
+                            mimeType = mimeType
+                        )
+                        publishSubtitleState(newSubtitle, 0L)
+                        onSubtitlesEnabledChange(true)
+                        onShowSubtitleDialogChange(false)
+                        onSubtitleDialogStateChange(SubtitleDialogState.Idle)
+                    } else {
+                        val error = result.exceptionOrNull()
+                        onSubtitleDialogStateChange(
+                            SubtitleDialogState.Error(error?.message ?: "Download failed")
+                        )
+                    }
+                }
+            },
+            onToggleSubtitles = { toggleSubtitles() },
+            onSelectSubtitleTrack = {
+                onShowSubtitleDialogChange(false)
+                onShowSubtitleTrackDialogChange(true)
+            },
+            onDismiss = {
+                onShowSubtitleDialogChange(false)
+                onSubtitleDialogStateChange(SubtitleDialogState.Idle)
+            }
         )
     }
 
@@ -2300,115 +3073,110 @@ internal fun PlayerOverlay(
         val availableSubtitleTracks = playbackEngine.getAvailableSubtitleTracks()
         val canSelectSubtitleTrack = availableSubtitleTracks.count { it.isSupported } > 1
         SubtitleOptionsDialog(
-                subtitlesEnabled = subtitlesEnabled,
-                showSubtitleTrackOption = canSelectSubtitleTrack,
-                onToggleSubtitles = {
-                    toggleSubtitles()
-                    showSubtitleOptionsDialog = false
-                },
-                onSelectSubtitleTrack = {
-                    showSubtitleOptionsDialog = false
-                    showSubtitleTrackDialog = true
-                },
-                onDownloadSubtitles = {
-                    showSubtitleOptionsDialog = false
-                    showSubtitleDialog = true
-                },
-                onDismiss = { showSubtitleOptionsDialog = false }
+            subtitlesEnabled = subtitlesEnabled,
+            showSubtitleTrackOption = canSelectSubtitleTrack,
+            onToggleSubtitles = {
+                toggleSubtitles()
+                onShowSubtitleOptionsDialogChange(false)
+            },
+            onSelectSubtitleTrack = {
+                onShowSubtitleOptionsDialogChange(false)
+                onShowSubtitleTrackDialogChange(true)
+            },
+            onDownloadSubtitles = {
+                onShowSubtitleOptionsDialogChange(false)
+                onShowSubtitleDialogChange(true)
+            },
+            onDismiss = { onShowSubtitleOptionsDialogChange(false) }
         )
     }
 
     if (showSubtitleTrackDialog) {
         SubtitleTrackDialog(
-                availableTracks = playbackEngine.getAvailableSubtitleTracks(),
-                onTrackSelected = { groupIndex, trackIndex ->
-                    playbackEngine.selectSubtitleTrack(groupIndex, trackIndex)
-                },
-                onDismiss = { showSubtitleTrackDialog = false }
+            availableTracks = playbackEngine.getAvailableSubtitleTracks(),
+            onTrackSelected = { groupIndex, trackIndex ->
+                playbackEngine.selectSubtitleTrack(groupIndex, trackIndex)
+            },
+            onDismiss = { onShowSubtitleTrackDialogChange(false) }
         )
     }
 
     if (showAudioTrackDialog) {
         AudioTrackDialog(
-                availableTracks = playbackEngine.getAvailableAudioTracks(),
-                onTrackSelected = { groupIndex, trackIndex ->
-                    playbackEngine.selectAudioTrack(groupIndex, trackIndex)
-                },
-                onDismiss = { showAudioTrackDialog = false }
+            availableTracks = playbackEngine.getAvailableAudioTracks(),
+            onTrackSelected = { groupIndex, trackIndex ->
+                playbackEngine.selectAudioTrack(groupIndex, trackIndex)
+            },
+            onDismiss = { onShowAudioTrackDialogChange(false) }
         )
     }
 
     if (showAudioBoostDialog) {
         AudioBoostDialog(
-                boostDb = audioBoostDb,
-                onBoostChange = { newBoost ->
-                    audioBoostDb = newBoost
-                    playbackEngine.setAudioBoostDb(newBoost)
-                },
-                onDismiss = { showAudioBoostDialog = false }
+            boostDb = audioBoostDb,
+            onBoostChange = { newBoost ->
+                onAudioBoostChange(newBoost)
+                playbackEngine.setAudioBoostDb(newBoost)
+            },
+            onDismiss = { onShowAudioBoostDialogChange(false) }
         )
     }
 
     if (showPlaybackSettingsDialog) {
         val videoTracks = playbackEngine.getAvailableVideoTracks()
         val selectedResolution =
-                videoTracks.firstOrNull { it.isSelected }?.label
-                        ?: if (videoTracks.isEmpty()) "Unknown" else videoTracks.first().label
+            videoTracks.firstOrNull { it.isSelected }?.label
+                ?: if (videoTracks.isEmpty()) "Unknown" else videoTracks.first().label
         val speedLabel = "${player.playbackParameters.speed}x"
-        val resolutionMode =
-                if (playbackEngine.isVideoOverrideActive()) {
-                    "Manual"
-                } else {
-                    "Auto"
-                }
-        val resolutionLabel = "$resolutionMode \u2022 $selectedResolution"
+        val resolutionMode = if (playbackEngine.isVideoOverrideActive()) "Manual" else "Auto"
+        val resolutionLabel = "$resolutionMode • $selectedResolution"
         val showSpeedOption = currentContentType != ContentType.LIVE
         val matchFrameRateLabel = if (matchFrameRateEnabled) "On" else "Off"
         val nerdStatsLabel = if (showNerdStats) "On" else "Off"
 
         PlaybackSettingsDialog(
-                speedLabel = speedLabel,
-                resolutionLabel = resolutionLabel,
-                matchFrameRateLabel = matchFrameRateLabel,
-                nerdStatsLabel = nerdStatsLabel,
-                showSpeedOption = showSpeedOption,
-                onSpeed = {
-                    showPlaybackSettingsDialog = false
-                    showPlaybackSpeedDialog = true
-                },
-                onResolution = {
-                    showPlaybackSettingsDialog = false
-                    showResolutionDialog = true
-                },
-                onToggleMatchFrameRate = { onMatchFrameRateChange(!matchFrameRateEnabled) },
-                onToggleNerdStats = { showNerdStats = !showNerdStats },
-                onDismiss = { showPlaybackSettingsDialog = false }
+            speedLabel = speedLabel,
+            resolutionLabel = resolutionLabel,
+            matchFrameRateLabel = matchFrameRateLabel,
+            nerdStatsLabel = nerdStatsLabel,
+            showSpeedOption = showSpeedOption,
+            onSpeed = {
+                onShowPlaybackSettingsDialogChange(false)
+                onShowPlaybackSpeedDialogChange(true)
+            },
+            onResolution = {
+                onShowPlaybackSettingsDialogChange(false)
+                onShowResolutionDialogChange(true)
+            },
+            onToggleMatchFrameRate = { onMatchFrameRateChange(!matchFrameRateEnabled) },
+            onToggleNerdStats = { onShowNerdStatsChange(!showNerdStats) },
+            onDismiss = { onShowPlaybackSettingsDialogChange(false) }
         )
     }
 
     if (showPlaybackSpeedDialog) {
         if (currentContentType == ContentType.LIVE) {
-            showPlaybackSpeedDialog = false
+            onShowPlaybackSpeedDialogChange(false)
         } else {
             PlaybackSpeedDialog(
-                    currentSpeed = player.playbackParameters.speed,
-                    onSpeedSelected = { speed ->
-                        player.setPlaybackParameters(
-                                androidx.media3.common.PlaybackParameters(speed)
-                        )
-                    },
-                    onDismiss = { showPlaybackSpeedDialog = false }
+                currentSpeed = player.playbackParameters.speed,
+                onSpeedSelected = { speed ->
+                    player.setPlaybackParameters(
+                        androidx.media3.common.PlaybackParameters(speed)
+                    )
+                },
+                onDismiss = { onShowPlaybackSpeedDialogChange(false) }
             )
         }
     }
 
     if (showResolutionDialog) {
         VideoResolutionDialog(
-                availableTracks = playbackEngine.getAvailableVideoTracks(),
-                onTrackSelected = { groupIndex, trackIndex ->
-                    playbackEngine.selectVideoTrack(groupIndex, trackIndex)
-                },
-                onDismiss = { showResolutionDialog = false }
+            availableTracks = playbackEngine.getAvailableVideoTracks(),
+            onTrackSelected = { groupIndex, trackIndex ->
+                playbackEngine.selectVideoTrack(groupIndex, trackIndex)
+            },
+            onDismiss = { onShowResolutionDialogChange(false) }
         )
     }
 }

@@ -82,7 +82,8 @@ fun SettingsScreen(
     onToggleCheckUpdatesOnStartup: () -> Unit,
     onCheckForUpdates: () -> Unit,
     onClearCache: () -> Unit,
-    onSignOut: () -> Unit
+    onSignOut: () -> Unit,
+    onToggleDualLiveEnabled: () -> Unit
 ) {
     val shape = RoundedCornerShape(18.dp)
     val scrollState = rememberScrollState()
@@ -113,6 +114,13 @@ fun SettingsScreen(
     val libraryActions = listOf(
         SettingsAction("Sync library", null, onRefreshContent),
         SettingsAction("Refresh on startup", flagLabel(settings.refreshOnStartup), onToggleRefreshOnStartup)
+    )
+    val liveActions = listOf(
+        SettingsAction(
+            "Dual Screen Live",
+            if (settings.dualLiveEnabled) "On - uses 2 streams" else "Off - hidden",
+            onToggleDualLiveEnabled
+        )
     )
     val aboutActions = listOf(
         SettingsAction(
@@ -196,6 +204,9 @@ fun SettingsScreen(
 
                 SettingsSectionHeader("Playback")
                 playbackActions.forEach { action -> renderAction(action) }
+
+                SettingsSectionHeader("Live")
+                liveActions.forEach { action -> renderAction(action) }
 
                 SettingsSectionHeader("Appearance")
                 appearanceActions.forEach { action -> renderAction(action) }

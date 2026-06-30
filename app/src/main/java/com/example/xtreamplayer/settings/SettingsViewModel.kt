@@ -70,6 +70,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun toggleDualLiveEnabled() {
+        viewModelScope.launch {
+            repository.setDualLiveEnabled(!settings.value.dualLiveEnabled)
+        }
+    }
+
     fun setSubtitleCacheAutoClearInterval(intervalMs: Long) {
         viewModelScope.launch {
             repository.setSubtitleCacheAutoClearInterval(intervalMs)

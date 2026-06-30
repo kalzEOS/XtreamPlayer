@@ -56,6 +56,7 @@ class XtreamPlayerView @JvmOverloads constructor(
     private var audioTrackView: View? = null
     private var audioBoostView: View? = null
     private var settingsView: View? = null
+    private var dualScreenButtonView: View? = null
     private var prevButtonView: View? = null
     private var nextButtonView: View? = null
     private var titleView: TextView? = null
@@ -158,6 +159,17 @@ class XtreamPlayerView @JvmOverloads constructor(
             field = value
             updateControlsForContentType()
         }
+    var isDualLiveEnabled: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            updateControlsForContentType()
+        }
+    var onDualScreenClick: (() -> Unit)? = null
+        set(value) {
+            field = value
+            bindDualScreenView()
+        }
     var forcedAspectRatio: Float? = null
         set(value) {
             field = value
@@ -239,6 +251,7 @@ class XtreamPlayerView @JvmOverloads constructor(
         bindAudioTrackView()
         bindAudioBoostView()
         bindSettingsView()
+        bindDualScreenView()
         bindTitleView()
         bindNowPlayingInfoView()
         bindBottomTimeViews()
@@ -736,6 +749,7 @@ class XtreamPlayerView @JvmOverloads constructor(
         setViewVisible(Media3UiR.id.exo_subtitle, false)
         setViewVisible(R.id.exo_subtitle_timing, !isLive)
         setViewVisible(R.id.exo_subtitle_download, !isLive)
+        setViewVisible(R.id.exo_dual_screen, isLive && isDualLiveEnabled)
         findViewById<View>(R.id.exo_live_progress_line)?.visibility =
             if (isLive) View.VISIBLE else View.GONE
         bindPrevNextView()
@@ -877,6 +891,7 @@ class XtreamPlayerView @JvmOverloads constructor(
             R.id.exo_audio_track,
             R.id.exo_audio_boost,
             R.id.exo_resize_mode,
+            R.id.exo_dual_screen,
             Media3UiR.id.exo_settings,
             Media3UiR.id.exo_fullscreen,
             Media3UiR.id.exo_overflow_show
@@ -952,6 +967,7 @@ class XtreamPlayerView @JvmOverloads constructor(
             R.id.exo_audio_track,
             R.id.exo_audio_boost,
             R.id.exo_resize_mode,
+            R.id.exo_dual_screen,
             Media3UiR.id.exo_settings,
             Media3UiR.id.exo_fullscreen,
             Media3UiR.id.exo_overflow_show
@@ -1118,6 +1134,13 @@ class XtreamPlayerView @JvmOverloads constructor(
             settingsView = it
         }
         view?.setOnClickListener { onSettingsClick?.invoke() }
+    }
+
+    private fun bindDualScreenView() {
+        val view = dualScreenButtonView ?: findViewById<View>(R.id.exo_dual_screen).also {
+            dualScreenButtonView = it
+        }
+        view?.setOnClickListener { onDualScreenClick?.invoke() }
     }
 
     private fun bindPrevNextView() {

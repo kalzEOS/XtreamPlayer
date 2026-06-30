@@ -7,10 +7,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.example.xtreamplayer.content.SearchNormalizer
+import com.example.xtreamplayer.content.SearchPolicy
 import kotlinx.coroutines.delay
 
 private const val SEARCH_DEBOUNCE_MS = 800L
-private const val MIN_SEARCH_LENGTH = 3
 
 class DebouncedSearchState(
     initialQuery: String = "",
@@ -22,7 +22,7 @@ class DebouncedSearchState(
 
     fun performSearch() {
         val normalized = SearchNormalizer.normalizeQuery(query)
-        debouncedQuery = if (normalized.length >= MIN_SEARCH_LENGTH) normalized else ""
+        debouncedQuery = if (SearchPolicy.isSearchableNormalizedQuery(normalized)) normalized else ""
     }
 
     fun clear() {
@@ -43,11 +43,8 @@ fun rememberDebouncedSearchState(
 
     LaunchedEffect(state.query) {
         val normalized = SearchNormalizer.normalizeQuery(state.query)
-        if (normalized.isBlank()) {
+        if (!SearchPolicy.isSearchableNormalizedQuery(normalized)) {
             state.debouncedQuery = ""
-            return@LaunchedEffect
-        }
-        if (normalized.length < MIN_SEARCH_LENGTH) {
             return@LaunchedEffect
         }
         delay(SEARCH_DEBOUNCE_MS)

@@ -51,6 +51,7 @@ class SettingsRepository(private val context: Context) {
         val clockFormat = parseClockFormat(prefs[Keys.CLOCK_FORMAT])
         val openSubtitlesApiKey = prefs[Keys.OPENSUBTITLES_API_KEY] ?: ""
         val openSubtitlesUserAgent = prefs[Keys.OPENSUBTITLES_USER_AGENT] ?: ""
+        val dualLiveEnabled = prefs[Keys.DUAL_LIVE_ENABLED] ?: false
 
         cacheBootSettings(appTheme, appFont, uiScale, fontScale)
 
@@ -74,7 +75,8 @@ class SettingsRepository(private val context: Context) {
             fontScale = fontScale,
             clockFormat = clockFormat,
             openSubtitlesApiKey = openSubtitlesApiKey,
-            openSubtitlesUserAgent = openSubtitlesUserAgent
+            openSubtitlesUserAgent = openSubtitlesUserAgent,
+            dualLiveEnabled = dualLiveEnabled
         )
     }
 
@@ -274,6 +276,12 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun setDualLiveEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.DUAL_LIVE_ENABLED] = enabled
+        }
+    }
+
     suspend fun isStartupUpdateCheckEnabled(): Boolean {
         return context.dataStore.data.firstOrNull()?.get(Keys.CHECK_UPDATES_ON_STARTUP) ?: true
     }
@@ -351,6 +359,7 @@ class SettingsRepository(private val context: Context) {
         val CLOCK_FORMAT = stringPreferencesKey("clock_format")
         val OPENSUBTITLES_API_KEY = stringPreferencesKey("opensubtitles_api_key")
         val OPENSUBTITLES_USER_AGENT = stringPreferencesKey("opensubtitles_user_agent")
+        val DUAL_LIVE_ENABLED = booleanPreferencesKey("dual_live_enabled")
         const val BOOT_APP_THEME = "boot_app_theme"
         const val BOOT_APP_FONT = "boot_app_font"
         const val BOOT_UI_SCALE = "boot_ui_scale"
