@@ -17,4 +17,5 @@
     <string name="subtitle_timing_description">Subtitle timing</string>
     <string name="audio_track_description">Select audio track</string>
     <string name="audio_boost_description">Adjust audio boost</string>
+    <string name="dual_screen_description">Dual screen</string>
 </resources>

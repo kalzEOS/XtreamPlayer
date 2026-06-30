@@ -105,8 +105,10 @@ class Media3PlaybackEngine(
         lastSettings = settings
         hasAppliedSettings = true
 
-        // Auto-play is handled manually in UI for series episodes only
-        if (isFirstApply || player.repeatMode != Player.REPEAT_MODE_OFF) {
+        // Auto-play is handled manually in UI for series episodes only.
+        // Only reset on first apply — subsequent applies must not clobber a repeat-mode pin
+        // set by dual-screen mode (which uses REPEAT_MODE_ONE to prevent live queue advance).
+        if (isFirstApply) {
             player.repeatMode = Player.REPEAT_MODE_OFF
         }
 
@@ -167,6 +169,16 @@ class Media3PlaybackEngine(
         rebuildPlayerPreservingState()
     }
 
+    fun createSecondaryLivePlayer(): ExoPlayer {
+        return buildPlayer(
+            loadControl = buildLoadControl(BufferProfile.LIVE_SECONDARY, lastSettings),
+            handleAudioFocus = false,
+            attachEngineListener = false
+        ).apply {
+            volume = 0f
+        }
+    }
+
     fun getAudioBoostDb(): Float = boostDb
 
     fun setAudioBoostDb(db: Float) {
@@ -218,7 +230,11 @@ class Media3PlaybackEngine(
         }
     }
 
-    private fun buildPlayer(loadControl: DefaultLoadControl): ExoPlayer {
+    private fun buildPlayer(
+        loadControl: DefaultLoadControl,
+        handleAudioFocus: Boolean = true,
+        attachEngineListener: Boolean = true
+    ): ExoPlayer {
         return ExoPlayer.Builder(appContext, renderersFactory)
             .setLoadControl(loadControl)
             .setMediaSourceFactory(mediaSourceFactory)
@@ -226,10 +242,12 @@ class Media3PlaybackEngine(
             .setSeekForwardIncrementMs(SEEK_FORWARD_INCREMENT_MS)
             .build()
             .apply {
-                setAudioAttributes(audioAttributes, true)
+                setAudioAttributes(audioAttributes, handleAudioFocus)
                 setHandleAudioBecomingNoisy(true)
                 volume = 1f
-                addListener(playerListener)
+                if (attachEngineListener) {
+                    addListener(playerListener)
+                }
             }
     }
 
@@ -1000,6 +1018,14 @@ enum class BufferProfile(
         maxBufferMs = 25_000,
         bufferForPlaybackMs = 1_000,
         bufferForPlaybackAfterRebufferMs = 2_000
+    ),
+    // Smaller buffer for the secondary (muted/background) split-screen player.
+    // Reduces peak memory when two streams run simultaneously on low-RAM devices.
+    LIVE_SECONDARY(
+        minBufferMs = 2_000,
+        maxBufferMs = 8_000,
+        bufferForPlaybackMs = 800,
+        bufferForPlaybackAfterRebufferMs = 1_500
     ),
     VOD(
         minBufferMs = 25_000,

@@ -71,7 +71,8 @@ data class SettingsState(
     val fontScale: Float = 1.0f,
     val clockFormat: ClockFormatOption = ClockFormatOption.AM_PM,
     val openSubtitlesApiKey: String = "",
-    val openSubtitlesUserAgent: String = ""
+    val openSubtitlesUserAgent: String = "",
+    val dualLiveEnabled: Boolean = false
 )
 
 fun vodBufferLabel(seconds: Int): String = "${seconds.coerceIn(5, 300)}s"

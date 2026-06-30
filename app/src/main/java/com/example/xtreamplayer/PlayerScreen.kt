@@ -1,5 +1,6 @@
 package com.example.xtreamplayer
 
+import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -32,6 +33,8 @@ internal fun PlayerScreen(
     onLiveChannelSwitch: (Int) -> Boolean,
     onLiveGuideChannelSelect: (ContentItem, List<ContentItem>) -> Unit,
     onSubtitleStateChanged: (PlaybackSubtitleState?) -> Unit,
+    dualLiveEnabled: Boolean,
+    loadLiveStreamUri: suspend (ContentItem) -> Uri?,
     loadLiveNowNext: suspend (ContentItem) -> Result<LiveNowNextEpg?>,
     loadLiveCategories: suspend () -> Result<List<CategoryItem>>,
     loadLiveCategoryChannels: suspend (CategoryItem) -> Result<List<ContentItem>>,
@@ -81,6 +84,8 @@ internal fun PlayerScreen(
         onLiveChannelSwitch = onLiveChannelSwitch,
         onLiveGuideChannelSelect = onLiveGuideChannelSelect,
         onSubtitleStateChanged = onSubtitleStateChanged,
+        dualLiveEnabled = dualLiveEnabled,
+        loadLiveStreamUri = loadLiveStreamUri,
         loadLiveNowNext = loadLiveNowNext,
         loadLiveCategories = loadLiveCategories,
         loadLiveCategoryChannels = loadLiveCategoryChannels,

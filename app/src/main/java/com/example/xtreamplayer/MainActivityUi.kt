@@ -2396,6 +2396,18 @@ fun RootScreen(
                 onSubtitleStateChanged = { state ->
                     activePlaybackSubtitleState = state
                 },
+                dualLiveEnabled = settings.dualLiveEnabled,
+                loadLiveStreamUri = loadLiveStreamUri@{ item ->
+                    val config = authState.activeConfig ?: return@loadLiveStreamUri null
+                    Uri.parse(
+                        StreamUrlBuilder.buildUrl(
+                            config = config,
+                            type = item.contentType,
+                            streamId = item.streamId,
+                            extension = item.containerExtension
+                        )
+                    )
+                },
                 loadLiveNowNext = loadLiveNowNext@{ item ->
                     val config = authState.activeConfig ?: return@loadLiveNowNext Result.success(null)
                     if (item.contentType != ContentType.LIVE) {

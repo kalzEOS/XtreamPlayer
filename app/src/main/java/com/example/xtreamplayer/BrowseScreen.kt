@@ -498,6 +498,7 @@ Row(modifier = Modifier.fillMaxSize()) {
                         onOpenSyncSchedule = { showSyncScheduleDialog = true },
                         onToggleCheckUpdatesOnStartup = onToggleCheckUpdatesOnStartup,
                         onCheckForUpdates = { onCheckForUpdates() },
+                        onToggleDualLiveEnabled = settingsViewModel::toggleDualLiveEnabled,
                         onClearCache = {
                             coroutineScope.launch {
                                 val contentBytes = contentRepository.diskCacheSizeBytes()

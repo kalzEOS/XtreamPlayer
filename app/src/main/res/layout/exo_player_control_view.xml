@@ -273,6 +273,15 @@
                 android:clickable="true" />
 
             <ImageButton
+                android:id="@+id/exo_dual_screen"
+                style="@style/ExoStyledControls.Button.Bottom"
+                android:src="@drawable/ic_dual_screen"
+                android:contentDescription="@string/dual_screen_description"
+                android:focusable="true"
+                android:clickable="true"
+                android:visibility="gone" />
+
+            <ImageButton
                 android:id="@id/exo_settings"
                 style="@style/ExoStyledControls.Button.Bottom.Settings"
                 android:contentDescription="@string/xp_controls_settings_description" />
