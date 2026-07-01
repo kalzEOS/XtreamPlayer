@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
@@ -278,6 +280,20 @@ private fun DualLiveTile(
     val colors = AppTheme.colors
     val accentColor = colors.accent
 
+    var videoAspectRatio by remember { mutableStateOf(16f / 9f) }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    videoAspectRatio = videoSize.width.toFloat() / videoSize.height.toFloat()
+                }
+            }
+        }
+        player?.addListener(listener)
+        onDispose { player?.removeListener(listener) }
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -413,10 +429,16 @@ private fun DualLiveTile(
             }
         }
 
-        // Focused border as a separate child Box so it's isolated from the tile content.
-        // Only composed when focused — zero cost when not focused.
+        // Focused border — sized to the video frame (aspect-ratio-matched), not the full tile.
+        // The channel name label sits in the letterbox bar below, outside the border.
         if (isFocused) {
-            Box(modifier = Modifier.fillMaxSize().border(3.dp, accentColor))
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .fillMaxWidth()
+                    .aspectRatio(videoAspectRatio)
+                    .border(3.dp, accentColor)
+            )
         }
     }
 }
